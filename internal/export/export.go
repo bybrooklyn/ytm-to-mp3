@@ -1,0 +1,134 @@
+// Package export walks the user through getting their YouTube Music data from
+// Google Takeout, then waits for the zip to appear.
+package export
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+)
+
+const takeoutURL = "https://takeout.google.com/"
+
+// SearchDirs are where a finished export is likely to be.
+func SearchDirs() []string {
+	home, _ := os.UserHomeDir()
+	dirs := []string{".", filepath.Join(home, "Downloads"), filepath.Join(home, "Desktop"), home}
+	if d := os.Getenv("XDG_DOWNLOAD_DIR"); d != "" {
+		dirs = append(dirs, d)
+	}
+	return dirs
+}
+
+func isExport(name string) bool {
+	n := strings.ToLower(name)
+	if strings.HasSuffix(n, ".crdownload") || strings.HasSuffix(n, ".part") || strings.HasSuffix(n, ".download") || strings.HasSuffix(n, ".tmp") {
+		return false
+	}
+	return strings.HasPrefix(n, "takeout") && strings.HasSuffix(n, ".zip")
+}
+
+// Find returns the newest Takeout zip modified after since (zero = any).
+func Find(since time.Time) (string, bool) {
+	type cand struct {
+		path string
+		mod  time.Time
+	}
+	var cs []cand
+	for _, d := range SearchDirs() {
+		ents, err := os.ReadDir(d)
+		if err != nil {
+			continue
+		}
+		for _, e := range ents {
+			if e.IsDir() || !isExport(e.Name()) {
+				continue
+			}
+			if info, err := e.Info(); err == nil && info.ModTime().After(since) {
+				abs, _ := filepath.Abs(filepath.Join(d, e.Name()))
+				cs = append(cs, cand{abs, info.ModTime()})
+			}
+		}
+	}
+	if len(cs) == 0 {
+		return "", false
+	}
+	sort.Slice(cs, func(i, j int) bool { return cs[i].mod.After(cs[j].mod) })
+	return cs[0].path, true
+}
+
+// Guide explains how to request the export, opens the browser, and waits for the zip.
+func Guide(ctx context.Context, u *ui.UI) (string, error) {
+	u.Printf(`
+To download your YouTube Music library you need your data from Google Takeout.
+It's free and takes a few minutes (Google may email you when it's ready):
+
+  1. On the page that opens, click "Deselect all".
+  2. Scroll to "YouTube and YouTube Music" and tick it.
+  3. Click "All YouTube data included", untick everything, then tick
+     "music (library and uploads)" (and "playlists" if you want those). OK.
+  4. Click "Next step", keep "Export once" and ".zip", then "Create export".
+  5. When it's ready, download the zip into your Downloads folder.
+
+ytm will notice the zip and carry on by itself. (Ctrl-C to stop waiting.)
+`)
+	started := time.Now().Add(-2 * time.Minute) // tolerate a clock/mtime skew
+	if err := OpenBrowser(takeoutURL); err != nil {
+		u.Printf("Open this page in your browser: %s", takeoutURL)
+	}
+	t := time.NewTicker(2 * time.Second)
+	defer t.Stop()
+	var lastPath string
+	var lastSize int64 = -1
+	stable := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-t.C:
+		}
+		p, ok := Find(started)
+		if !ok {
+			continue
+		}
+		st, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		if p == lastPath && st.Size() == lastSize {
+			stable++
+		} else {
+			lastPath, lastSize, stable = p, st.Size(), 0
+		}
+		if stable >= 2 { // size unchanged for ~4s: the browser has finished writing it
+			u.Printf("Found %s", p)
+			return p, nil
+		}
+	}
+}
+
+// OpenBrowser opens url in the default browser.
+func OpenBrowser(url string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	case "darwin":
+		cmd = exec.Command("open", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("open browser: %w", err)
+	}
+	go cmd.Wait()
+	return nil
+}

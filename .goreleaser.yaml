@@ -1,0 +1,50 @@
+version: 2
+project_name: ytm
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: ytm
+    main: ./cmd/ytm
+    binary: ytm
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: ytm
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "ytm_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [README.md, LICENSE]
+
+checksum:
+  name_template: checksums.txt
+
+nfpms:
+  - id: packages
+    package_name: ytm
+    vendor: ytm-to-mp3
+    homepage: https://github.com/bybrooklyn/ytm-to-mp3
+    maintainer: bybrooklyn
+    description: Download your YouTube Music library as tagged audio files
+    license: MIT
+    formats: [deb, rpm]
+    recommends: [ffmpeg]
+
+changelog:
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^chore:", "Merge pull request"]
+
+release:
+  github:
+    owner: bybrooklyn
+    name: ytm-to-mp3

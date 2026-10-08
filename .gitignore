@@ -1,0 +1,9 @@
+/ytm
+/ytm.exe
+/dist/
+Music/
+downloads/
+.ytm/
+*.csv
+!testdata/*.csv
+/legacy/
