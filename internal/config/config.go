@@ -11,6 +11,12 @@ type Config struct {
 	// Cookies is "", "yes" or "no". Empty means the user has not been asked yet.
 	Cookies string `json:"cookies,omitempty"`
 	Browser string `json:"browser,omitempty"`
+
+	// Saved by `ytm setup`; command-line flags override them for one run.
+	Out         string `json:"out,omitempty"`
+	Format      string `json:"format,omitempty"`
+	Connections int    `json:"connections,omitempty"` // VPN exits to use at once
+	NoVPN       bool   `json:"no_vpn,omitempty"`      // sign-in is kept but VPN is off
 }
 
 func dir() (string, error) {

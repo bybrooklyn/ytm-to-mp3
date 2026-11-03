@@ -12,8 +12,9 @@ import (
 )
 
 // ServeSOCKS5 runs a CONNECT-only SOCKS5 server that requires user/password auth.
-// It is what runs inside each VPN namespace.
-func ServeSOCKS5(ctx context.Context, l net.Listener, user, pass string) error {
+// One runs on loopback in front of each VPN tunnel so yt-dlp and Go share the exit.
+// dial opens the outbound connection (through a tunnel).
+func ServeSOCKS5(ctx context.Context, l net.Listener, user, pass string, dial Dialer) error {
 	go func() { <-ctx.Done(); l.Close() }()
 	for {
 		c, err := l.Accept()
@@ -25,12 +26,12 @@ func ServeSOCKS5(ctx context.Context, l net.Listener, user, pass string) error {
 		}
 		go func() {
 			defer c.Close()
-			_ = handleSOCKS(ctx, c, user, pass)
+			_ = handleSOCKS(ctx, c, user, pass, dial)
 		}()
 	}
 }
 
-func handleSOCKS(ctx context.Context, c net.Conn, user, pass string) error {
+func handleSOCKS(ctx context.Context, c net.Conn, user, pass string, dial Dialer) error {
 	_ = c.SetDeadline(time.Now().Add(20 * time.Second))
 	br := bufio.NewReader(c)
 	var h [2]byte
@@ -111,8 +112,9 @@ func handleSOCKS(ctx context.Context, c net.Conn, user, pass string) error {
 		return err
 	}
 	port := int(pb[0])<<8 | int(pb[1])
-	d := net.Dialer{Timeout: 15 * time.Second}
-	up, err := d.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	dctx, dcancel := context.WithTimeout(ctx, 15*time.Second)
+	defer dcancel()
+	up, err := dial(dctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		reply(c, 5)
 		return err
@@ -138,35 +140,5 @@ func reply(c net.Conn, code byte) {
 	c.Write([]byte{5, code, 0, 1, 0, 0, 0, 0, 0, 0})
 }
 
-// Relay accepts TCP connections on 127.0.0.1 and pipes them to a unix socket.
-// It bridges the host (where yt-dlp and ytm live) to the SOCKS server in a namespace;
-// the SOCKS server's password is what keeps other local users out.
-func Relay(ctx context.Context, sock string) (addr string, err error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return "", err
-	}
-	go func() { <-ctx.Done(); l.Close() }()
-	go func() {
-		for {
-			c, err := l.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				defer c.Close()
-				u, err := net.Dial("unix", sock)
-				if err != nil {
-					return
-				}
-				defer u.Close()
-				done := make(chan struct{}, 2)
-				go func() { io.Copy(u, c); closeWrite(u); done <- struct{}{} }()
-				go func() { io.Copy(c, u); closeWrite(c); done <- struct{}{} }()
-				<-done
-				<-done
-			}()
-		}
-	}()
-	return l.Addr().String(), nil
-}
+// Dialer opens outbound connections.
+type Dialer func(ctx context.Context, network, addr string) (net.Conn, error)

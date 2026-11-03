@@ -28,32 +28,22 @@ import (
 
 var version = "dev"
 
-const usage = `ytm - download your YouTube Music library as tagged audio files
+const usage = `ytm - download YouTube / YouTube Music as tagged audio, through Proton VPN
 
-Usage:
-  ytm                         guided: find or fetch your export, then download it
-  ytm <input>...              download; each <input> is a video/playlist/album URL,
-                              a Takeout .zip, folder or .csv, or a text file of links
-  ytm export                  walk through getting your export from Google Takeout
-  ytm tag <folder>            clean up and improve metadata (preview; --apply writes)
-  ytm update                  refresh yt-dlp
-  ytm vpn add <file.conf>...  save WireGuard configs (any provider) for --vpn
-  ytm vpn list|test|clean     show saved configs / bring them up and show each exit IP / remove stale namespaces
+  ytm setup               one-time setup: Proton sign-in, music folder, format
+  ytm <link>...           download videos, playlists or albums
+  ytm [takeout.zip]       download your YouTube Music library (guides you if you have no export)
+  ytm status              show settings and test the VPN exits
+  ytm logout              forget your Proton login
 
-Options:
-  -o DIR       output folder (default ./Music)
-  -f FORMAT    mp3 (default), m4a, opus, flac
-  -j N         max parallel downloads (default: adapts automatically)
-  --no-cookies don't use browser cookies
+Options (for one run; ytm setup saves your defaults):
+  -o DIR       music folder          -f FORMAT   mp3, m4a, opus, flac
+  --no-vpn     skip the VPN this run -j N        max parallel downloads
   --dry-run    show what would happen
-  --retry      also retry tracks that were unavailable before
-  --all        include ID-only playlists from a Takeout export
+  --retry      retry tracks that were unavailable before
   -y           assume yes
-  --vpn        spread downloads over all saved WireGuard configs (Linux, needs sudo);
-               each config runs in its own network namespace, only ytm uses it
-  --vpn-conf P WireGuard .conf files/folders (comma separated) instead of the saved ones
-  --proxy URL  extra exits: socks5://host:port or http://host:port (comma separated)
-  --direct     also use your normal connection as an exit when VPNs/proxies are given
+
+Other: ytm export (get your Takeout), ytm tag <folder> (fix metadata), ytm update
 `
 
 func main() {
@@ -80,19 +70,15 @@ type opts struct {
 	rename    bool
 	undo      bool
 	offline   bool
-	vpn       bool
-	vpnConf   string
-	proxy     string
-	direct    bool
-	socket    string
+	noVPN     bool
 }
 
 func parse(name string, args []string) (opts, []string, error) {
 	var o opts
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
-	fs.StringVar(&o.out, "o", "Music", "")
-	fs.StringVar(&o.format, "f", "mp3", "")
+	fs.StringVar(&o.out, "o", "", "")
+	fs.StringVar(&o.format, "f", "", "")
 	fs.IntVar(&o.jobs, "j", 0, "")
 	fs.BoolVar(&o.noCookies, "no-cookies", false, "")
 	fs.BoolVar(&o.dryRun, "dry-run", false, "")
@@ -103,11 +89,7 @@ func parse(name string, args []string) (opts, []string, error) {
 	fs.BoolVar(&o.rename, "rename", false, "")
 	fs.BoolVar(&o.undo, "undo", false, "")
 	fs.BoolVar(&o.offline, "offline", false, "")
-	fs.BoolVar(&o.vpn, "vpn", false, "")
-	fs.StringVar(&o.vpnConf, "vpn-conf", "", "")
-	fs.StringVar(&o.proxy, "proxy", "", "")
-	fs.BoolVar(&o.direct, "direct", false, "")
-	fs.StringVar(&o.socket, "socket", "", "")
+	fs.BoolVar(&o.noVPN, "no-vpn", false, "")
 	// Go's flag package stops at the first positional; keep going so flags may follow it.
 	var pos []string
 	for {
@@ -120,6 +102,13 @@ func parse(name string, args []string) (opts, []string, error) {
 		pos = append(pos, fs.Arg(0))
 		args = fs.Args()[1:]
 	}
+	cfg := config.Load()
+	if o.out == "" {
+		o.out = orDefault(cfg.Out, "Music")
+	}
+	if o.format == "" {
+		o.format = orDefault(cfg.Format, "mp3")
+	}
 	if !engine.ValidFormat(o.format) {
 		return o, nil, fmt.Errorf("unknown format %q (use %s)", o.format, strings.Join(engine.Formats, ", "))
 	}
@@ -130,7 +119,7 @@ func run(args []string) error {
 	cmd := ""
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
-		case "export", "tag", "update", "version", "help", "vpn", "vpn-proxy":
+		case "export", "tag", "update", "version", "help", "setup", "login", "logout", "status":
 			cmd, args = args[0], args[1:]
 		}
 	}
@@ -140,9 +129,6 @@ func run(args []string) error {
 			return nil
 		}
 		return err
-	}
-	if cmd == "vpn-proxy" {
-		return vpn.ProxyMain(o.socket)
 	}
 	ctx, stop := signalContext()
 	defer stop()
@@ -163,8 +149,16 @@ func run(args []string) error {
 			return err
 		}
 		return download(ctx, u, o, p)
-	case "vpn":
-		return runVPN(ctx, u, o, pos)
+	case "setup":
+		return runSetup(ctx, u, false)
+	case "login":
+		return runSetup(ctx, u, true)
+	case "logout":
+		protonClient().Logout()
+		u.Printf("signed out of Proton")
+		return nil
+	case "status":
+		return runStatus(ctx, u)
 	case "tag":
 		if len(pos) != 1 {
 			return errors.New("usage: ytm tag <folder> [--apply] [--rename] [--undo] [--offline] [-y]")
@@ -312,7 +306,7 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		}
 		jar = cookies.Setup(ctx, u, &cfg, tools, o.noCookies)
 	}
-	exits, closeExits, err := buildExits(ctx, u, o)
+	exits, replace, closeExits, err := buildExits(ctx, u, o)
 	if err != nil {
 		return err
 	}
@@ -320,7 +314,7 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	cache, _ := config.CacheDir()
 	sum := engine.Run(ctx, engine.Options{
 		Out: o.out, Format: o.format, Jobs: o.jobs, Cookies: jar.File, Tools: tools,
-		Store: st, UI: u, CacheDir: filepath.Join(cache, "yt-dlp"), Exits: exits,
+		Store: st, UI: u, CacheDir: filepath.Join(cache, "yt-dlp"), Exits: exits, Replace: replace,
 	}, plan.Todo)
 
 	u.Printf("\n%d downloaded, %d failed, %s in %s", sum.Done, sum.Failed, engine.HumanBytes(sum.Bytes), sum.Elapsed.Round(time.Second))
@@ -350,99 +344,23 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	return nil
 }
 
-// buildExits turns --vpn / --vpn-conf / --proxy into the exits the engine spreads over.
-func buildExits(ctx context.Context, u *ui.UI, o opts) ([]vpn.Exit, func(), error) {
-	noop := func() {}
-	var exits []vpn.Exit
-	closer := noop
-	if o.proxy != "" {
-		px, err := vpn.Proxies([]string{o.proxy})
-		if err != nil {
-			return nil, noop, err
+// buildExits connects the Proton VPN tunnels when you're signed in (unless --no-vpn).
+// It never silently falls back to your own IP: if the VPN was meant to be on and can't
+// connect, it stops.
+func buildExits(ctx context.Context, u *ui.UI, o opts) ([]vpn.Exit, func(ctx context.Context, old vpn.Exit) (vpn.Exit, error), func(), error) {
+	cfg := config.Load()
+	pc := protonClient()
+	if o.noVPN || cfg.NoVPN || !pc.SignedIn() {
+		if !o.noVPN && !cfg.NoVPN {
+			u.Printf("(no VPN: run 'ytm setup' to sign in to Proton and download faster)")
 		}
-		exits = append(exits, px...)
+		return nil, nil, func() {}, nil
 	}
-	if o.vpn || o.vpnConf != "" {
-		var paths []string
-		if o.vpnConf != "" {
-			paths = []string{o.vpnConf}
-		}
-		files, err := vpn.ConfFiles(paths)
-		if err != nil {
-			return nil, noop, err
-		}
-		u.Printf("Bringing up %d VPN tunnel(s)...", len(files))
-		pool, err := vpn.Up(ctx, files, func(f string, a ...any) { u.Printf(f, a...) })
-		if err != nil {
-			return nil, noop, err
-		}
-		closer = pool.Close
-		exits = append(exits, pool.Exits...)
+	n := orInt(cfg.Connections, 3)
+	u.Printf("Connecting %d VPN tunnel(s)...", n)
+	pool, err := vpn.Open(ctx, pc, n, func(f string, a ...any) { u.Printf(f, a...) })
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("%w (use --no-vpn to download without it)", err)
 	}
-	if len(exits) == 0 {
-		return nil, noop, nil
-	}
-	if o.direct {
-		exits = append(exits, vpn.Direct)
-	}
-	u.Printf("Spreading downloads over %d exit(s)", len(exits))
-	return exits, closer, nil
-}
-
-func runVPN(ctx context.Context, u *ui.UI, o opts, pos []string) error {
-	sub := ""
-	if len(pos) > 0 {
-		sub, pos = pos[0], pos[1:]
-	}
-	switch sub {
-	case "add":
-		if len(pos) == 0 {
-			return errors.New("usage: ytm vpn add <file.conf>...")
-		}
-		added, err := vpn.Add(pos)
-		for _, a := range added {
-			u.Printf("saved %s", a)
-		}
-		return err
-	case "list":
-		files, err := vpn.ConfFiles(nil)
-		if err != nil {
-			return err
-		}
-		for _, f := range files {
-			u.Printf("%s", f)
-		}
-		return nil
-	case "clean":
-		vpn.Clean(func(f string, a ...any) { u.Printf(f, a...) })
-		return nil
-	case "test":
-		var paths []string
-		if o.vpnConf != "" {
-			paths = []string{o.vpnConf}
-		}
-		files, err := vpn.ConfFiles(paths)
-		if err != nil {
-			return err
-		}
-		pool, err := vpn.Up(ctx, files, func(f string, a ...any) { u.Printf(f, a...) })
-		if err != nil {
-			return err
-		}
-		defer pool.Close()
-		for _, x := range pool.Exits {
-			c, _ := vpn.NewClient(x.Proxy)
-			c.Timeout = 20 * time.Second
-			ip := "?"
-			if resp, err := c.Get("https://api.ipify.org"); err == nil {
-				b := make([]byte, 64)
-				n, _ := resp.Body.Read(b)
-				resp.Body.Close()
-				ip = strings.TrimSpace(string(b[:n]))
-			}
-			u.Printf("  %-24s exit IP %s", x.Name, ip)
-		}
-		return nil
-	}
-	return errors.New("usage: ytm vpn add|list|test|clean")
+	return pool.Exits(), pool.Replace, pool.Close, nil
 }

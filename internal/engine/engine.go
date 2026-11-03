@@ -36,6 +36,8 @@ type Options struct {
 	// Exits are the network paths to spread work over (VPNs / proxies). Empty = the
 	// normal connection. Each gets its own rate-limit governor.
 	Exits []vpn.Exit
+	// Replace, if set, swaps a rate-limited exit for one on a different server.
+	Replace func(ctx context.Context, old vpn.Exit) (vpn.Exit, error)
 }
 
 // Summary is the result of a run.
@@ -64,12 +66,42 @@ type job struct {
 
 // lane is one exit with its own governor, HTTP client and yt-dlp settings.
 type lane struct {
+	mu     sync.Mutex
 	exit   vpn.Exit
 	gov    *Governor
 	client *http.Client
 	yt     ytdlp
 	done   atomic.Int64
 	bytes  atomic.Int64
+	bad    atomic.Int32 // consecutive throttles / failures
+}
+
+func (l *lane) http() *http.Client { l.mu.Lock(); defer l.mu.Unlock(); return l.client }
+func (l *lane) ytdlp() ytdlp       { l.mu.Lock(); defer l.mu.Unlock(); return l.yt }
+
+// sour records a bad outcome; after several in a row the exit is swapped for a fresh
+// server (a different IP usually clears a rate limit).
+func (e *engine) sour(ctx context.Context, l *lane) {
+	if l.bad.Add(1) < 4 || e.Replace == nil {
+		return
+	}
+	l.bad.Store(0)
+	l.mu.Lock()
+	old := l.exit
+	l.mu.Unlock()
+	ex, err := e.Replace(ctx, old)
+	if err != nil {
+		return
+	}
+	cl, err := vpn.NewClient(ex.Proxy)
+	if err != nil {
+		return
+	}
+	l.mu.Lock()
+	l.exit, l.client = ex, cl
+	l.yt.proxy = ex.Proxy
+	l.mu.Unlock()
+	e.UI.Printf("↻ %s was rate limited, switched to %s", old.Name, ex.Name)
 }
 
 // pick chooses the least-loaded exit that isn't cooling down, avoiding `avoid` if possible.
@@ -203,7 +235,7 @@ feed:
 
 	var per []ExitStat
 	for _, l := range e.lanes {
-		per = append(per, ExitStat{Name: l.exit.Name, Done: int(l.done.Load()), Bytes: l.bytes.Load()})
+		per = append(per, ExitStat{Name: l.exitName(), Done: int(l.done.Load()), Bytes: l.bytes.Load()})
 	}
 	return Summary{
 		PerExit: per,
@@ -298,10 +330,11 @@ func (e *engine) resolveWithRetry(ctx context.Context, t model.Track) (*Resolved
 			return nil, 0, nil, err
 		}
 		var res *Resolved
-		res, err = ln.yt.Resolve(ctx, t.ID, client)
+		res, err = ln.ytdlp().Resolve(ctx, t.ID, client)
 		switch {
 		case err == nil:
 			ln.gov.Release(OK)
+			ln.bad.Store(0)
 			return res, client, ln, nil
 		case ctx.Err() != nil:
 			ln.gov.Release(Neutral)
@@ -311,6 +344,7 @@ func (e *engine) resolveWithRetry(ctx context.Context, t model.Track) (*Resolved
 			return nil, 0, nil, err
 		case kindOf(err) == kindThrottled:
 			ln.gov.Release(Throttled)
+			e.sour(ctx, ln)
 			prev = ln // try another exit next
 			if throttled++; throttled >= maxThrottled {
 				return nil, 0, nil, err
@@ -349,7 +383,7 @@ func (e *engine) fetchJob(ctx context.Context, j *job) error {
 	}
 	if canFetch(j.res) {
 		dst := filepath.Join(e.tmp, j.tr.ID+".src")
-		err := fetch(ctx, j.lane.client, j.res, dst, func(n int64) { e.bytes.Add(n); j.lane.bytes.Add(n) }, func() { j.lane.gov.Observe(Throttled) })
+		err := fetch(ctx, j.lane.http(), j.res, dst, func(n int64) { e.bytes.Add(n); j.lane.bytes.Add(n) }, func() { j.lane.gov.Observe(Throttled) })
 		if err == nil {
 			j.src = dst
 			j.lane.gov.Observe(OK)
@@ -367,7 +401,7 @@ func (e *engine) fetchJob(ctx context.Context, j *job) error {
 			return err
 		}
 		var p string
-		p, err = j.lane.yt.Download(ctx, j.tr.ID, e.tmp, j.client+attempt)
+		p, err = j.lane.ytdlp().Download(ctx, j.tr.ID, e.tmp, j.client+attempt)
 		if err == nil {
 			j.lane.gov.Release(OK)
 			if st, serr := os.Stat(p); serr == nil {
@@ -468,7 +502,7 @@ func (e *engine) encodeJob(ctx context.Context, j *job) (string, error) {
 	var cover string
 	if j.res.Thumb != "" && e.Format != "opus" {
 		c := filepath.Join(e.tmp, j.tr.ID+".cover")
-		if err := getFile(ctx, j.lane.client, j.res.Thumb, c); err == nil {
+		if err := getFile(ctx, j.lane.http(), j.res.Thumb, c); err == nil {
 			cover = c
 			defer os.Remove(c)
 		}
@@ -488,3 +522,5 @@ func (e *engine) encodeJob(ctx context.Context, j *job) (string, error) {
 	}
 	return final, nil
 }
+
+func (l *lane) exitName() string { l.mu.Lock(); defer l.mu.Unlock(); return l.exit.Name }

@@ -73,19 +73,19 @@ Any video, playlist or album URL works, and you can pass several at once:
 ytm https://music.youtube.com/playlist?list=... https://youtu.be/dQw4w9WgXcQ -o ~/Music
 ```
 
-## Spreading downloads over several VPNs
-
-YouTube rate-limits per IP, so more exits means more speed. ytm gives every exit its own rate-limit governor, sends each track to the least-busy one, rests an exit that gets throttled and retries on another.
+## Proton VPN (optional, much faster)
 
 ```
-ytm vpn add ~/Downloads/*.conf     # save WireGuard configs from any provider (Proton, Mullvad, ...)
-ytm vpn test                       # bring them all up and print each exit IP
-ytm --vpn takeout.zip              # download spread across all of them
-ytm --vpn --direct <url>           # ...and your normal connection too
-ytm --proxy socks5://host:1080,socks5://other:1080 <url>   # or bring your own proxies (any OS)
+ytm setup      # sign in to Proton, pick your music folder and format. Once.
+ytm <link>     # that's it; downloads now go through several VPN servers at once
+ytm status     # shows the servers in use and the IP each one exits from
+ytm --no-vpn <link>   # skip the VPN for one run
+ytm logout
 ```
 
-On Linux `--vpn` creates one network namespace per config (needs `ip`, `wg`, `setpriv` and sudo, asked once). Only ytm's traffic enters the tunnels, DNS goes through the tunnel, and if a tunnel dies its exit just stops working instead of leaking. Namespaces are removed on exit; `ytm vpn clean` removes leftovers from a crash. Proton configs need no port forwarding for this.
+`ytm setup` is a short inline form. It signs in with your Proton account (the password goes only to Proton and is never saved; 2FA codes are supported) and registers a WireGuard key for ytm under your account. Then every run connects 3 servers in different countries (change the number in `ytm setup`) and spreads tracks over them; a server that gets rate-limited rests, and after repeated trouble ytm swaps it for a fresh server.
+
+The tunnels are userspace WireGuard inside ytm itself: no root, no WireGuard install, no system changes, and the same on Linux, macOS and Windows. If the VPN is on but can't connect, ytm stops rather than falling back to your own IP. Needs single-password mode on your Proton account and a plan that includes VPN.
 
 ## Development
 
