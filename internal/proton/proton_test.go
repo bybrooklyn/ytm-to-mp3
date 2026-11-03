@@ -120,6 +120,33 @@ func TestAppVersionFallback(t *testing.T) {
 	}
 }
 
+// Proton once answered an outdated app version with code 2028 and only the message saying
+// so; that must walk to the next identity, not be reported as a sign-in block.
+func TestUnsupportedVersionByMessage(t *testing.T) {
+	ids := appIDs()
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-pm-appversion") != ids[1].Version {
+			n++
+			w.WriteHeader(422)
+			w.Write([]byte(`{"Code":2028,"Error":"This version of the app is no longer supported, please update to continue using the app"}`))
+			return
+		}
+		w.Write([]byte(`{"Code":1000}`))
+	}))
+	defer srv.Close()
+	c := New("")
+	c.Base = srv.URL
+	c.Session = &Session{UID: "u", AccessToken: "t"}
+	if err := c.do(context.Background(), "GET", "/x", true, nil, nil); err != nil || n != 1 {
+		t.Fatalf("err=%v rejections=%d", err, n)
+	}
+	e := &APIError{Status: 422, Code: 2028, Msg: "This version of the app is no longer supported"}
+	if e.RateLimited() || !e.BadVersion() {
+		t.Fatal("must not be classed as a rate limit")
+	}
+}
+
 func TestHumanVerificationAndRateLimitErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

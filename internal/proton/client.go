@@ -45,9 +45,9 @@ func appIDs() []appID {
 		arch = runtime.GOARCH
 	}
 	return []appID{
-		{"linux-vpn@4.13.1", "ProtonVPN/4.13.1 (Linux; Ubuntu)"},
+		{"linux-vpn@4.19.0", "ProtonVPN/4.19.0 (Linux; Ubuntu)"},
 		{"linux-vpn-cli@1.1.0+" + arch, "ProtonVPN/1.1.0 (Linux; ubuntu/24.04)"},
-		{"linux-vpn-cli@6.1.1+" + arch, "ProtonVPN/6.1.1 (Linux; ubuntu/24.04)"},
+		{"linux-vpn@4.18.8", "ProtonVPN/4.18.8 (Linux; Ubuntu)"},
 	}
 }
 
@@ -217,7 +217,18 @@ type APIError struct {
 
 // RateLimited reports whether Proton is telling us to slow down. Retrying makes it worse.
 func (e *APIError) RateLimited() bool {
-	return e.Status == 429 || e.Status == 503 || e.Code == 2028
+	return !e.BadVersion() && (e.Status == 429 || e.Status == 503 || e.Code == 2028)
+}
+
+// BadVersion reports whether Proton rejected the app version we identify as. Proton
+// signals this with code 5003/5001/5005, but also sometimes with another code and only
+// the message ("This version of the app is no longer supported").
+func (e *APIError) BadVersion() bool {
+	if e.Code == 5003 || e.Code == 5001 || e.Code == 5005 {
+		return true
+	}
+	m := strings.ToLower(e.Msg)
+	return strings.Contains(m, "no longer supported") || strings.Contains(m, "update to continue")
 }
 
 // NeedsHuman reports whether Proton wants a CAPTCHA / email / SMS check first.
@@ -226,7 +237,7 @@ func (e *APIError) NeedsHuman() bool { return e.Code == 9001 }
 func (e *APIError) Error() string {
 	var hint string
 	switch {
-	case e.Code == 5003 || e.Code == 5001 || e.Code == 5005:
+	case e.BadVersion():
 		hint = "Proton rejected the app version ytm identifies as (ytm needs an update; or set YTM_APP_VERSION)"
 	case e.NeedsHuman():
 		hint = "Proton wants a human check (" + strings.Join(e.HVMethods, ", ") + ") before it lets this app sign in. " +
@@ -289,7 +300,7 @@ func (c *Client) once(ctx context.Context, method, path string, authed bool, in,
 		c.mu.Unlock()
 		err := c.send(ctx, ids[idx], method, path, authed, in, out)
 		var ae *APIError
-		if errors.As(err, &ae) && (ae.Code == 5003 || ae.Code == 5001) && idx+1 < len(ids) {
+		if errors.As(err, &ae) && ae.BadVersion() && idx+1 < len(ids) {
 			c.mu.Lock()
 			c.appIdx = idx + 1
 			c.mu.Unlock()

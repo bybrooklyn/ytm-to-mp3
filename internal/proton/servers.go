@@ -40,7 +40,7 @@ func (c *Client) Servers(ctx context.Context) ([]Server, error) {
 	maxTier := 0 // if the plan can't be read, assume the smallest so we don't try servers that will refuse us
 	if err := c.do(ctx, "GET", "/vpn/v2", true, nil, &vp); err != nil {
 		var ae *APIError
-		if !errors.As(err, &ae) || ae.Status == 401 || ae.Status == 403 || ae.Code == 5003 {
+		if !errors.As(err, &ae) || ae.Status == 401 || ae.Status == 403 || ae.BadVersion() {
 			return nil, err // network or auth problem: say so rather than guess
 		}
 	} else {

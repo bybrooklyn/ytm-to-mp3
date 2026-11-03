@@ -180,7 +180,7 @@ func signIn(ctx context.Context, pc *proton.Client, cfg *config.Config) error {
 		}
 		fmt.Println("  ✗", err)
 		var ae *proton.APIError
-		if errors.As(err, &ae) && (ae.RateLimited() || ae.Code == 5003 || ae.Code == 9001) {
+		if errors.As(err, &ae) && (ae.RateLimited() || ae.BadVersion() || ae.Code == 9001) {
 			// retrying can't help and a rate limit gets longer with every attempt
 			return errors.New("stopping here; fix the above, then run ytm setup again (set YTM_DEBUG=1 to see Proton's raw reply)")
 		}
