@@ -31,7 +31,9 @@ Run `ytm export`. It opens [Google Takeout](https://takeout.google.com/), tells 
 ytm setup                    one-time setup (Proton sign-in, music folder, format)
 ytm <input>...               download video/playlist links, a Takeout .zip/folder/.csv, or a text file of links
 ytm status                   show settings and test the VPN exits
-ytm logout                   forget your Proton login
+ytm doctor                   check tools, network, folders and login, and say how to fix problems
+ytm completion SHELL         tab completion: bash, zsh, fish or powershell (e.g. `source <(ytm completion bash)`)
+ytm logout                   sign out of Proton and delete ytm's saved login
 ytm export                   guide me through getting the export
 ytm tag <folder>             improve metadata (preview; add --apply to write, --undo to revert)
 ytm update                   refresh yt-dlp

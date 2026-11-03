@@ -216,5 +216,9 @@ func Describe(tracks []model.Track) string {
 			rich++
 		}
 	}
-	return fmt.Sprintf("%d tracks (%d with metadata)", len(tracks), rich)
+	word := "tracks"
+	if len(tracks) == 1 {
+		word = "track"
+	}
+	return fmt.Sprintf("%d %s (%d with metadata)", len(tracks), word, rich)
 }

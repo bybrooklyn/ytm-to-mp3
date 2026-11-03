@@ -16,7 +16,8 @@ install:
 
 # install to ~/.local/bin
 install-local: build
-    install -Dm755 ytm "${YTM_INSTALL_DIR:-$HOME/.local/bin}/ytm"
+    mkdir -p "${YTM_INSTALL_DIR:-$HOME/.local/bin}"
+    install -m755 ytm "${YTM_INSTALL_DIR:-$HOME/.local/bin}/ytm"
 
 # download URLs/exports: just get <url>... (extra args go to ytm)
 get *args:

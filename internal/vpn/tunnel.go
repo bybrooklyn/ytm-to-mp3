@@ -140,6 +140,12 @@ func Open(ctx context.Context, pc *proton.Client, n int, logf func(string, ...an
 	if err != nil {
 		return nil, err
 	}
+	// Every tunnel counts as a device on the account; opening more than the plan allows
+	// just gets the extras refused.
+	if mc := pc.MaxConnect; mc > 0 && n > mc {
+		logf("  your Proton plan allows %d devices at once; using %d tunnels", mc, mc)
+		n = mc
+	}
 	picks, err := proton.Pick(all, n*3, nil)
 	if err != nil {
 		return nil, err

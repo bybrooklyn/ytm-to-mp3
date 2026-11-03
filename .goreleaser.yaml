@@ -3,7 +3,7 @@ project_name: ytm
 
 before:
   hooks:
-    - go mod tidy
+    - go mod verify
 
 builds:
   - id: ytm
@@ -38,6 +38,33 @@ nfpms:
     license: MIT
     formats: [deb, rpm]
     recommends: [ffmpeg]
+
+brews:
+  - name: ytm
+    repository:
+      owner: bybrooklyn
+      name: homebrew-tap
+      token: '{{ with index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}{{ . }}{{ end }}'
+    homepage: https://github.com/bybrooklyn/ytm-to-mp3
+    description: Download your YouTube Music library as tagged audio files
+    license: MIT
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}auto{{ else }}true{{ end }}'
+    dependencies:
+      - name: ffmpeg
+        type: optional
+    test: |
+      system "#{bin}/ytm", "--version"
+
+scoops:
+  - name: ytm
+    repository:
+      owner: bybrooklyn
+      name: scoop-bucket
+      token: '{{ with index .Env "SCOOP_BUCKET_GITHUB_TOKEN" }}{{ . }}{{ end }}'
+    homepage: https://github.com/bybrooklyn/ytm-to-mp3
+    description: Download your YouTube Music library as tagged audio files
+    license: MIT
+    skip_upload: '{{ if index .Env "SCOOP_BUCKET_GITHUB_TOKEN" }}auto{{ else }}true{{ end }}'
 
 changelog:
   sort: asc

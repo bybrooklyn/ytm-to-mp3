@@ -27,7 +27,23 @@ jobs:
         if: runner.os == 'Windows'
       - run: go build -o ytm${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/ytm
       - name: smoke test
-        run: ./ytm version
+        run: |
+          ./ytm --version
+          ./ytm --dry-run dQw4w9WgXcQ -o ./smoke
+      - name: goreleaser check
+        if: runner.os == 'Linux'
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check
+      - name: goreleaser snapshot
+        if: runner.os == 'Linux'
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish
 
   cross-build:
     runs-on: ubuntu-latest

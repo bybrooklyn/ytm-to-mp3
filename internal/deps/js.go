@@ -8,41 +8,72 @@ import (
 	"runtime"
 )
 
-// ensureJS returns --js-runtimes values. yt-dlp needs a JavaScript runtime to
-// solve YouTube's challenges; use whatever is installed, else fetch deno.
-func ensureJS(ctx context.Context, bin string, logf Logger) ([]string, error) {
+// jsRuntimeNames maps yt-dlp runtime names to executables to look for on PATH.
+var jsRuntimeNames = []struct{ ytdlp, exe string }{
+	{"deno", "deno"},
+	{"node", "node"},
+	{"bun", "bun"},
+	{"quickjs", "qjs"},
+	{"quickjs", "quickjs"},
+}
+
+// denoDownload fetches deno into bin; a variable so tests can stub it.
+var denoDownload = downloadDeno
+
+// ensureJS returns --js-runtimes values. yt-dlp uses a JavaScript runtime to
+// solve YouTube's challenges; use whatever is installed, else try to fetch
+// deno. Having none is NOT fatal (e.g. windows/arm64 has no deno build):
+// yt-dlp still handles many videos, so we warn once and continue.
+func ensureJS(ctx context.Context, bin string, logf Logger) []string {
 	managed := filepath.Join(bin, exe("deno"))
 	if fileExists(managed) {
-		return []string{"deno:" + managed}, nil
+		return []string{"deno:" + managed}
 	}
 	var found []string
-	for _, name := range []string{"deno", "bun", "node"} {
-		if p, err := exec.LookPath(name); err == nil {
-			found = append(found, name+":"+p)
+	seen := map[string]bool{}
+	for _, r := range jsRuntimeNames {
+		if seen[r.ytdlp] {
+			continue
+		}
+		if p, err := exec.LookPath(r.exe); err == nil {
+			found = append(found, r.ytdlp+":"+p)
+			seen[r.ytdlp] = true
 		}
 	}
 	if len(found) > 0 {
-		return found, nil
+		return found
 	}
+	if err := denoDownload(ctx, bin, logf); err != nil {
+		logf("Warning: no JavaScript runtime (%v); install deno or node for best YouTube results. Continuing without one.", err)
+		return nil
+	}
+	return []string{"deno:" + managed}
+}
+
+func downloadDeno(ctx context.Context, bin string, logf Logger) error {
 	target, err := denoTarget()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	logf("Downloading deno (JavaScript runtime for YouTube, one time)...")
-	url := "https://github.com/denoland/deno/releases/latest/download/deno-" + target + ".zip"
+	name := "deno-" + target + ".zip"
+	base := denoBase
 	tmp := filepath.Join(bin, ".deno.zip")
-	if err := downloadFile(ctx, url, tmp, "", 0o644); err != nil {
-		return nil, err
-	}
 	defer removeQuiet(tmp)
+	// deno publishes <asset>.sha256sum next to each release asset.
+	if err := downloadVerified(ctx, base+name, base+name+".sha256sum", name, tmp, 0o644, logf, "deno"); err != nil {
+		return err
+	}
 	if err := unzipPick(tmp, bin, map[string]bool{exe("deno"): true}); err != nil {
-		return nil, err
+		return err
 	}
-	if !fileExists(managed) {
-		return nil, fmt.Errorf("deno missing from downloaded archive")
+	if !fileExists(filepath.Join(bin, exe("deno"))) {
+		return fmt.Errorf("deno missing from downloaded archive")
 	}
-	return []string{"deno:" + managed}, nil
+	return nil
 }
+
+var denoBase = "https://github.com/denoland/deno/releases/latest/download/"
 
 func denoTarget() (string, error) {
 	switch runtime.GOOS + "/" + runtime.GOARCH {
@@ -57,5 +88,5 @@ func denoTarget() (string, error) {
 	case "windows/amd64":
 		return "x86_64-pc-windows-msvc", nil
 	}
-	return "", fmt.Errorf("no prebuilt deno for %s/%s; install node or deno", runtime.GOOS, runtime.GOARCH)
+	return "", fmt.Errorf("no prebuilt deno for %s/%s", runtime.GOOS, runtime.GOARCH)
 }

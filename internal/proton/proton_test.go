@@ -44,12 +44,15 @@ func TestAPIHeadersAndErrors(t *testing.T) {
 	var hdr http.Header
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hdr = r.Header
-		if r.URL.Path == "/vpn" {
+		switch r.URL.Path {
+		case "/boom":
 			w.WriteHeader(400)
 			w.Write([]byte(`{"Code":5003,"Error":"old"}`))
-			return
+		case "/vpn":
+			w.Write([]byte(`{"Code":1000,"VPN":{"MaxTier":2,"MaxConnect":7}}`))
+		default:
+			w.Write([]byte(`{"Code":1000,"LogicalServers":[]}`))
 		}
-		w.Write([]byte(`{"Code":1000,"LogicalServers":[]}`))
 	}))
 	defer srv.Close()
 	c := New("")
@@ -61,7 +64,10 @@ func TestAPIHeadersAndErrors(t *testing.T) {
 	if hdr.Get("x-pm-appversion") != appVersion || hdr.Get("x-pm-uid") != "u1" || hdr.Get("Authorization") != "Bearer tok" {
 		t.Fatalf("headers: %v", hdr)
 	}
-	err := c.do(context.Background(), "GET", "/vpn", true, nil, nil)
+	if c.MaxConnect != 7 {
+		t.Fatalf("plan device limit not read, got %d", c.MaxConnect)
+	}
+	err := c.do(context.Background(), "GET", "/boom", true, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "needs an update") {
 		t.Fatalf("got %v", err)
 	}

@@ -35,7 +35,9 @@ const usage = `ytm - download YouTube / YouTube Music as tagged audio, through P
   ytm <link>...           download videos, playlists or albums
   ytm [takeout.zip]       download your YouTube Music library (guides you if you have no export)
   ytm status              show settings and test the VPN exits
+  ytm doctor              check tools, network, folders and login; says how to fix problems
   ytm logout              forget your Proton login
+  ytm completion SHELL    tab completion (bash, zsh, fish, powershell)
 
 Options (for one run; ytm setup saves your defaults):
   -o DIR       music folder          -f FORMAT   mp3, m4a, opus, flac
@@ -130,7 +132,7 @@ func parse(name string, args []string) (opts, []string, error) {
 
 // commands are the words that act as subcommands when they come first (flags may precede them).
 var commands = map[string]bool{"export": true, "tag": true, "update": true, "version": true, "help": true,
-	"setup": true, "login": true, "logout": true, "status": true}
+	"setup": true, "login": true, "logout": true, "status": true, "doctor": true, "completion": true}
 
 func run(args []string) error {
 	if len(args) == 1 && (args[0] == "--version" || args[0] == "-v") {
@@ -146,7 +148,7 @@ func run(args []string) error {
 	cmd := ""
 	if len(pos) > 0 && commands[pos[0]] {
 		cmd, pos = pos[0], pos[1:]
-		if len(pos) > 0 && cmd != "tag" && cmd != "export" {
+		if len(pos) > 0 && cmd != "tag" && cmd != "export" && cmd != "completion" {
 			return fmt.Errorf("'ytm %s' takes no arguments (got %q)", cmd, pos[0])
 		}
 	}
@@ -174,11 +176,28 @@ func run(args []string) error {
 	case "login":
 		return runSetup(ctx, u, true)
 	case "logout":
-		protonClient().Logout()
-		u.Printf("signed out of Proton")
+		pc := protonClient()
+		if !pc.SignedIn() {
+			u.Printf("you weren't signed in to Proton")
+			return nil
+		}
+		pc.Revoke(ctx)
+		u.Printf("signed out of Proton (and removed ytm's saved login). The ytm device key stays listed in your Proton account until you remove it at account.protonvpn.com.")
 		return nil
 	case "status":
 		return runStatus(ctx, u)
+	case "doctor":
+		return runDoctor(ctx, u, o)
+	case "completion":
+		if len(pos) != 1 {
+			return errors.New("usage: ytm completion bash|zsh|fish|powershell")
+		}
+		s, err := completionScript(pos[0])
+		if err != nil {
+			return err
+		}
+		fmt.Print(s)
+		return nil
 	case "tag":
 		if len(pos) != 1 {
 			return errors.New("usage: ytm tag <folder> [--apply] [--rename] [--undo] [--offline] [-y]")
@@ -313,6 +332,16 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	}
 	u.Printf("Found %s", takeout.Describe(tracks))
 
+	if o.dryRun {
+		if _, serr := os.Stat(filepath.Join(o.out, ".ytm")); serr != nil {
+			// Nothing downloaded here yet and a dry run must not create anything.
+			u.Printf("0 already downloaded, %d to go -> %s (%s)", len(tracks), o.out, o.format)
+			for _, t := range tracks {
+				u.Printf("  %s  %s", t.ID, t.Label())
+			}
+			return nil
+		}
+	}
 	st, err := store.Open(filepath.Join(o.out, ".ytm"))
 	if err != nil {
 		return err

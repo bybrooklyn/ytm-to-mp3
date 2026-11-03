@@ -4,11 +4,7 @@ package deps
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,7 +29,7 @@ type Tools struct {
 type Logger func(format string, a ...any)
 
 // maxPathYtDlpAge is how old a PATH-provided yt-dlp may be before we prefer a fresh managed copy.
-const maxPathYtDlpAge = 90 * 24 * time.Hour
+const maxPathYtDlpAge = 30 * 24 * time.Hour
 
 // Ensure locates or installs everything ytm needs.
 func Ensure(ctx context.Context, logf Logger) (Tools, error) {
@@ -53,9 +49,8 @@ func Ensure(ctx context.Context, logf Logger) (Tools, error) {
 	if t.FFmpeg, t.FFprobe, err = ensureFFmpeg(ctx, bin, logf); err != nil {
 		return t, fmt.Errorf("ffmpeg: %w", err)
 	}
-	if t.JSRuntimes, err = ensureJS(ctx, bin, logf); err != nil {
-		return t, fmt.Errorf("javascript runtime: %w", err)
-	}
+	// A missing JS runtime is not fatal: yt-dlp still works for many videos.
+	t.JSRuntimes = ensureJS(ctx, bin, logf)
 	return t, nil
 }
 
@@ -152,17 +147,36 @@ func installYtDlp(ctx context.Context, bin string, logf Logger) (string, error) 
 		return "", err
 	}
 	logf("Downloading yt-dlp...")
-	base := "https://github.com/yt-dlp/yt-dlp/releases/latest/download/"
-	sums, err := fetchString(ctx, base+"SHA2-256SUMS")
-	if err != nil {
-		return "", err
-	}
-	want := checksumFor(sums, asset)
+	base := ytDlpBase
 	dst := filepath.Join(bin, exe("yt-dlp"))
-	if err := downloadFile(ctx, base+asset, dst, want, 0o755); err != nil {
+	// yt-dlp publishes SHA2-256SUMS next to every release.
+	if err := downloadVerified(ctx, base+asset, base+"SHA2-256SUMS", asset, dst, 0o755, logf, "yt-dlp"); err != nil {
 		return "", err
 	}
 	return dst, nil
+}
+
+var ytDlpBase = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/"
+
+// downloadVerified downloads url to dst and verifies it against the entry for
+// name in the sha256sum-style listing at sumsURL. A missing listing or entry is
+// an error: callers use downloadFile directly when upstream has no checksums.
+func downloadVerified(ctx context.Context, url, sumsURL, name, dst string, mode os.FileMode, logf Logger, label string) error {
+	sums, err := fetchString(ctx, sumsURL)
+	if err != nil {
+		return fmt.Errorf("fetching checksums: %w", err)
+	}
+	want := checksumFor(sums, name)
+	if want == "" {
+		// Single-file *.sha256sum: "<hex>" or "<hex>  <name>".
+		if f := strings.Fields(sums); len(f) == 1 && len(f[0]) == 64 {
+			want = strings.ToLower(f[0])
+		}
+	}
+	if want == "" {
+		return fmt.Errorf("no checksum for %s in %s", name, sumsURL)
+	}
+	return downloadFile(ctx, url, dst, want, mode, logf, label)
 }
 
 // checksumFor finds `<hex>  <name>` in a sha256sum-style listing.
@@ -178,64 +192,7 @@ func checksumFor(listing, name string) string {
 
 // ---- HTTP helpers ----
 
-var httpClient = &http.Client{Timeout: 10 * time.Minute}
-
-func get(ctx context.Context, url string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "ytm-to-mp3")
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
-	}
-	return resp, nil
-}
-
-func fetchString(ctx context.Context, url string) (string, error) {
-	resp, err := get(ctx, url)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	return string(b), err
-}
-
-// downloadFile saves url to dst atomically, verifying sha256 when want is set.
-func downloadFile(ctx context.Context, url, dst, want string, mode os.FileMode) error {
-	resp, err := get(ctx, url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".dl-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(tmp, h), resp.Body); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if got := hex.EncodeToString(h.Sum(nil)); want != "" && got != want {
-		return fmt.Errorf("checksum mismatch for %s", url)
-	}
-	if err := os.Chmod(tmp.Name(), mode); err != nil {
-		return err
-	}
-	_ = os.Remove(dst) // Windows can't rename over an existing file
-	return os.Rename(tmp.Name(), dst)
-}
+// The HTTP download helpers live in download.go.
 
 func removeQuiet(p string) { _ = os.Remove(p) }
 

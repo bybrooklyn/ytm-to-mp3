@@ -45,6 +45,8 @@ type Client struct {
 	mu        sync.Mutex
 	refreshMu sync.Mutex
 	Session   *Session
+	// MaxConnect is how many devices the plan allows at once (0 = unknown); set by Servers.
+	MaxConnect int
 }
 
 // New returns a client, loading a saved session from path if there is one.
@@ -101,6 +103,16 @@ func (c *Client) saveErr() error {
 
 // SignedIn reports whether a session is stored.
 func (c *Client) SignedIn() bool { return c.Session != nil }
+
+// Revoke ends the session on Proton's side too (best effort), then forgets it locally.
+func (c *Client) Revoke(ctx context.Context) {
+	if c.Session != nil {
+		rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		_ = c.once(rctx, "DELETE", "/auth", true, nil, nil)
+		cancel()
+	}
+	c.Logout()
+}
 
 // Logout forgets the session and key.
 func (c *Client) Logout() {
