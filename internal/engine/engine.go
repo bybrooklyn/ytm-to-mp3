@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,6 +20,7 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/vpn"
 )
 
 // Options configures a run.
@@ -31,6 +33,9 @@ type Options struct {
 	Store    *store.Store
 	UI       *ui.UI
 	CacheDir string
+	// Exits are the network paths to spread work over (VPNs / proxies). Empty = the
+	// normal connection. Each gets its own rate-limit governor.
+	Exits []vpn.Exit
 }
 
 // Summary is the result of a run.
@@ -39,6 +44,14 @@ type Summary struct {
 	Bytes        int64
 	Elapsed      time.Duration
 	Interrupted  bool
+	PerExit      []ExitStat
+}
+
+// ExitStat is what one exit contributed.
+type ExitStat struct {
+	Name  string
+	Done  int
+	Bytes int64
 }
 
 type job struct {
@@ -46,12 +59,41 @@ type job struct {
 	res    *Resolved
 	src    string // downloaded source file
 	client int
+	lane   *lane // the exit this track was resolved on; stream URLs are tied to its IP
+}
+
+// lane is one exit with its own governor, HTTP client and yt-dlp settings.
+type lane struct {
+	exit   vpn.Exit
+	gov    *Governor
+	client *http.Client
+	yt     ytdlp
+	done   atomic.Int64
+	bytes  atomic.Int64
+}
+
+// pick chooses the least-loaded exit that isn't cooling down, avoiding `avoid` if possible.
+func (e *engine) pick(avoid *lane) *lane {
+	var best *lane
+	var bestScore float64
+	for _, l := range e.lanes {
+		score := l.gov.Load()
+		if c := l.gov.Cooling(); c > 0 {
+			score += 10 + c.Seconds()
+		}
+		if l == avoid && len(e.lanes) > 1 {
+			score += 5
+		}
+		if best == nil || score < bestScore {
+			best, bestScore = l, score
+		}
+	}
+	return best
 }
 
 type engine struct {
 	Options
-	yt     ytdlp
-	gov    *Governor
+	lanes  []*lane
 	tmp    string
 	bytes  atomic.Int64
 	done   atomic.Int64
@@ -68,15 +110,34 @@ const (
 // Run downloads every track in todo and records results in the store.
 func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 	e := &engine{Options: o, total: len(todo)}
-	e.yt = ytdlp{tools: o.Tools, cookies: o.Cookies, cache: o.CacheDir}
-	start, maxC, gap := 3, 8, 600*time.Millisecond
+	exits := o.Exits
+	if len(exits) == 0 {
+		exits = []vpn.Exit{vpn.Direct}
+	}
+	start, laneMax, gap := 3, 8, 600*time.Millisecond
 	if o.Cookies != "" {
-		start, maxC, gap = 4, 12, 400*time.Millisecond
+		start, laneMax, gap = 4, 12, 400*time.Millisecond
 	}
 	if o.Jobs > 0 {
-		maxC, start = o.Jobs, min(start, o.Jobs)
+		laneMax = max(1, (o.Jobs+len(exits)-1)/len(exits))
+		start = min(start, laneMax)
 	}
-	e.gov = NewGovernor(start, maxC, gap)
+	maxC := 0
+	for _, x := range exits {
+		cl, err := vpn.NewClient(x.Proxy)
+		if err != nil {
+			o.UI.Printf("skipping exit %s: %v", x.Name, err)
+			continue
+		}
+		e.lanes = append(e.lanes, &lane{
+			exit: x, gov: NewGovernor(start, laneMax, gap), client: cl,
+			yt: ytdlp{tools: o.Tools, cookies: o.Cookies, cache: o.CacheDir, proxy: x.Proxy},
+		})
+		maxC += laneMax
+	}
+	if len(e.lanes) == 0 {
+		return Summary{Failed: len(todo)}
+	}
 	e.tmp = filepath.Join(o.Out, ".ytm", "tmp")
 	_ = os.RemoveAll(e.tmp)
 	_ = os.MkdirAll(e.tmp, 0o755)
@@ -140,16 +201,33 @@ feed:
 	close(stopStatus)
 	o.UI.ClearStatus()
 
+	var per []ExitStat
+	for _, l := range e.lanes {
+		per = append(per, ExitStat{Name: l.exit.Name, Done: int(l.done.Load()), Bytes: l.bytes.Load()})
+	}
 	return Summary{
-		Done: int(e.done.Load()), Failed: int(e.failed.Load()), Bytes: e.bytes.Load(),
+		PerExit: per,
+		Done:    int(e.done.Load()), Failed: int(e.failed.Load()), Bytes: e.bytes.Load(),
 		Elapsed: time.Since(began), Interrupted: ctx.Err() != nil,
 	}
 }
 
 func (e *engine) status(speed float64) {
 	finished := int(e.done.Load() + e.failed.Load())
-	line := fmt.Sprintf("[%d/%d] %s/s  active %d  limit %d", finished, e.total, HumanBytes(int64(speed)), e.active.Load(), e.gov.Limit())
-	if c := e.gov.Cooling(); c > 0 {
+	limit, cooling := 0, 0
+	for _, l := range e.lanes {
+		limit += l.gov.Limit()
+		if l.gov.Cooling() > 0 {
+			cooling++
+		}
+	}
+	line := fmt.Sprintf("[%d/%d] %s/s  active %d  limit %d", finished, e.total, HumanBytes(int64(speed)), e.active.Load(), limit)
+	if len(e.lanes) > 1 {
+		line += fmt.Sprintf("  exits %d", len(e.lanes)-cooling)
+		if cooling > 0 {
+			line += fmt.Sprintf("+%d resting", cooling)
+		}
+	} else if c := e.lanes[0].gov.Cooling(); c > 0 {
 		line += fmt.Sprintf("  (rate limited, pausing %ds)", int(c.Seconds())+1)
 	}
 	e.UI.Status("%s", line)
@@ -196,48 +274,52 @@ func (e *engine) resolveWorker(ctx context.Context, slot int, in <-chan model.Tr
 		if ctx.Err() != nil {
 			continue
 		}
-		res, client, err := e.resolveWithRetry(ctx, t)
+		res, client, ln, err := e.resolveWithRetry(ctx, t)
 		if err != nil {
 			e.fail(t, err)
 			continue
 		}
 		e.active.Add(1)
 		select {
-		case out <- &job{tr: t, res: res, client: client}:
+		case out <- &job{tr: t, res: res, client: client, lane: ln}:
 		case <-ctx.Done():
 			e.active.Add(-1)
 		}
 	}
 }
 
-func (e *engine) resolveWithRetry(ctx context.Context, t model.Track) (*Resolved, int, error) {
+func (e *engine) resolveWithRetry(ctx context.Context, t model.Track) (*Resolved, int, *lane, error) {
 	var err error
+	var prev *lane
 	transient, throttled := 0, 0
 	for client := 0; ; client++ {
-		if err = e.gov.Acquire(ctx); err != nil {
-			return nil, 0, err
+		ln := e.pick(prev)
+		if err = ln.gov.Acquire(ctx); err != nil {
+			return nil, 0, nil, err
 		}
 		var res *Resolved
-		res, err = e.yt.Resolve(ctx, t.ID, client)
+		res, err = ln.yt.Resolve(ctx, t.ID, client)
 		switch {
 		case err == nil:
-			e.gov.Release(OK)
-			return res, client, nil
+			ln.gov.Release(OK)
+			return res, client, ln, nil
 		case ctx.Err() != nil:
-			e.gov.Release(Neutral)
-			return nil, 0, ctx.Err()
+			ln.gov.Release(Neutral)
+			return nil, 0, nil, ctx.Err()
 		case kindOf(err) == kindPermanent:
-			e.gov.Release(Neutral)
-			return nil, 0, err
+			ln.gov.Release(Neutral)
+			return nil, 0, nil, err
 		case kindOf(err) == kindThrottled:
-			e.gov.Release(Throttled)
+			ln.gov.Release(Throttled)
+			prev = ln // try another exit next
 			if throttled++; throttled >= maxThrottled {
-				return nil, 0, err
+				return nil, 0, nil, err
 			}
 		default:
-			e.gov.Release(Neutral)
+			ln.gov.Release(Neutral)
+			prev = ln
 			if transient++; transient >= maxTransient {
-				return nil, 0, err
+				return nil, 0, nil, err
 			}
 			sleep(ctx, time.Duration(transient)*2*time.Second)
 		}
@@ -267,10 +349,10 @@ func (e *engine) fetchJob(ctx context.Context, j *job) error {
 	}
 	if canFetch(j.res) {
 		dst := filepath.Join(e.tmp, j.tr.ID+".src")
-		err := fetch(ctx, j.res, dst, func(n int64) { e.bytes.Add(n) }, func() { e.gov.Observe(Throttled) })
+		err := fetch(ctx, j.lane.client, j.res, dst, func(n int64) { e.bytes.Add(n); j.lane.bytes.Add(n) }, func() { j.lane.gov.Observe(Throttled) })
 		if err == nil {
 			j.src = dst
-			e.gov.Observe(OK)
+			j.lane.gov.Observe(OK)
 			return nil
 		}
 		_ = os.Remove(dst)
@@ -281,13 +363,13 @@ func (e *engine) fetchJob(ctx context.Context, j *job) error {
 	}
 	var err error
 	for attempt := 0; attempt < maxTransient; attempt++ {
-		if err = e.gov.Acquire(ctx); err != nil {
+		if err = j.lane.gov.Acquire(ctx); err != nil {
 			return err
 		}
 		var p string
-		p, err = e.yt.Download(ctx, j.tr.ID, e.tmp, j.client+attempt)
+		p, err = j.lane.yt.Download(ctx, j.tr.ID, e.tmp, j.client+attempt)
 		if err == nil {
-			e.gov.Release(OK)
+			j.lane.gov.Release(OK)
 			if st, serr := os.Stat(p); serr == nil {
 				e.bytes.Add(st.Size())
 			}
@@ -296,12 +378,12 @@ func (e *engine) fetchJob(ctx context.Context, j *job) error {
 		}
 		switch kindOf(err) {
 		case kindPermanent:
-			e.gov.Release(Neutral)
+			j.lane.gov.Release(Neutral)
 			return err
 		case kindThrottled:
-			e.gov.Release(Throttled)
+			j.lane.gov.Release(Throttled)
 		default:
-			e.gov.Release(Neutral)
+			j.lane.gov.Release(Neutral)
 			sleep(ctx, 2*time.Second)
 		}
 	}
@@ -319,6 +401,7 @@ func (e *engine) encodeWorker(ctx context.Context, in <-chan *job) {
 		}
 		_ = e.Store.MarkDone(j.tr.ID, path)
 		e.done.Add(1)
+		j.lane.done.Add(1)
 		e.UI.Printf("✓ %s", j.tr.Label())
 	}
 }
@@ -385,7 +468,7 @@ func (e *engine) encodeJob(ctx context.Context, j *job) (string, error) {
 	var cover string
 	if j.res.Thumb != "" && e.Format != "opus" {
 		c := filepath.Join(e.tmp, j.tr.ID+".cover")
-		if err := getFile(ctx, j.res.Thumb, c); err == nil {
+		if err := getFile(ctx, j.lane.client, j.res.Thumb, c); err == nil {
 			cover = c
 			defer os.Remove(c)
 		}

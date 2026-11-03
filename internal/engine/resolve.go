@@ -136,6 +136,7 @@ type ytdlp struct {
 	tools   deps.Tools
 	cookies string // path to a cookie jar or ""
 	cache   string
+	proxy   string // SOCKS/HTTP proxy for this exit, or ""
 }
 
 func (y ytdlp) baseArgs(clientIdx int) []string {
@@ -145,6 +146,9 @@ func (y ytdlp) baseArgs(clientIdx int) []string {
 	}
 	if y.cache != "" {
 		a = append(a, "--cache-dir", y.cache)
+	}
+	if y.proxy != "" {
+		a = append(a, "--proxy", y.proxy)
 	}
 	if y.cookies != "" {
 		a = append(a, "--cookies", y.cookies)
@@ -251,6 +255,9 @@ func (y ytdlp) Download(ctx context.Context, id, dir string, clientIdx int) (str
 // Expand turns a playlist / album URL into tracks.
 func (y ytdlp) Expand(ctx context.Context, url string) ([]model.Track, error) {
 	args := []string{"--ignore-config", "--no-warnings", "--flat-playlist", "-J", url}
+	if y.proxy != "" {
+		args = append(args[:2:2], append([]string{"--proxy", y.proxy}, args[2:]...)...)
+	}
 	if y.cookies != "" {
 		args = append(args[:2:2], append([]string{"--cookies", y.cookies}, args[2:]...)...)
 	}

@@ -150,3 +150,10 @@ func (g *Governor) Cooling() time.Duration {
 	}
 	return 0
 }
+
+// Load is how full the governor is (in-flight requests / limit).
+func (g *Governor) Load() float64 {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return float64(g.inflight) / float64(max(1, g.limit))
+}

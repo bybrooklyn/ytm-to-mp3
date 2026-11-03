@@ -73,6 +73,20 @@ Any video, playlist or album URL works, and you can pass several at once:
 ytm https://music.youtube.com/playlist?list=... https://youtu.be/dQw4w9WgXcQ -o ~/Music
 ```
 
+## Spreading downloads over several VPNs
+
+YouTube rate-limits per IP, so more exits means more speed. ytm gives every exit its own rate-limit governor, sends each track to the least-busy one, rests an exit that gets throttled and retries on another.
+
+```
+ytm vpn add ~/Downloads/*.conf     # save WireGuard configs from any provider (Proton, Mullvad, ...)
+ytm vpn test                       # bring them all up and print each exit IP
+ytm --vpn takeout.zip              # download spread across all of them
+ytm --vpn --direct <url>           # ...and your normal connection too
+ytm --proxy socks5://host:1080,socks5://other:1080 <url>   # or bring your own proxies (any OS)
+```
+
+On Linux `--vpn` creates one network namespace per config (needs `ip`, `wg`, `setpriv` and sudo, asked once). Only ytm's traffic enters the tunnels, DNS goes through the tunnel, and if a tunnel dies its exit just stops working instead of leaking. Namespaces are removed on exit; `ytm vpn clean` removes leftovers from a crash. Proton configs need no port forwarding for this.
+
 ## Development
 
 `just` lists the tasks: `just build`, `just install`, `just check`, `just get <url>`.

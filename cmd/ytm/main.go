@@ -23,6 +23,7 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/takeout"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/vpn"
 )
 
 var version = "dev"
@@ -36,6 +37,8 @@ Usage:
   ytm export                  walk through getting your export from Google Takeout
   ytm tag <folder>            clean up and improve metadata (preview; --apply writes)
   ytm update                  refresh yt-dlp
+  ytm vpn add <file.conf>...  save WireGuard configs (any provider) for --vpn
+  ytm vpn list|test|clean     show saved configs / bring them up and show each exit IP / remove stale namespaces
 
 Options:
   -o DIR       output folder (default ./Music)
@@ -46,6 +49,11 @@ Options:
   --retry      also retry tracks that were unavailable before
   --all        include ID-only playlists from a Takeout export
   -y           assume yes
+  --vpn        spread downloads over all saved WireGuard configs (Linux, needs sudo);
+               each config runs in its own network namespace, only ytm uses it
+  --vpn-conf P WireGuard .conf files/folders (comma separated) instead of the saved ones
+  --proxy URL  extra exits: socks5://host:port or http://host:port (comma separated)
+  --direct     also use your normal connection as an exit when VPNs/proxies are given
 `
 
 func main() {
@@ -72,6 +80,11 @@ type opts struct {
 	rename    bool
 	undo      bool
 	offline   bool
+	vpn       bool
+	vpnConf   string
+	proxy     string
+	direct    bool
+	socket    string
 }
 
 func parse(name string, args []string) (opts, []string, error) {
@@ -90,6 +103,11 @@ func parse(name string, args []string) (opts, []string, error) {
 	fs.BoolVar(&o.rename, "rename", false, "")
 	fs.BoolVar(&o.undo, "undo", false, "")
 	fs.BoolVar(&o.offline, "offline", false, "")
+	fs.BoolVar(&o.vpn, "vpn", false, "")
+	fs.StringVar(&o.vpnConf, "vpn-conf", "", "")
+	fs.StringVar(&o.proxy, "proxy", "", "")
+	fs.BoolVar(&o.direct, "direct", false, "")
+	fs.StringVar(&o.socket, "socket", "", "")
 	// Go's flag package stops at the first positional; keep going so flags may follow it.
 	var pos []string
 	for {
@@ -112,7 +130,7 @@ func run(args []string) error {
 	cmd := ""
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
-		case "export", "tag", "update", "version", "help":
+		case "export", "tag", "update", "version", "help", "vpn", "vpn-proxy":
 			cmd, args = args[0], args[1:]
 		}
 	}
@@ -122,6 +140,9 @@ func run(args []string) error {
 			return nil
 		}
 		return err
+	}
+	if cmd == "vpn-proxy" {
+		return vpn.ProxyMain(o.socket)
 	}
 	ctx, stop := signalContext()
 	defer stop()
@@ -142,6 +163,8 @@ func run(args []string) error {
 			return err
 		}
 		return download(ctx, u, o, p)
+	case "vpn":
+		return runVPN(ctx, u, o, pos)
 	case "tag":
 		if len(pos) != 1 {
 			return errors.New("usage: ytm tag <folder> [--apply] [--rename] [--undo] [--offline] [-y]")
@@ -289,13 +312,23 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		}
 		jar = cookies.Setup(ctx, u, &cfg, tools, o.noCookies)
 	}
+	exits, closeExits, err := buildExits(ctx, u, o)
+	if err != nil {
+		return err
+	}
+	defer closeExits()
 	cache, _ := config.CacheDir()
 	sum := engine.Run(ctx, engine.Options{
 		Out: o.out, Format: o.format, Jobs: o.jobs, Cookies: jar.File, Tools: tools,
-		Store: st, UI: u, CacheDir: filepath.Join(cache, "yt-dlp"),
+		Store: st, UI: u, CacheDir: filepath.Join(cache, "yt-dlp"), Exits: exits,
 	}, plan.Todo)
 
 	u.Printf("\n%d downloaded, %d failed, %s in %s", sum.Done, sum.Failed, engine.HumanBytes(sum.Bytes), sum.Elapsed.Round(time.Second))
+	if len(sum.PerExit) > 1 {
+		for _, x := range sum.PerExit {
+			u.Printf("  %-24s %4d tracks  %s", x.Name, x.Done, engine.HumanBytes(x.Bytes))
+		}
+	}
 	if fails, _ := st.Failures(); len(fails) > 0 {
 		sort.Slice(fails, func(i, j int) bool { return fails[i].Error < fails[j].Error })
 		u.Printf("Not downloaded (%d); run ytm again to retry the temporary ones:", len(fails))
@@ -315,4 +348,101 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		return context.Canceled
 	}
 	return nil
+}
+
+// buildExits turns --vpn / --vpn-conf / --proxy into the exits the engine spreads over.
+func buildExits(ctx context.Context, u *ui.UI, o opts) ([]vpn.Exit, func(), error) {
+	noop := func() {}
+	var exits []vpn.Exit
+	closer := noop
+	if o.proxy != "" {
+		px, err := vpn.Proxies([]string{o.proxy})
+		if err != nil {
+			return nil, noop, err
+		}
+		exits = append(exits, px...)
+	}
+	if o.vpn || o.vpnConf != "" {
+		var paths []string
+		if o.vpnConf != "" {
+			paths = []string{o.vpnConf}
+		}
+		files, err := vpn.ConfFiles(paths)
+		if err != nil {
+			return nil, noop, err
+		}
+		u.Printf("Bringing up %d VPN tunnel(s)...", len(files))
+		pool, err := vpn.Up(ctx, files, func(f string, a ...any) { u.Printf(f, a...) })
+		if err != nil {
+			return nil, noop, err
+		}
+		closer = pool.Close
+		exits = append(exits, pool.Exits...)
+	}
+	if len(exits) == 0 {
+		return nil, noop, nil
+	}
+	if o.direct {
+		exits = append(exits, vpn.Direct)
+	}
+	u.Printf("Spreading downloads over %d exit(s)", len(exits))
+	return exits, closer, nil
+}
+
+func runVPN(ctx context.Context, u *ui.UI, o opts, pos []string) error {
+	sub := ""
+	if len(pos) > 0 {
+		sub, pos = pos[0], pos[1:]
+	}
+	switch sub {
+	case "add":
+		if len(pos) == 0 {
+			return errors.New("usage: ytm vpn add <file.conf>...")
+		}
+		added, err := vpn.Add(pos)
+		for _, a := range added {
+			u.Printf("saved %s", a)
+		}
+		return err
+	case "list":
+		files, err := vpn.ConfFiles(nil)
+		if err != nil {
+			return err
+		}
+		for _, f := range files {
+			u.Printf("%s", f)
+		}
+		return nil
+	case "clean":
+		vpn.Clean(func(f string, a ...any) { u.Printf(f, a...) })
+		return nil
+	case "test":
+		var paths []string
+		if o.vpnConf != "" {
+			paths = []string{o.vpnConf}
+		}
+		files, err := vpn.ConfFiles(paths)
+		if err != nil {
+			return err
+		}
+		pool, err := vpn.Up(ctx, files, func(f string, a ...any) { u.Printf(f, a...) })
+		if err != nil {
+			return err
+		}
+		defer pool.Close()
+		for _, x := range pool.Exits {
+			c, _ := vpn.NewClient(x.Proxy)
+			c.Timeout = 20 * time.Second
+			ip := "?"
+			if resp, err := c.Get("https://api.ipify.org"); err == nil {
+				b := make([]byte, 64)
+				n, _ := resp.Body.Read(b)
+				resp.Body.Close()
+				ip = strings.TrimSpace(string(b[:n]))
+			}
+			u.Printf("  %-24s exit IP %s", x.Name, ip)
+		}
+		return nil
+	}
+	return errors.New("usage: ytm vpn add|list|test|clean")
 }

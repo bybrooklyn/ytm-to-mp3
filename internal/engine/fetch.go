@@ -21,15 +21,6 @@ const (
 
 var errUnfetchable = &Error{kindTransient, "stream URL rejected"}
 
-var fetchClient = &http.Client{
-	Transport: &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		MaxIdleConnsPerHost: 32,
-		ForceAttemptHTTP2:   true,
-		TLSHandshakeTimeout: 15 * time.Second,
-	},
-}
-
 // contentLength returns the total size from the URL's clen parameter or the yt-dlp metadata.
 func contentLength(r *Resolved) int64 {
 	if u, err := url.Parse(r.URL); err == nil {
@@ -47,7 +38,7 @@ func canFetch(r *Resolved) bool {
 
 // fetch downloads r to dst using parallel ranged requests. onBytes is told about progress.
 // A 403/404 means the URL is unusable (errUnfetchable); 429 is reported as throttling.
-func fetch(ctx context.Context, r *Resolved, dst string, onBytes func(int64), onThrottle func()) error {
+func fetch(ctx context.Context, client *http.Client, r *Resolved, dst string, onBytes func(int64), onThrottle func()) error {
 	total := contentLength(r)
 	f, err := os.OpenFile(dst, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
 	if err != nil {
@@ -79,7 +70,7 @@ func fetch(ctx context.Context, r *Resolved, dst string, onBytes func(int64), on
 				}
 				start := int64(i) * chunkSize
 				end := min(start+chunkSize, total) - 1
-				if err := fetchChunk(ctx, r, f, start, end, onBytes, onThrottle); err != nil {
+				if err := fetchChunk(ctx, client, r, f, start, end, onBytes, onThrottle); err != nil {
 					fail(err)
 					return
 				}
@@ -116,7 +107,7 @@ func chunkRequest(ctx context.Context, r *Resolved, start, end int64) (*http.Req
 
 func hasSuffix(s, suffix string) bool { return strings.HasSuffix(s, suffix) }
 
-func fetchChunk(ctx context.Context, r *Resolved, f *os.File, start, end int64, onBytes func(int64), onThrottle func()) error {
+func fetchChunk(ctx context.Context, client *http.Client, r *Resolved, f *os.File, start, end int64, onBytes func(int64), onThrottle func()) error {
 	var lastErr error
 	for attempt := 0; attempt < 4; attempt++ {
 		if attempt > 0 {
@@ -130,7 +121,7 @@ func fetchChunk(ctx context.Context, r *Resolved, f *os.File, start, end int64, 
 		if err != nil {
 			return err
 		}
-		resp, err := fetchClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -196,12 +187,12 @@ func copyAt(f *os.File, r io.Reader, off, limit int64, onBytes func(int64)) (int
 }
 
 // getFile downloads a small file (cover art).
-func getFile(ctx context.Context, rawurl, dst string) error {
+func getFile(ctx context.Context, client *http.Client, rawurl, dst string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawurl, nil)
 	if err != nil {
 		return err
 	}
-	resp, err := fetchClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

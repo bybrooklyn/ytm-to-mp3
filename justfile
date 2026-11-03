@@ -42,3 +42,7 @@ snapshot:
 
 clean:
     rm -rf ytm ytm.exe dist
+
+# bring every saved VPN up and show exit IPs
+vpn-test:
+    go run ./cmd/ytm vpn test
