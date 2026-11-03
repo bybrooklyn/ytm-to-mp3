@@ -31,8 +31,8 @@ const usage = `ytm - download your YouTube Music library as tagged audio files
 
 Usage:
   ytm                         guided: find or fetch your export, then download it
-  ytm <export>                download; <export> is a Takeout .zip, folder, .csv,
-                              a text file of video links, or a playlist/video URL
+  ytm <input>...              download; each <input> is a video/playlist/album URL,
+                              a Takeout .zip, folder or .csv, or a text file of links
   ytm export                  walk through getting your export from Google Takeout
   ytm tag <folder>            clean up and improve metadata (preview; --apply writes)
   ytm update                  refresh yt-dlp
@@ -156,10 +156,8 @@ func run(args []string) error {
 			return err
 		}
 		return download(ctx, u, o, p)
-	case 1:
-		return download(ctx, u, o, pos[0])
 	}
-	return errors.New("give ytm one export to download (try: ytm --help)")
+	return download(ctx, u, o, pos...)
 }
 
 // signalContext cancels on the first Ctrl-C and exits hard on the second.
@@ -212,26 +210,49 @@ func findExisting() (string, bool) {
 
 func isURL(s string) bool { return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") }
 
-func download(ctx context.Context, u *ui.UI, o opts, input string) error {
+func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	logf := func(f string, a ...any) { u.Printf(f, a...) }
 	var tools deps.Tools
 	var jar cookies.Result
 	cfg := config.Load()
 
 	var tracks []model.Track
-	if isURL(input) {
-		var err error
-		if tools, err = deps.Ensure(ctx, logf); err != nil {
-			return err
+	seen := map[string]bool{}
+	add := func(ts []model.Track) {
+		for _, t := range ts {
+			if !seen[t.ID] {
+				seen[t.ID] = true
+				tracks = append(tracks, t)
+			}
 		}
-		jar = cookies.Setup(ctx, u, &cfg, tools, o.noCookies)
-		if tracks, err = engine.ExpandURL(ctx, tools, jar.File, input); err != nil {
+	}
+	for _, input := range inputs {
+		input = strings.Trim(input, `"' `)
+		if isURL(input) {
+			var err error
+			if tools.YtDlp == "" {
+				if tools, err = deps.Ensure(ctx, logf); err != nil {
+					return err
+				}
+				jar = cookies.Setup(ctx, u, &cfg, tools, o.noCookies)
+			}
+			ts, err := engine.ExpandURL(ctx, tools, jar.File, input)
+			if err != nil {
+				return err
+			}
+			add(ts)
+		} else if _, err := os.Stat(input); err != nil {
+			if id, ok := takeout.ExtractID(input); ok && len(input) == 11 {
+				add([]model.Track{{ID: id}})
+				continue
+			}
 			return err
-		}
-	} else {
-		var err error
-		if tracks, err = takeout.Load(input, o.all); err != nil {
-			return err
+		} else {
+			ts, err := takeout.Load(input, o.all)
+			if err != nil {
+				return err
+			}
+			add(ts)
 		}
 	}
 	u.Printf("Found %s", takeout.Describe(tracks))

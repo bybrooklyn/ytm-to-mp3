@@ -16,7 +16,7 @@ That's it. On first run ytm fetches the tools it needs (yt-dlp, ffmpeg and a Jav
 | Linux / macOS | `curl -fsSL https://raw.githubusercontent.com/bybrooklyn/ytm-to-mp3/main/install.sh \| sh` |
 | Windows (PowerShell) | `irm https://raw.githubusercontent.com/bybrooklyn/ytm-to-mp3/main/install.ps1 \| iex` |
 | Anything | download a binary from the [releases page](https://github.com/bybrooklyn/ytm-to-mp3/releases) (`.deb`/`.rpm` too) |
-| From source | `go install github.com/bybrooklyn/ytm-to-mp3/cmd/ytm@latest` |
+| From source | `just install` (or `go install github.com/bybrooklyn/ytm-to-mp3/cmd/ytm@latest`) |
 
 ## Getting your export
 
@@ -25,7 +25,7 @@ Run `ytm export`. It opens [Google Takeout](https://takeout.google.com/), tells 
 ## Commands
 
 ```
-ytm [export]                 download a Takeout .zip / folder / .csv, a text file of links, or a playlist URL
+ytm <input>...               download video/playlist URLs, a Takeout .zip/folder/.csv, or a text file of links
 ytm export                   guide me through getting the export
 ytm tag <folder>             improve metadata (preview; add --apply to write, --undo to revert)
 ytm update                   refresh yt-dlp
@@ -64,3 +64,15 @@ Everything YouTube knows is kept: title, artist(s), album, release or upload dat
 - Only download music you have the right to. This tool automates what yt-dlp does; respect YouTube's terms and copyright law where you live.
 
 MIT licensed.
+
+## Downloading anything from YouTube
+
+Any video, playlist or album URL works, and you can pass several at once:
+
+```
+ytm https://music.youtube.com/playlist?list=... https://youtu.be/dQw4w9WgXcQ -o ~/Music
+```
+
+## Development
+
+`just` lists the tasks: `just build`, `just install`, `just check`, `just get <url>`.
