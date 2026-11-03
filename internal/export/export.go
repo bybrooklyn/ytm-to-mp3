@@ -21,11 +21,55 @@ const takeoutURL = "https://takeout.google.com/"
 // SearchDirs are where a finished export is likely to be.
 func SearchDirs() []string {
 	home, _ := os.UserHomeDir()
-	dirs := []string{".", filepath.Join(home, "Downloads"), filepath.Join(home, "Desktop"), home}
+	dirs := []string{}
+	// the real download folder first: it may be renamed or translated (~/Téléchargements)
 	if d := os.Getenv("XDG_DOWNLOAD_DIR"); d != "" {
 		dirs = append(dirs, d)
 	}
-	return dirs
+	dirs = append(dirs, xdgUserDirs(home)...)
+	dirs = append(dirs, filepath.Join(home, "Downloads"), filepath.Join(home, "Desktop"),
+		filepath.Join(home, "Documents"), home, ".")
+	seen := map[string]bool{}
+	out := dirs[:0]
+	for _, d := range dirs {
+		abs, err := filepath.Abs(d)
+		if err != nil || seen[abs] {
+			continue
+		}
+		if st, err := os.Stat(abs); err != nil || !st.IsDir() {
+			continue
+		}
+		seen[abs] = true
+		out = append(out, abs)
+	}
+	return out
+}
+
+// xdgUserDirs reads ~/.config/user-dirs.dirs (Linux) for the download, desktop and
+// documents folders.
+func xdgUserDirs(home string) []string {
+	cfg := os.Getenv("XDG_CONFIG_HOME")
+	if cfg == "" {
+		cfg = filepath.Join(home, ".config")
+	}
+	b, err := os.ReadFile(filepath.Join(cfg, "user-dirs.dirs"))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		for _, k := range []string{"XDG_DOWNLOAD_DIR=", "XDG_DESKTOP_DIR=", "XDG_DOCUMENTS_DIR="} {
+			if v, ok := strings.CutPrefix(line, k); ok {
+				v = strings.Trim(v, `"`)
+				v = strings.ReplaceAll(v, "$HOME", home)
+				if filepath.IsAbs(v) {
+					out = append(out, v)
+				}
+			}
+		}
+	}
+	return out
 }
 
 func isExport(name string) bool {

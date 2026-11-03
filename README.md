@@ -5,8 +5,10 @@ Download your YouTube Music library as properly tagged audio files. One small bi
 ```
 ytm setup                          # once: Proton sign-in (optional), music folder, format
 ytm "https://youtu.be/..."         # any video, playlist or album link (keep the quotes)
-ytm                                # your whole YouTube Music library from a Takeout export
+ytm                                # a short menu: import your library, download a link, settings
 ```
+
+Plain `ytm` in a terminal opens a menu. **Import my YouTube Music library** looks through your Downloads, Desktop and Documents folders (including renamed folders like `~/Téléchargements`) for anything that contains YouTube Music data, whatever it is called, lists what it found with track counts, and shows a preview before it downloads. Exports split over several zips (`-001`, `-002`) are combined. You can also drag a zip, folder, `.csv` or text file of links into the terminal when it asks "Where is it?", or pass one on the command line.
 
 On first run ytm fetches the tools it needs (yt-dlp, ffmpeg and a JavaScript runtime) and downloads with embedded cover art. Without the Proton VPN it asks once whether it may use your browser's YouTube login; with it, browser cookies are not used. Music goes to `~/Music` unless you choose otherwise in `ytm setup` or with `-o`.
 

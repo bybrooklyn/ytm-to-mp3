@@ -207,6 +207,9 @@ func run(args []string) error {
 
 	switch len(pos) {
 	case 0:
+		if u.Interactive() {
+			return runHome(ctx, u, o)
+		}
 		p, err := wizard(ctx, u)
 		if err != nil {
 			return err
@@ -324,6 +327,11 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	}
 	for _, input := range inputs {
 		input = strings.Trim(input, `"' `)
+		if _, ok := asURL(input); !ok {
+			if _, err := os.Stat(input); err != nil {
+				input = takeout.CleanPath(input) // ~/..., file:// links, My\ File.zip
+			}
+		}
 		if link, ok := asURL(input); ok {
 			input = link
 			var err error

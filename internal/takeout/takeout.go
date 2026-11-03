@@ -34,6 +34,27 @@ func ExtractID(s string) (string, bool) {
 // ignored whenever the export has real song CSVs, because Takeout playlists
 // also contain ordinary (non-music) videos.
 func Load(path string, all bool) ([]model.Track, error) {
+	return LoadAll([]string{path}, all)
+}
+
+// LoadAll merges several inputs (e.g. the numbered parts of one multi-zip export).
+func LoadAll(paths []string, all bool) ([]model.Track, error) {
+	var docs []doc
+	for _, p := range paths {
+		d, err := loadDocs(p)
+		if err != nil {
+			return nil, err
+		}
+		docs = append(docs, d...)
+	}
+	return merge(docs, all)
+}
+
+// maxWalk bounds how many files a folder import will look at, so pointing ytm at a huge
+// directory (like your home folder) can't run away.
+const maxWalk = 50_000
+
+func loadDocs(path string) ([]doc, error) {
 	st, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -41,19 +62,39 @@ func Load(path string, all bool) ([]model.Track, error) {
 	var docs []doc
 	switch {
 	case st.IsDir():
+		seen := 0
 		err = filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() || !isCSV(p) {
-				return err
-			}
-			f, err := os.Open(p)
 			if err != nil {
-				return err
+				return nil // unreadable corners are skipped, not fatal
 			}
-			defer f.Close()
-			docs = append(docs, parseCSV(p, f))
+			if d.IsDir() {
+				if p != path && strings.HasPrefix(d.Name(), ".") {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if seen++; seen > maxWalk {
+				return fs.SkipAll
+			}
+			switch {
+			case isCSV(p):
+				f, err := os.Open(p)
+				if err != nil {
+					return nil
+				}
+				defer f.Close()
+				docs = append(docs, parseCSV(p, f))
+			case isZip(p) && zipLooksLikeYouTube(p):
+				// Takeout often splits one export into several zips; take them all.
+				zd, err := readZip(p)
+				if err != nil {
+					return nil
+				}
+				docs = append(docs, zd...)
+			}
 			return nil
 		})
-	case strings.EqualFold(filepath.Ext(path), ".zip"):
+	case isZip(path):
 		docs, err = readZip(path)
 	case isCSV(path):
 		var f *os.File
@@ -71,7 +112,7 @@ func Load(path string, all bool) ([]model.Track, error) {
 	if err != nil {
 		return nil, err
 	}
-	return merge(docs, all)
+	return docs, nil
 }
 
 // Limits guarding against hostile or corrupt exports.
