@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // jsRuntimeNames maps yt-dlp runtime names to executables to look for on PATH.
@@ -29,10 +30,19 @@ func ensureJS(ctx context.Context, bin string, logf Logger) []string {
 	if fileExists(managed) {
 		return []string{"deno:" + managed}
 	}
+	// deno sandboxes the JS yt-dlp runs from YouTube; node/bun do not, so
+	// prefer any deno (PATH, then a managed download) before them.
+	if p, err := exec.LookPath("deno"); err == nil {
+		return []string{"deno:" + p}
+	}
+	derr := denoDownload(ctx, bin, logf)
+	if derr == nil && fileExists(managed) {
+		return []string{"deno:" + managed}
+	}
 	var found []string
 	seen := map[string]bool{}
 	for _, r := range jsRuntimeNames {
-		if seen[r.ytdlp] {
+		if r.ytdlp == "deno" || seen[r.ytdlp] {
 			continue
 		}
 		if p, err := exec.LookPath(r.exe); err == nil {
@@ -41,13 +51,11 @@ func ensureJS(ctx context.Context, bin string, logf Logger) []string {
 		}
 	}
 	if len(found) > 0 {
+		logf("Warning: deno unavailable (%v); using %s from PATH, which has no permission sandbox for YouTube's player code.", derr, strings.Join(found, ", "))
 		return found
 	}
-	if err := denoDownload(ctx, bin, logf); err != nil {
-		logf("Warning: no JavaScript runtime (%v); install deno or node for best YouTube results. Continuing without one.", err)
-		return nil
-	}
-	return []string{"deno:" + managed}
+	logf("Warning: no JavaScript runtime (%v); install deno for best YouTube results. Continuing without one.", derr)
+	return nil
 }
 
 func downloadDeno(ctx context.Context, bin string, logf Logger) error {
@@ -70,6 +78,7 @@ func downloadDeno(ctx context.Context, bin string, logf Logger) error {
 	if !fileExists(filepath.Join(bin, exe("deno"))) {
 		return fmt.Errorf("deno missing from downloaded archive")
 	}
+	recordHash(filepath.Join(bin, exe("deno")))
 	return nil
 }
 

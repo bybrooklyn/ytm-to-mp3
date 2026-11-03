@@ -11,6 +11,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 )
 
 // Info is what we know about an audio file.
@@ -32,7 +35,7 @@ func (i Info) get(keys ...string) string {
 
 // Probe reads tags, duration and cover presence with ffprobe.
 func Probe(ctx context.Context, ffprobe, path string) (Info, error) {
-	out, err := exec.CommandContext(ctx, ffprobe, "-v", "error", "-show_format", "-show_streams", "-of", "json", path).Output()
+	out, err := exec.CommandContext(ctx, ffprobe, probeArgs(path)...).Output()
 	if err != nil {
 		return Info{}, fmt.Errorf("ffprobe %s: %w", filepath.Base(path), err)
 	}
@@ -76,11 +79,29 @@ func Probe(ctx context.Context, ffprobe, path string) (Info, error) {
 // not named in set are preserved.
 func Write(ctx context.Context, ffmpeg, path string, set map[string]string, cover string) error {
 	ext := filepath.Ext(path)
-	tmp := strings.TrimSuffix(path, ext) + ".ytm-tmp" + ext
+	// A fresh, uniquely named temp file next to the original (same filesystem, so the final
+	// rename is atomic). Its name stays short so long file names can't push it over limits.
+	tf, err := os.CreateTemp(filepath.Dir(path), ".ytm-*"+ext)
+	if err != nil {
+		return err
+	}
+	tmp := tf.Name()
+	tf.Close()
 	defer os.Remove(tmp)
-	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", path}
+
+	// Only jpeg/png/webp art is ever handed to ffmpeg's decoders.
+	dec := ""
 	if cover != "" {
-		args = append(args, "-i", cover, "-map", "0:a", "-map", "1:v:0", "-map_metadata", "0",
+		if dec = names.ImageDecoder(cover); dec == "" {
+			cover = "" // not a recognised image: keep the existing art
+		}
+	}
+	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+		"-protocol_whitelist", "file,pipe", "-i", names.FFPath(path)}
+	if cover != "" {
+		args = append(args, "-protocol_whitelist", "file,pipe", "-f", "image2", "-pattern_type", "none",
+			"-c:v", dec, "-i", names.FFPath(cover),
+			"-map", "0:a", "-map", "1:v:0", "-map_metadata", "0",
 			"-c", "copy", "-disposition:v:0", "attached_pic")
 	} else {
 		args = append(args, "-map", "0", "-map_metadata", "0", "-c", "copy")
@@ -94,9 +115,9 @@ func Write(ctx context.Context, ffmpeg, path string, set map[string]string, cove
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		args = append(args, "-metadata", k+"="+set[k]) // empty value clears the tag (used by undo)
+		args = append(args, "-metadata", k+"="+names.StripControl(set[k])) // empty value clears the tag (used by undo)
 	}
-	args = append(args, tmp)
+	args = append(args, names.FFPath(tmp))
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, ffmpeg, args...)
 	cmd.Stderr = &stderr
@@ -104,16 +125,25 @@ func Write(ctx context.Context, ffmpeg, path string, set map[string]string, cove
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return fmt.Errorf("ffmpeg: %s", strings.TrimSpace(lastLine(stderr.String())))
+		return fmt.Errorf("ffmpeg: %s", names.Clean(strings.TrimSpace(lastLine(stderr.String()))))
 	}
-	_ = os.Remove(path)
-	return os.Rename(tmp, path)
+	if st, err := os.Stat(path); err == nil {
+		_ = os.Chmod(tmp, st.Mode().Perm()) // CreateTemp made it 0600
+	}
+	return store.Replace(tmp, path) // atomic replace on unix
+}
+
+// probeArgs is the ffprobe command line for one file.
+func probeArgs(path string) []string {
+	return []string{"-v", "error", "-protocol_whitelist", "file,pipe", "-show_format", "-show_streams",
+		"-of", "json", "-i", names.FFPath(path)}
 }
 
 // ExtractCover saves the embedded picture of path to dst.
 func ExtractCover(ctx context.Context, ffmpeg, path, dst string) error {
 	return exec.CommandContext(ctx, ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-		"-i", path, "-an", "-map", "0:v:0", "-c", "copy", "-f", "image2", dst).Run()
+		"-protocol_whitelist", "file,pipe", "-i", names.FFPath(path),
+		"-an", "-map", "0:v:0", "-c", "copy", "-f", "image2", "-update", "1", names.FFPath(dst)).Run()
 }
 
 func lastLine(s string) string {

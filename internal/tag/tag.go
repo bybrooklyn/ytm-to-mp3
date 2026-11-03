@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
 )
 
@@ -45,6 +46,12 @@ type proposal struct {
 
 // Run previews (or applies) metadata improvements for every audio file under o.Dir.
 func Run(ctx context.Context, o Options) error {
+	// Everything below (walk, journal, containment checks) relies on an absolute root.
+	abs, err := filepath.Abs(o.Dir)
+	if err != nil {
+		return err
+	}
+	o.Dir = filepath.Clean(abs)
 	if o.Undo {
 		return undo(ctx, o)
 	}
@@ -275,12 +282,12 @@ func apply(ctx context.Context, o Options, pr *proposal, batch string) error {
 	var cover string
 	if pr.coverURL != "" {
 		dir := filepath.Join(o.Dir, ".ytm", "tag-backup")
-		_ = os.MkdirAll(dir, 0o755)
+		_ = store.PrivateDir(dir)
 		newCover := filepath.Join(dir, batch+"-new.jpg")
 		if err := getURL(ctx, pr.coverURL, newCover); err == nil {
 			cover = newCover
 			if pr.info.HasCover {
-				bk := filepath.Join(dir, fmt.Sprintf("%s-%x.jpg", batch, hashString(path)))
+				bk := filepath.Join(dir, coverBackupName(batch, path))
 				if ExtractCover(ctx, o.FFmpeg, path, bk) == nil {
 					entry.CoverBackup = bk
 				}

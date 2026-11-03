@@ -3,14 +3,18 @@ package tag
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 )
 
 type journalEntry struct {
@@ -24,8 +28,8 @@ type journalEntry struct {
 func journalPath(dir string) string { return filepath.Join(dir, ".ytm", "tag-journal.jsonl") }
 
 func appendJournal(dir string, e journalEntry) error {
-	_ = os.MkdirAll(filepath.Dir(journalPath(dir)), 0o755)
-	f, err := os.OpenFile(journalPath(dir), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	_ = store.PrivateDir(filepath.Dir(journalPath(dir)))
+	f, err := os.OpenFile(journalPath(dir), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
@@ -35,7 +39,70 @@ func appendJournal(dir string, e journalEntry) error {
 	return err
 }
 
-func hashString(s string) uint32 { h := fnv.New32a(); h.Write([]byte(s)); return h.Sum32() }
+// writeJournal replaces the whole journal atomically (temp file + rename), so a crash
+// never leaves a truncated journal behind.
+func writeJournal(dir string, entries []journalEntry) error {
+	jp := journalPath(dir)
+	if err := store.PrivateDir(filepath.Dir(jp)); err != nil {
+		return err
+	}
+	tf, err := os.CreateTemp(filepath.Dir(jp), "tag-journal-*.tmp") // 0600, O_EXCL
+	if err != nil {
+		return err
+	}
+	tmp := tf.Name()
+	defer os.Remove(tmp)
+	w := bufio.NewWriter(tf)
+	for _, e := range entries {
+		b, _ := json.Marshal(e)
+		w.Write(append(b, '\n'))
+	}
+	if err := w.Flush(); err != nil {
+		tf.Close()
+		return err
+	}
+	if err := tf.Sync(); err != nil {
+		tf.Close()
+		return err
+	}
+	if err := tf.Close(); err != nil {
+		return err
+	}
+	return store.Replace(tmp, jp)
+}
+
+// coverBackupName is a collision-resistant file name for a track's cover backup.
+func coverBackupName(batch, path string) string {
+	sum := sha256.Sum256([]byte(path))
+	return batch + "-" + hex.EncodeToString(sum[:])[:16] + ".jpg"
+}
+
+// inside reports whether p is root or lies below it, judged lexically (no '..' escapes).
+// Relative paths never count: the journal only ever stores absolute ones.
+func inside(root, p string) bool {
+	if p == "" || !filepath.IsAbs(p) {
+		return false
+	}
+	rel, err := filepath.Rel(root, filepath.Clean(p))
+	if err != nil || filepath.IsAbs(rel) {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// checkEntry refuses a journal entry that points outside the tag root: the journal is a
+// plain file in the library and must not be able to steer renames or writes elsewhere.
+func checkEntry(root string, e journalEntry) error {
+	for _, p := range []string{e.Path, e.NewPath, e.CoverBackup} {
+		if p != "" && !inside(root, p) {
+			return fmt.Errorf("refusing to undo: journal path %q is outside %s", p, root)
+		}
+	}
+	if e.Path == "" {
+		return fmt.Errorf("refusing to undo: journal entry without a path")
+	}
+	return nil
+}
 
 func getURL(ctx context.Context, url, dst string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -52,7 +119,8 @@ func getURL(ctx context.Context, url, dst string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s", resp.Status)
 	}
-	f, err := os.Create(dst)
+	_ = os.Remove(dst)
+	f, err := store.CreateExcl(dst, 0o600)
 	if err != nil {
 		return err
 	}
@@ -91,6 +159,12 @@ func undo(ctx context.Context, o Options) error {
 			keep = append(keep, e)
 		}
 	}
+	// Validate everything before touching anything.
+	for _, e := range revert {
+		if err := checkEntry(o.Dir, e); err != nil {
+			return err
+		}
+	}
 	n := 0
 	for i := len(revert) - 1; i >= 0; i-- {
 		e := revert[i]
@@ -110,14 +184,5 @@ func undo(ctx context.Context, o Options) error {
 	}
 	o.UI.Printf("Reverted %d files from batch %s", n, last)
 	// Drop the reverted batch from the journal.
-	out, err := os.Create(journalPath(o.Dir))
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	for _, e := range keep {
-		b, _ := json.Marshal(e)
-		out.Write(append(b, '\n'))
-	}
-	return nil
+	return writeJournal(o.Dir, keep)
 }

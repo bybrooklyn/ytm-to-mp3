@@ -116,8 +116,8 @@ func (c *Client) get(ctx context.Context, u string) ([]byte, error) {
 			return nil, fmt.Errorf("musicbrainz: %s", resp.Status)
 		}
 		if key != "" {
-			_ = os.MkdirAll(c.CacheDir, 0o755)
-			_ = os.WriteFile(key, b, 0o644)
+			_ = os.MkdirAll(c.CacheDir, 0o700)
+			_ = os.WriteFile(key, b, 0o600)
 		}
 		return b, nil
 	}

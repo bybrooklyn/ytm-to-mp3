@@ -3,6 +3,22 @@ package model
 
 import "strings"
 
+// ValidID reports whether s is a well-formed YouTube video id: exactly 11 ASCII letters,
+// digits, '-' or '_'. IDs end up in file names and yt-dlp output templates, so nothing
+// else may ever get that far.
+func ValidID(s string) bool {
+	if len(s) != 11 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
 // Track is one song to download, as described by the user's export.
 type Track struct {
 	ID      string

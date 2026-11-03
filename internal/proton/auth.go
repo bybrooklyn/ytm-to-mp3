@@ -29,7 +29,9 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 	if err := c.do(ctx, "POST", "/auth/info", false, map[string]string{"Username": username}, &info); err != nil {
 		return err
 	}
-	a, err := srp.NewAuth(info.Version, username, []byte(password), info.Salt, info.Modulus, info.ServerEphemeral)
+	pw := []byte(password)
+	defer func() { clear(pw) }() // don't leave the password lying around in memory longer than needed
+	a, err := srp.NewAuth(info.Version, username, pw, info.Salt, info.Modulus, info.ServerEphemeral)
 	if err != nil {
 		return err
 	}
@@ -77,6 +79,12 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 func (c *Client) Submit2FA(ctx context.Context, code string) error {
 	var r struct{ Scopes []string }
 	if err := c.do(ctx, "POST", "/auth/2fa", true, map[string]string{"TwoFactorCode": code}, &r); err != nil {
+		var ae *APIError
+		if errors.As(err, &ae) && ae.Code == 8002 {
+			// Proton "jails" the login after too many wrong codes: it must start over.
+			c.Logout()
+			return errors.New("Proton reset this sign-in after wrong 2FA codes; start again with ytm setup")
+		}
 		return err
 	}
 	c.mu.Lock()

@@ -38,7 +38,7 @@ func (c *Client) Servers(ctx context.Context) ([]Server, error) {
 		VPN struct{ MaxTier, MaxConnect int }
 	}
 	maxTier := 0 // if the plan can't be read, assume the smallest so we don't try servers that will refuse us
-	if err := c.do(ctx, "GET", "/vpn", true, nil, &vp); err != nil {
+	if err := c.do(ctx, "GET", "/vpn/v2", true, nil, &vp); err != nil {
 		var ae *APIError
 		if !errors.As(err, &ae) || ae.Status == 401 || ae.Status == 403 || ae.Code == 5003 {
 			return nil, err // network or auth problem: say so rather than guess
@@ -48,7 +48,7 @@ func (c *Client) Servers(ctx context.Context) ([]Server, error) {
 		c.MaxConnect = vp.VPN.MaxConnect
 	}
 	var r struct{ LogicalServers []logical }
-	if err := c.do(ctx, "GET", "/vpn/v1/logicals", true, nil, &r); err != nil {
+	if err := c.do(ctx, "GET", "/vpn/v1/logicals?SecureCoreFilter=all&WithState=true", true, nil, &r); err != nil {
 		return nil, err
 	}
 	return filterServers(r.LogicalServers, maxTier), nil

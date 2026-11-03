@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+
+	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 )
 
 // Formats ytm can write.
@@ -26,10 +28,21 @@ func ValidFormat(f string) bool {
 // with tags and (optionally) square cover art. Streams are copied untouched
 // when the source codec already matches the target format.
 func encodeArgs(src, cover, dst, format, srcCodec string, meta map[string]string) []string {
-	a := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", src}
-	withCover := cover != "" && format != "opus" // ffmpeg can't embed pictures in Ogg Opus
+	// Inputs are untrusted media: only local files / pipes may be opened (no network, no
+	// concat/subfile tricks through the playlist protocols), and paths are always given as
+	// absolute "file:" paths so a name starting with '-' is never an option.
+	a := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+		"-protocol_whitelist", "file,pipe", "-i", names.FFPath(src)}
+	// Cover art comes from the network: decode it only if it really is a jpeg/png/webp,
+	// with the demuxer and decoder forced so ffmpeg never probes it as something else.
+	dec := ""
+	if cover != "" && format != "opus" { // ffmpeg can't embed pictures in Ogg Opus
+		dec = names.ImageDecoder(cover)
+	}
+	withCover := dec != ""
 	if withCover {
-		a = append(a, "-i", cover)
+		a = append(a, "-protocol_whitelist", "file,pipe", "-f", "image2", "-pattern_type", "none",
+			"-c:v", dec, "-i", names.FFPath(cover))
 	}
 	a = append(a, "-map", "0:a:0")
 	if withCover {
@@ -73,7 +86,7 @@ func encodeArgs(src, cover, dst, format, srcCodec string, meta map[string]string
 	for _, k := range keys {
 		a = append(a, "-metadata", k+"="+meta[k])
 	}
-	return append(a, dst)
+	return append(a, names.FFPath(dst))
 }
 
 // runFFmpeg executes ffmpeg and returns its stderr tail on failure.
@@ -89,7 +102,7 @@ func runFFmpeg(ctx context.Context, ffmpeg string, args []string) error {
 		if i := strings.LastIndexByte(msg, '\n'); i >= 0 {
 			msg = msg[i+1:]
 		}
-		return fmt.Errorf("ffmpeg: %s", msg)
+		return fmt.Errorf("ffmpeg: %s", names.Clean(msg))
 	}
 	return nil
 }

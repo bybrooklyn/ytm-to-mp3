@@ -1,11 +1,19 @@
 // Package proton talks to Proton VPN's (undocumented) API: sign in, list servers,
-// register a WireGuard key. It identifies itself as the official Linux app, which is
-// what Proton's own Linux client does and avoids CAPTCHA challenges.
+// register a WireGuard key.
+//
+// The request flow mirrors Proton's own open-source Linux client (python-proton-core and
+// python-proton-vpn-api-core): POST /auth/info, then POST /auth with SRP proofs, then
+// /auth/2fa if needed, with the same kind of x-pm-appversion / User-Agent headers. The
+// connection to vpn-api.proton.me is TLS-pinned to the same public keys those clients use.
 package proton
 
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,17 +21,76 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-const (
-	baseURL    = "https://vpn-api.proton.me"
-	appVersion = "linux-vpn@4.13.1"
-	userAgent  = "ProtonVPN/4.13.1 (Linux; Ubuntu)"
-)
+const baseURL = "https://vpn-api.proton.me"
+
+// appID is what we tell Proton we are. Proton retires old app versions (error 5003), so
+// several known-good identities are tried in turn and the one that works is remembered.
+type appID struct{ Version, UA string }
+
+func appIDs() []appID {
+	if v := os.Getenv("YTM_APP_VERSION"); v != "" { // escape hatch if Proton retires them all
+		ver, _, _ := strings.Cut(v[strings.IndexByte(v, '@')+1:], "+")
+		return []appID{{v, "ProtonVPN/" + ver + " (Linux; ubuntu/24.04)"}}
+	}
+	arch := map[string]string{"amd64": "x86-64", "arm64": "aarch64"}[runtime.GOARCH]
+	if arch == "" {
+		arch = runtime.GOARCH
+	}
+	return []appID{
+		{"linux-vpn@4.13.1", "ProtonVPN/4.13.1 (Linux; Ubuntu)"},
+		{"linux-vpn-cli@1.1.0+" + arch, "ProtonVPN/1.1.0 (Linux; ubuntu/24.04)"},
+		{"linux-vpn-cli@6.1.1+" + arch, "ProtonVPN/6.1.1 (Linux; ubuntu/24.04)"},
+	}
+}
+
+// pins are the SHA-256 SPKI hashes Proton's own clients pin for vpn-api.proton.me (the
+// current leaf key plus backups), from python-proton-core's ProdEnvironment.
+var pins = map[string]bool{
+	"CT56BhOTmj5ZIPgb/xD5mH8rY3BLo/MlhP7oPyJUEDo=": true,
+	"35Dx28/uzN3LeltkCBQ8RHK0tlNSa2kCpCRGNp34Gxc=": true,
+	"qYIukVc63DEITct8sFT7ebIq5qsWmuscaIKeJx+5J5A=": true,
+}
+
+// verifyPin accepts the connection only if some certificate the server presented has a
+// pinned public key, on top of the normal certificate-chain verification.
+func verifyPin(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+	for _, raw := range rawCerts {
+		cert, err := x509.ParseCertificate(raw)
+		if err != nil {
+			continue
+		}
+		sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+		if pins[base64.StdEncoding.EncodeToString(sum[:])] {
+			return nil
+		}
+	}
+	return errors.New("Proton's TLS certificate doesn't match the keys Proton's apps pin (a proxy or attacker may be intercepting, or Proton rotated its keys). Set YTM_NO_PIN=1 to skip this check at your own risk")
+}
+
+func newHTTP() *http.Client {
+	tr := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		MaxIdleConns:          4,
+		IdleConnTimeout:       60 * time.Second,
+		ForceAttemptHTTP2:     true,
+	}
+	if os.Getenv("YTM_NO_PIN") == "" {
+		tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, VerifyPeerCertificate: verifyPin}
+	}
+	return &http.Client{Transport: tr, Timeout: 45 * time.Second,
+		// never follow a redirect with our credentials/tokens attached
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
 
 // Session is what we keep after signing in. The password is never stored.
 type Session struct {
@@ -34,8 +101,8 @@ type Session struct {
 	Scopes       []string `json:"scopes"`
 	// Key is the base64 Ed25519 seed that backs our WireGuard identity.
 	Key       string    `json:"key,omitempty"`
-	CertUntil time.Time `json:"cert_refresh,omitempty"`
-	Device    string    `json:"device,omitempty"`
+	CertUntil time.Time `json:"cert_refresh,omitzero"`
+	AppIdx    int       `json:"app_idx,omitempty"` // which appIDs() entry Proton accepted
 }
 
 // Client is an API client bound to a session file.
@@ -46,18 +113,20 @@ type Client struct {
 	mu        sync.Mutex
 	refreshMu sync.Mutex
 	Session   *Session
+	appIdx    int
 	// MaxConnect is how many devices the plan allows at once (0 = unknown); set by Servers.
 	MaxConnect int
 }
 
 // New returns a client, loading a saved session from path if there is one.
 func New(path string) *Client {
-	c := &Client{HTTP: &http.Client{Timeout: 30 * time.Second}, Base: baseURL, Path: path}
+	c := &Client{HTTP: newHTTP(), Base: baseURL, Path: path}
 	if path != "" {
 		if b, err := os.ReadFile(path); err == nil {
 			var s Session
 			if json.Unmarshal(b, &s) == nil && s.UID != "" {
 				c.Session = &s
+				c.appIdx = s.AppIdx
 			}
 		}
 	}
@@ -87,6 +156,7 @@ func (c *Client) saveErr() error {
 	if c.Path == "" || c.Session == nil {
 		return nil
 	}
+	c.Session.AppIdx = c.appIdx
 	if err := os.MkdirAll(filepath.Dir(c.Path), 0o700); err != nil {
 		return err
 	}
@@ -95,19 +165,24 @@ func (c *Client) saveErr() error {
 		return err
 	}
 	tmp := c.Path + ".tmp"
+	_ = os.Remove(tmp) // WriteFile keeps an existing file's looser mode
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
-	_ = os.Chmod(tmp, 0o600)
 	return os.Rename(tmp, c.Path)
 }
 
 // SignedIn reports whether a session is stored.
-func (c *Client) SignedIn() bool { return c.Session != nil }
+func (c *Client) SignedIn() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.Session != nil
+}
 
 // Revoke ends the session on Proton's side too (best effort), then forgets it locally.
+// A 401 means it was already gone, which is fine.
 func (c *Client) Revoke(ctx context.Context) {
-	if c.Session != nil {
+	if c.SignedIn() {
 		rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		_ = c.once(rctx, "DELETE", "/auth", true, nil, nil)
 		cancel()
@@ -115,15 +190,19 @@ func (c *Client) Revoke(ctx context.Context) {
 	c.Logout()
 }
 
-// Logout forgets the session and key.
+// Logout forgets the session and key locally.
 func (c *Client) Logout() {
 	c.mu.Lock()
 	c.Session = nil
 	c.mu.Unlock()
 	if c.Path != "" {
 		_ = os.Remove(c.Path)
+		_ = os.Remove(c.Path + ".tmp")
 	}
 }
+
+// longHex matches token-like strings so debug output never echoes session identifiers.
+var longHex = regexp.MustCompile(`[A-Za-z0-9_\-]{24,}`)
 
 // APIError is a failure reported by Proton.
 type APIError struct {
@@ -131,26 +210,42 @@ type APIError struct {
 	Code       int
 	Msg        string        // Proton's own message
 	RetryAfter time.Duration // from the Retry-After header, if sent
+	// Human verification (code 9001): what Proton offers and the token it issued.
+	HVMethods []string
+	HVToken   string
 }
 
 // RateLimited reports whether Proton is telling us to slow down. Retrying makes it worse.
-func (e *APIError) RateLimited() bool { return e.Status == 429 || e.Code == 2028 }
+func (e *APIError) RateLimited() bool {
+	return e.Status == 429 || e.Status == 503 || e.Code == 2028
+}
+
+// NeedsHuman reports whether Proton wants a CAPTCHA / email / SMS check first.
+func (e *APIError) NeedsHuman() bool { return e.Code == 9001 }
 
 func (e *APIError) Error() string {
 	var hint string
 	switch {
-	case e.Code == 5003:
-		hint = "Proton rejected this app version (ytm needs an update)"
-	case e.Code == 9001:
-		hint = "Proton wants a human check (CAPTCHA). Sign in once at account.protonvpn.com in a browser, then try again"
+	case e.Code == 5003 || e.Code == 5001 || e.Code == 5005:
+		hint = "Proton rejected the app version ytm identifies as (ytm needs an update; or set YTM_APP_VERSION)"
+	case e.NeedsHuman():
+		hint = "Proton wants a human check (" + strings.Join(e.HVMethods, ", ") + ") before it lets this app sign in. " +
+			"Sign in once at https://account.protonvpn.com in a browser on this same network, then run ytm setup again"
 	case e.Code == 8002:
 		hint = "wrong password or 2FA code"
+	case e.Code == 2028:
+		hint = "Proton says this account or address is temporarily blocked from signing in"
+		if e.RetryAfter > 0 {
+			hint += fmt.Sprintf("; try again in about %d minutes", int(e.RetryAfter.Minutes())+1)
+		} else {
+			hint += "; wait a while (an hour or more) before trying again"
+		}
 	case e.RateLimited():
-		hint = "Proton is rate limiting sign-ins. Stop retrying and wait"
+		hint = "Proton is rate limiting requests. Stop retrying and wait"
 		if e.RetryAfter > 0 {
 			hint += fmt.Sprintf(" about %d minutes", int(e.RetryAfter.Minutes())+1)
 		} else {
-			hint += " an hour or so"
+			hint += " a few minutes"
 		}
 	}
 	// always show what Proton actually said, so a wrong guess above can be spotted
@@ -183,35 +278,58 @@ func (c *Client) do(ctx context.Context, method, path string, authed bool, in, o
 	return err
 }
 
-func (c *Client) once(ctx context.Context, method, path string, authed bool, in, out any, extraHeaders ...string) error {
+// once sends one request. If Proton rejects our app version it moves to the next known
+// identity and resends (that rejection happens before anything is processed, so it can't
+// count as a sign-in attempt).
+func (c *Client) once(ctx context.Context, method, path string, authed bool, in, out any) error {
+	ids := appIDs()
+	for {
+		c.mu.Lock()
+		idx := min(c.appIdx, len(ids)-1)
+		c.mu.Unlock()
+		err := c.send(ctx, ids[idx], method, path, authed, in, out)
+		var ae *APIError
+		if errors.As(err, &ae) && (ae.Code == 5003 || ae.Code == 5001) && idx+1 < len(ids) {
+			c.mu.Lock()
+			c.appIdx = idx + 1
+			c.mu.Unlock()
+			continue
+		}
+		return err
+	}
+}
+
+func (c *Client) send(ctx context.Context, id appID, method, path string, authed bool, in, out any) error {
 	var body io.Reader
 	if in != nil {
-		b, _ := json.Marshal(in)
+		b, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
 		body = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.Base+path, body)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("x-pm-appversion", appVersion)
-	req.Header.Set("x-pm-apiversion", "3")
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "application/vnd.protonmail.v1+json")
+	req.Header.Set("x-pm-appversion", id.Version)
+	req.Header.Set("User-Agent", id.UA)
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
-	}
-	for i := 0; i+1 < len(extraHeaders); i += 2 {
-		req.Header.Set(extraHeaders[i], extraHeaders[i+1])
 	}
 	if authed {
 		c.mu.Lock()
 		s := c.Session
+		var uid, tok string
+		if s != nil {
+			uid, tok = s.UID, s.AccessToken
+		}
 		c.mu.Unlock()
 		if s == nil {
 			return errors.New("not signed in: run ytm setup")
 		}
-		req.Header.Set("x-pm-uid", s.UID)
-		req.Header.Set("Authorization", "Bearer "+s.AccessToken)
+		req.Header.Set("x-pm-uid", uid)
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
@@ -220,29 +338,38 @@ func (c *Client) once(ctx context.Context, method, path string, authed bool, in,
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	var env struct {
-		Code  int
-		Error string
+		Code    int
+		Error   string
+		Details struct {
+			HumanVerificationMethods []string
+			HumanVerificationToken   string
+			Methods                  []string
+		}
 	}
 	_ = json.Unmarshal(raw, &env)
-	if resp.StatusCode != 200 || (env.Code != 1000 && env.Code != 0 && env.Code != 1001) {
-		ae := &APIError{Status: resp.StatusCode, Code: env.Code, Msg: strings.TrimSpace(env.Error)}
-		if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 {
-			ae.RetryAfter = time.Duration(s) * time.Second
+	if resp.StatusCode == 200 && (env.Code == 1000 || env.Code == 0 || env.Code == 1001) {
+		if out != nil {
+			return json.Unmarshal(raw, out)
 		}
-		if os.Getenv("YTM_DEBUG") != "" {
-			fmt.Fprintf(os.Stderr, "ytm debug: %s %s -> HTTP %d %s\n", method, path, resp.StatusCode, strings.TrimSpace(string(raw[:min(len(raw), 400)])))
-		}
-		return ae
+		return nil
 	}
-	if out != nil {
-		return json.Unmarshal(raw, out)
+	ae := &APIError{Status: resp.StatusCode, Code: env.Code, Msg: strings.TrimSpace(env.Error),
+		HVMethods: append(env.Details.HumanVerificationMethods, env.Details.Methods...), HVToken: env.Details.HumanVerificationToken}
+	if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 {
+		ae.RetryAfter = time.Duration(s) * time.Second
 	}
-	return nil
+	if os.Getenv("YTM_DEBUG") != "" {
+		// Never print request bodies (they hold SRP proofs / tokens). Replies can carry
+		// identifiers, so long token-like strings are masked.
+		body := longHex.ReplaceAllString(strings.TrimSpace(string(raw[:min(len(raw), 400)])), "<redacted>")
+		fmt.Fprintf(os.Stderr, "ytm debug: %s %s [%s] -> HTTP %d %s\n", method, path, id.Version, resp.StatusCode, body)
+	}
+	return ae
 }
 
 // refresh renews the access token. Refresh tokens rotate, so only one refresh may run at
 // a time; if another caller already renewed it (the token differs from the one that got
-// the 401) there is nothing to do.
+// the 401) there is nothing to do. The body matches python-proton-core.
 func (c *Client) refresh(ctx context.Context, stale string) error {
 	c.refreshMu.Lock()
 	defer c.refreshMu.Unlock()
@@ -256,17 +383,17 @@ func (c *Client) refresh(ctx context.Context, stale string) error {
 		c.mu.Unlock()
 		return nil
 	}
-	uid, rt := s.UID, s.RefreshToken
+	rt := s.RefreshToken
 	c.mu.Unlock()
 
 	var r struct {
 		AccessToken, RefreshToken string
+		Scopes                    []string
 	}
-	// Only x-pm-uid identifies the session here; the expired bearer token is not sent.
-	err := c.once(ctx, "POST", "/auth/refresh", false, map[string]string{
-		"UID": uid, "RefreshToken": rt, "ResponseType": "token",
-		"GrantType": "refresh_token", "RedirectURI": "http://protonmail.ch", "State": "ytm",
-	}, &r, "x-pm-uid", uid)
+	err := c.once(ctx, "POST", "/auth/refresh", true, map[string]string{
+		"ResponseType": "token", "GrantType": "refresh_token",
+		"RefreshToken": rt, "RedirectURI": "http://protonmail.ch",
+	}, &r)
 	if err != nil {
 		var ae *APIError
 		if errors.As(err, &ae) && (ae.Status == 400 || ae.Status == 401 || ae.Status == 422) {
@@ -276,6 +403,9 @@ func (c *Client) refresh(ctx context.Context, stale string) error {
 	}
 	c.mu.Lock()
 	s.AccessToken, s.RefreshToken = r.AccessToken, r.RefreshToken
+	if len(r.Scopes) > 0 {
+		s.Scopes = r.Scopes
+	}
 	c.mu.Unlock()
 	return c.saveErr()
 }

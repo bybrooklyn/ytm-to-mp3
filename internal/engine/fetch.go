@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 )
 
 const (
@@ -33,14 +35,23 @@ func contentLength(r *Resolved) int64 {
 
 // canFetch reports whether ytm can download the stream itself (plain HTTPS, known size).
 func canFetch(r *Resolved) bool {
-	return r.URL != "" && (r.Protocol == "https" || r.Protocol == "http") && contentLength(r) > 0
+	n := contentLength(r)
+	return r.URL != "" && (r.Protocol == "https" || r.Protocol == "http") && n > 0 && n <= maxFetchSize
 }
+
+// maxFetchSize caps the size we trust from clen / metadata; a bogus value would otherwise
+// create a huge sparse file. Anything bigger goes through yt-dlp instead.
+const maxFetchSize = 2 << 30
 
 // fetch downloads r to dst using parallel ranged requests. onBytes is told about progress.
 // A 403/404 means the URL is unusable (errUnfetchable); 429 is reported as throttling.
 func fetch(ctx context.Context, client *http.Client, r *Resolved, dst string, onBytes func(int64), onThrottle func()) error {
 	total := contentLength(r)
-	f, err := os.OpenFile(dst, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
+	if total <= 0 || total > maxFetchSize {
+		return errUnfetchable
+	}
+	_ = os.Remove(dst) // stale file from an earlier attempt; the temp dir is private
+	f, err := store.CreateExcl(dst, 0o600)
 	if err != nil {
 		return err
 	}
@@ -94,7 +105,7 @@ func chunkRequest(ctx context.Context, r *Resolved, start, end int64) (*http.Req
 		req.Header.Set(k, v)
 	}
 	// googlevideo wants the range as a query parameter (what browsers do); others get a header.
-	if pu, perr := url.Parse(u); perr == nil && len(pu.Host) > 0 && hasSuffix(pu.Host, "googlevideo.com") {
+	if pu, perr := url.Parse(u); perr == nil && len(pu.Host) > 0 && isGoogleVideo(pu.Hostname()) {
 		q := pu.Query()
 		q.Set("range", fmt.Sprintf("%d-%d", start, end))
 		pu.RawQuery = q.Encode()
@@ -105,7 +116,11 @@ func chunkRequest(ctx context.Context, r *Resolved, start, end int64) (*http.Req
 	return req, nil
 }
 
-func hasSuffix(s, suffix string) bool { return strings.HasSuffix(s, suffix) }
+// isGoogleVideo matches googlevideo.com and its subdomains only (not evilgooglevideo.com).
+func isGoogleVideo(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	return host == "googlevideo.com" || strings.HasSuffix(host, ".googlevideo.com")
+}
 
 func fetchChunk(ctx context.Context, client *http.Client, r *Resolved, f *os.File, start, end int64, onBytes func(int64), onThrottle func()) error {
 	var lastErr error
@@ -206,7 +221,8 @@ func getFile(ctx context.Context, client *http.Client, rawurl, dst string) error
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("cover: %s", resp.Status)
 	}
-	f, err := os.Create(dst)
+	_ = os.Remove(dst)
+	f, err := store.CreateExcl(dst, 0o600)
 	if err != nil {
 		return err
 	}

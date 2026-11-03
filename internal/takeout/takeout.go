@@ -74,10 +74,21 @@ func Load(path string, all bool) ([]model.Track, error) {
 	return merge(docs, all)
 }
 
+// Limits guarding against hostile or corrupt exports.
+const (
+	maxReadBytes   = 64 << 20 // per CSV / text input
+	maxRows        = 500_000  // total rows across the whole load
+	maxZipEntries  = 10_000
+	maxLineBytes   = 1 << 20
+	maxEntryUncomp = maxReadBytes
+)
+
 type doc struct {
-	name   string
-	tracks []model.Track
-	rich   bool // has titles/artists, i.e. a songs CSV rather than an ID-only list
+	name    string
+	tracks  []model.Track
+	rich    bool  // has titles/artists, i.e. a songs CSV rather than an ID-only list
+	invalid int   // rows dropped for a malformed video id
+	err     error // read problem (e.g. an over-long line)
 }
 
 func isCSV(p string) bool { return strings.EqualFold(filepath.Ext(p), ".csv") }
@@ -88,9 +99,12 @@ func readZip(path string) ([]doc, error) {
 		return nil, err
 	}
 	defer zr.Close()
+	if len(zr.File) > maxZipEntries {
+		return nil, fmt.Errorf("zip has %d entries (limit %d); not a normal Takeout export", len(zr.File), maxZipEntries)
+	}
 	var docs []doc
 	for _, f := range zr.File {
-		if f.FileInfo().IsDir() || !isCSV(f.Name) {
+		if f.FileInfo().IsDir() || !isCSV(f.Name) || f.UncompressedSize64 > maxEntryUncomp {
 			continue
 		}
 		rc, err := f.Open()
@@ -105,6 +119,21 @@ func readZip(path string) ([]doc, error) {
 
 func merge(docs []doc, all bool) ([]model.Track, error) {
 	hasRich := false
+	invalid, rows := 0, 0
+	var firstErr error
+	for _, d := range docs {
+		invalid += d.invalid
+		rows += len(d.tracks)
+		if d.err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("%s: %w", d.name, d.err)
+		}
+	}
+	if rows > maxRows {
+		return nil, fmt.Errorf("export has more than %d rows; refusing to load it", maxRows)
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
 	for _, d := range docs {
 		hasRich = hasRich || (d.rich && len(d.tracks) > 0)
 	}
@@ -127,7 +156,11 @@ func merge(docs []doc, all bool) ([]model.Track, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, errors.New("no tracks found (expected a CSV with a 'Video ID' column, or a list of video IDs/URLs)")
+		msg := "no tracks found (expected a CSV with a 'Video ID' column, or a list of video IDs/URLs)"
+		if invalid > 0 {
+			msg += fmt.Sprintf("; %d entries had malformed video ids and were dropped", invalid)
+		}
+		return nil, errors.New(msg)
 	}
 	return out, nil
 }
@@ -135,7 +168,7 @@ func merge(docs []doc, all bool) ([]model.Track, error) {
 // parseCSV understands Takeout CSVs. Files without a "Video ID" column yield no tracks.
 func parseCSV(name string, r io.Reader) doc {
 	d := doc{name: name}
-	br := bufio.NewReader(r)
+	br := bufio.NewReader(io.LimitReader(r, maxReadBytes))
 	if b, err := br.Peek(3); err == nil && string(b) == "\xef\xbb\xbf" {
 		_, _ = br.Discard(3)
 	}
@@ -182,8 +215,16 @@ func parseCSV(name string, r io.Reader) doc {
 		if err != nil {
 			continue
 		}
+		if len(d.tracks)+d.invalid >= maxRows {
+			d.err = fmt.Errorf("more than %d rows", maxRows)
+			break
+		}
 		id := get(rec, idC)
-		if len(id) != 11 {
+		if id == "" {
+			continue
+		}
+		if !model.ValidID(id) {
+			d.invalid++
 			continue
 		}
 		t := model.Track{ID: id, Title: get(rec, titleC), Album: get(rec, albumC)}
@@ -199,11 +240,29 @@ func parseCSV(name string, r io.Reader) doc {
 
 func parseList(r io.Reader) doc {
 	d := doc{name: "list"}
-	sc := bufio.NewScanner(r)
+	sc := bufio.NewScanner(io.LimitReader(r, maxReadBytes))
+	sc.Buffer(make([]byte, 0, 64<<10), maxLineBytes)
 	for sc.Scan() {
-		if id, ok := ExtractID(sc.Text()); ok {
-			d.tracks = append(d.tracks, model.Track{ID: id})
+		if len(d.tracks)+d.invalid >= maxRows {
+			d.err = fmt.Errorf("more than %d rows", maxRows)
+			return d
 		}
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		id, ok := ExtractID(line)
+		if !ok || !model.ValidID(id) {
+			d.invalid++
+			continue
+		}
+		d.tracks = append(d.tracks, model.Track{ID: id})
+	}
+	if err := sc.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			err = fmt.Errorf("a line is longer than %d bytes; this is not a list of video ids", maxLineBytes)
+		}
+		d.err = err
 	}
 	return d
 }

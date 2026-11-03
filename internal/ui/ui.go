@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 )
 
 type UI struct {
@@ -47,12 +49,16 @@ func (u *UI) Printf(format string, a ...any) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.clear()
-	fmt.Fprintf(u.out, format, a...)
+	fmt.Fprint(u.out, Sanitize(fmt.Sprintf(format, a...)))
 	if !strings.HasSuffix(format, "\n") {
 		fmt.Fprintln(u.out)
 	}
 	u.redraw()
 }
+
+// Sanitize strips escape sequences and control / bidi characters (except newline and
+// tab) so untrusted text (titles, tags, tool output) can't drive the terminal.
+func Sanitize(s string) string { return names.StripControl(s) }
 
 // Status replaces the pinned status line (ignored when not on a terminal).
 func (u *UI) Status(format string, a ...any) {
@@ -62,7 +68,7 @@ func (u *UI) Status(format string, a ...any) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.clear()
-	u.status = fmt.Sprintf(format, a...)
+	u.status = strings.NewReplacer("\n", " ", "\t", " ").Replace(Sanitize(fmt.Sprintf(format, a...)))
 	u.redraw()
 }
 
@@ -78,7 +84,7 @@ func (u *UI) ClearStatus() {
 func (u *UI) Ask(prompt, def string) string {
 	u.mu.Lock()
 	u.clear()
-	fmt.Fprint(u.out, prompt)
+	fmt.Fprint(u.out, Sanitize(prompt))
 	u.mu.Unlock()
 	line, _ := u.in.ReadString('\n')
 	line = strings.TrimSpace(line)

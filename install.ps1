@@ -30,14 +30,21 @@ try {
         }
     }
 
+    if ($tag -notmatch '^v?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$') {
+        throw "invalid version '$tag' (expected something like v1.2.3)"
+    }
+    if (-not $tag.StartsWith('v')) { $tag = "v$tag" }
+
     $file = "ytm_$($tag.TrimStart('v'))_windows_$arch.zip"
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid())
     New-Item -ItemType Directory $tmp | Out-Null
 
+    $base = "https://github.com/$repo/releases/download/$tag"
+    if (-not $base.StartsWith('https://')) { throw 'refusing non-https download' }
     Write-Host "Downloading ytm $tag (windows/$arch)..."
     try {
-        Invoke-WebRequest "https://github.com/$repo/releases/download/$tag/$file" -OutFile "$tmp\$file" -UseBasicParsing
-        Invoke-WebRequest "https://github.com/$repo/releases/download/$tag/checksums.txt" -OutFile "$tmp\checksums.txt" -UseBasicParsing
+        Invoke-WebRequest "$base/$file" -OutFile "$tmp\$file" -UseBasicParsing -MaximumRedirection 5
+        Invoke-WebRequest "$base/checksums.txt" -OutFile "$tmp\checksums.txt" -UseBasicParsing
     } catch {
         throw "download failed for $tag ($file); check your connection and that the release exists. $($_.Exception.Message)"
     }

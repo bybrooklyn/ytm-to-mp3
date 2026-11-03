@@ -233,8 +233,10 @@ func signalContext() (context.Context, context.CancelFunc) {
 
 // wizard finds an export on disk or guides the user to get one.
 func wizard(ctx context.Context, u *ui.UI) (string, error) {
-	if p, ok := findExisting(); ok {
-		if u.Confirm("Found your export at "+p+"\nDownload it?", true) {
+	// An export found lying around is only used after the user has seen what it is and
+	// said yes; with no terminal to ask on, it is never adopted automatically.
+	if p, ok := findExisting(); ok && u.Interactive() {
+		if u.Confirm("Found "+export.Describe(p)+"\n  at "+p+"\nDownload it?", true) {
 			return p, nil
 		}
 	}
@@ -290,6 +292,26 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	var jar cookies.Result
 	cfg := config.Load()
 
+	// The VPN is brought up the first time anything needs the network, so even looking up
+	// a pasted playlist goes out through it and not from your own address.
+	var (
+		exits      []vpn.Exit
+		replace    func(context.Context, vpn.Exit) (vpn.Exit, error)
+		healthy    func(vpn.Exit) bool
+		closeExits = func() {}
+		connected  bool
+	)
+	defer func() { closeExits() }()
+	connect := func() error {
+		if connected {
+			return nil
+		}
+		connected = true
+		var err error
+		exits, replace, healthy, closeExits, err = buildExits(ctx, u, o)
+		return err
+	}
+
 	var tracks []model.Track
 	seen := map[string]bool{}
 	add := func(ts []model.Track) {
@@ -311,7 +333,14 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 				}
 				jar = cookies.Setup(ctx, u, &cfg, tools, o.noCookies || vpnWanted(o))
 			}
-			ts, err := engine.ExpandURL(ctx, tools, jar.File, input)
+			if err := connect(); err != nil {
+				return err
+			}
+			proxy := ""
+			if len(exits) > 0 {
+				proxy = exits[0].Proxy
+			}
+			ts, err := engine.ExpandURL(ctx, tools, jar.File, proxy, input)
 			if err != nil {
 				return err
 			}
@@ -374,11 +403,9 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		}
 		jar = cookies.Setup(ctx, u, &cfg, tools, o.noCookies || vpnWanted(o))
 	}
-	exits, replace, healthy, closeExits, err := buildExits(ctx, u, o)
-	if err != nil {
+	if err := connect(); err != nil {
 		return err
 	}
-	defer closeExits()
 	cache, _ := config.CacheDir()
 	sum := engine.Run(ctx, engine.Options{
 		Out: o.out, Format: o.format, Jobs: o.jobs, Cookies: jar.File, Tools: tools,

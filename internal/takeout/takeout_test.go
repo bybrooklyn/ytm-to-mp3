@@ -2,8 +2,11 @@ package takeout
 
 import (
 	"archive/zip"
+	"fmt"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -67,5 +70,49 @@ func TestNoTracks(t *testing.T) {
 	os.WriteFile(p, []byte("hello\n"), 0o644)
 	if _, err := Load(p, false); err == nil {
 		t.Error("expected error")
+	}
+}
+
+func TestInvalidIDsDropped(t *testing.T) {
+	d := parseCSV("x.csv", strings.NewReader("Video ID,Song Title\naaaaaaaaaaa,ok\nbad!id!bad!,x\n../../etc/pw,y\n"))
+	if len(d.tracks) != 1 || d.invalid != 2 {
+		t.Fatalf("tracks=%v invalid=%d", d.tracks, d.invalid)
+	}
+	l := parseList(strings.NewReader("aaaaaaaaaaa\nhttps://youtu.be/bbbbbbbbbbb\n"))
+	if len(l.tracks) != 2 || l.err != nil {
+		t.Fatalf("%v %v", l.tracks, l.err)
+	}
+}
+
+func TestLongLineIsError(t *testing.T) {
+	d := parseList(strings.NewReader(strings.Repeat("a", 2<<20) + "\n"))
+	if d.err == nil {
+		t.Fatal("want error for over-long line")
+	}
+	p := filepath.Join(t.TempDir(), "ids.txt")
+	os.WriteFile(p, []byte(strings.Repeat("a", 2<<20)+"\n"), 0o600)
+	if _, err := Load(p, false); err == nil || !strings.Contains(err.Error(), "longer than") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestZipEntryLimit(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "takeout.zip")
+	f, _ := os.Create(p)
+	zw := zip.NewWriter(f)
+	for i := 0; i <= maxZipEntries; i++ {
+		zw.Create(fmt.Sprintf("d/%d.txt", i))
+	}
+	zw.Close()
+	f.Close()
+	if _, err := Load(p, false); err == nil || !strings.Contains(err.Error(), "entries") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestRowCap(t *testing.T) {
+	docs := []doc{{name: "a", tracks: make([]model.Track, maxRows+1)}}
+	if _, err := merge(docs, false); err == nil {
+		t.Fatal("want row cap error")
 	}
 }

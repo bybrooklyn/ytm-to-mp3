@@ -109,7 +109,7 @@ ytm will notice the zip and carry on by itself. (Ctrl-C to stop waiting.)
 			lastPath, lastSize, stable = p, st.Size(), 0
 		}
 		if stable >= 2 { // size unchanged for ~4s: the browser has finished writing it
-			u.Printf("Found %s", p)
+			u.Printf("Found %s (%s)", p, Describe(p))
 			return p, nil
 		}
 	}
@@ -131,4 +131,27 @@ func OpenBrowser(url string) error {
 	}
 	go cmd.Wait()
 	return nil
+}
+
+// Describe summarises a found file so the caller can ask for confirmation
+// before using it, e.g. "takeout-1.zip (12.3 MB, modified 2h ago)".
+func Describe(path string) string {
+	st, err := os.Stat(path)
+	if err != nil {
+		return filepath.Base(path)
+	}
+	return fmt.Sprintf("%s (%.1f MB, modified %s ago)", filepath.Base(path),
+		float64(st.Size())/(1<<20), humanAge(time.Since(st.ModTime())))
+}
+
+func humanAge(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "moments"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
 }

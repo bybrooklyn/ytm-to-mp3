@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -17,22 +18,43 @@ import (
 // dial opens the outbound connection (through a tunnel).
 func ServeSOCKS5(ctx context.Context, l net.Listener, user, pass string, dial Dialer) error {
 	go func() { <-ctx.Done(); l.Close() }()
+	// Connections that haven't authenticated yet are capped, so another local user can't
+	// pile up thousands of half-open sockets (each would otherwise cost a goroutine for
+	// the whole 20s handshake window).
+	preAuth := make(chan struct{}, 64)
 	for {
 		c, err := l.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
-			return err
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
+				continue // transient (e.g. out of file descriptors): keep serving
+			}
+			time.Sleep(50 * time.Millisecond)
+			if errors.Is(err, net.ErrClosed) {
+				return err
+			}
+			continue
 		}
+		select {
+		case preAuth <- struct{}{}:
+		default:
+			c.Close() // too many unauthenticated connections right now
+			continue
+		}
+		var once sync.Once
+		release := func() { once.Do(func() { <-preAuth }) }
 		go func() {
 			defer c.Close()
-			_ = handleSOCKS(ctx, c, user, pass, dial)
+			defer release()
+			_ = handleSOCKS(ctx, c, user, pass, dial, release)
 		}()
 	}
 }
 
-func handleSOCKS(ctx context.Context, c net.Conn, user, pass string, dial Dialer) error {
+func handleSOCKS(ctx context.Context, c net.Conn, user, pass string, dial Dialer, authed func()) error {
 	_ = c.SetDeadline(time.Now().Add(20 * time.Second))
 	br := bufio.NewReader(c)
 	var h [2]byte
@@ -53,9 +75,9 @@ func handleSOCKS(ctx context.Context, c net.Conn, user, pass string, dial Dialer
 	}
 	c.Write([]byte{5, 2})
 	// RFC 1929 sub-negotiation
-	var v [2]byte
-	if _, err := io.ReadFull(br, v[:1]); err != nil {
-		return err
+	var v [1]byte
+	if _, err := io.ReadFull(br, v[:]); err != nil || v[0] != 1 {
+		return errors.New("bad auth version")
 	}
 	rd := func() (string, error) {
 		var n [1]byte
@@ -79,6 +101,7 @@ func handleSOCKS(ctx context.Context, c net.Conn, user, pass string, dial Dialer
 		return errors.New("bad credentials")
 	}
 	c.Write([]byte{1, 0})
+	authed() // from here on the client has proven it knows the token
 
 	var rq [4]byte
 	if _, err := io.ReadFull(br, rq[:]); err != nil {

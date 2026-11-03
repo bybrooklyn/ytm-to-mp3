@@ -113,7 +113,72 @@ func TestEnsureJSNotFatal(t *testing.T) {
 	}
 }
 
-func TestEnsureJSPrefersPath(t *testing.T) {
+func TestEnsureJSPrefersDenoOverNode(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, exe("node")), []byte("#!/bin/sh\n"), 0o755)
+	t.Setenv("PATH", dir)
+	old := denoDownload
+	bin := t.TempDir()
+	denoDownload = func(_ context.Context, b string, _ Logger) error {
+		return os.WriteFile(filepath.Join(b, exe("deno")), []byte("x"), 0o755)
+	}
+	defer func() { denoDownload = old }()
+	got := ensureJS(context.Background(), bin, func(string, ...any) {})
+	if len(got) != 1 || !strings.HasPrefix(got[0], "deno:") {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestRedirectToHTTPRefused(t *testing.T) {
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("x")) }))
+	defer plain.Close()
+	tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL, http.StatusFound)
+	}))
+	defer tls.Close()
+	old := httpClient
+	c := tls.Client()
+	c.CheckRedirect = old.CheckRedirect
+	httpClient = c
+	defer func() { httpClient = old }()
+	err := downloadFile(context.Background(), tls.URL, filepath.Join(t.TempDir(), "o"), "", 0o644, nil, "")
+	if err == nil || !strings.Contains(err.Error(), "refusing redirect") {
+		t.Errorf("got %v", err)
+	}
+}
+
+func TestDownloadSizeCap(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Transfer-Encoding", "chunked")
+		w.Write(make([]byte, 5000))
+		w.(http.Flusher).Flush()
+		w.Write(make([]byte, 5000))
+	}))
+	defer srv.Close()
+	old := maxDownloadBytes
+	maxDownloadBytes = 1000
+	defer func() { maxDownloadBytes = old }()
+	if err := downloadFile(context.Background(), srv.URL, filepath.Join(t.TempDir(), "o"), "", 0o644, nil, ""); err == nil {
+		t.Error("want size error")
+	}
+	if err := writeExec(filepath.Join(t.TempDir(), "e"), strings.NewReader(strings.Repeat("a", 2000))); err == nil {
+		t.Error("want extract size error")
+	}
+}
+
+func TestVerifyManagedRemovesTampered(t *testing.T) {
+	bin := t.TempDir()
+	p := filepath.Join(bin, exe("yt-dlp"))
+	os.WriteFile(p, []byte("good"), 0o755)
+	recordHash(p)
+	os.WriteFile(p, []byte("evil"), 0o755)
+	verifyManaged(bin, func(string, ...any) {})
+	if fileExists(p) {
+		t.Error("tampered binary should be removed")
+	}
+}
+
+func TestEnsureJSFallsBackToNode(t *testing.T) {
 	dir := t.TempDir()
 	name := exe("node")
 	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
@@ -121,7 +186,7 @@ func TestEnsureJSPrefersPath(t *testing.T) {
 	}
 	t.Setenv("PATH", dir)
 	old := denoDownload
-	denoDownload = func(context.Context, string, Logger) error { t.Error("should not download"); return nil }
+	denoDownload = func(context.Context, string, Logger) error { return fmt.Errorf("offline") }
 	defer func() { denoDownload = old }()
 	got := ensureJS(context.Background(), t.TempDir(), func(string, ...any) {})
 	if len(got) != 1 || !strings.HasPrefix(got[0], "node:") {

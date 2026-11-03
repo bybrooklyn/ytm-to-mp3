@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -25,10 +26,20 @@ var (
 		TLSHandshakeTimeout:   20 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 		ForceAttemptHTTP2:     true,
+	}, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("too many redirects")
+		}
+		if len(via) > 0 && via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme != "https" {
+			return fmt.Errorf("refusing redirect from https to %s", req.URL.Scheme)
+		}
+		return nil
 	}}
-	stallTimeout    = 60 * time.Second
-	downloadTimeout = 2 * time.Hour
-	fetchTimeout    = 2 * time.Minute
+	// maxDownloadBytes caps what one download may write to disk; vars so tests can shrink them.
+	maxDownloadBytes int64 = 600 << 20
+	stallTimeout           = 60 * time.Second
+	downloadTimeout        = 2 * time.Hour
+	fetchTimeout           = 2 * time.Minute
 )
 
 // stallBody cancels the request when no bytes arrive for d.
@@ -155,9 +166,18 @@ func downloadFile(ctx context.Context, url, dst, want string, mode os.FileMode, 
 	if p := newProgress(logf, label, resp.ContentLength); p != nil {
 		w = append(w, p)
 	}
-	if _, err := io.Copy(io.MultiWriter(w...), resp.Body); err != nil {
+	if resp.ContentLength > maxDownloadBytes {
+		tmp.Close()
+		return fmt.Errorf("download of %s too large (%d bytes, limit %d)", url, resp.ContentLength, maxDownloadBytes)
+	}
+	n, err := io.Copy(io.MultiWriter(w...), io.LimitReader(resp.Body, maxDownloadBytes+1))
+	if err != nil {
 		tmp.Close()
 		return err
+	}
+	if n > maxDownloadBytes {
+		tmp.Close()
+		return fmt.Errorf("download of %s exceeded the %d MB limit", url, maxDownloadBytes>>20)
 	}
 	if err := tmp.Close(); err != nil {
 		return err

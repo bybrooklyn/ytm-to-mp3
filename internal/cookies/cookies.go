@@ -100,8 +100,15 @@ func Setup(ctx context.Context, u *ui.UI, cfg *config.Config, tools deps.Tools, 
 		return Result{}
 	}
 	file := filepath.Join(cache, "cookies.txt")
-	if cfg.Cookies == "yes" && fresh(file) && LoggedIn(file) {
-		return Result{File: file, Browser: cfg.Browser}
+	if st, err := os.Stat(file); err == nil && time.Since(st.ModTime()) >= maxAge {
+		_ = os.Remove(file) // stale jars don't linger on disk
+	}
+	if cfg.Cookies == "yes" && fresh(file) {
+		if LoggedIn(file) {
+			_ = os.Chmod(file, 0o600)
+			return Result{File: file, Browser: cfg.Browser}
+		}
+		_ = os.Remove(file)
 	}
 
 	browsers := Detect()
@@ -139,6 +146,7 @@ func Setup(ctx context.Context, u *ui.UI, cfg *config.Config, tools deps.Tools, 
 			continue
 		}
 		if !LoggedIn(file) {
+			_ = os.Remove(file)
 			lastErr = fmt.Errorf("not logged in to YouTube in %s", b)
 			continue
 		}
@@ -163,7 +171,17 @@ func fresh(p string) bool {
 
 func export(ctx context.Context, tools deps.Tools, browser, file string) error {
 	_ = os.Remove(file)
-	args := []string{"--ignore-config", "--cookies-from-browser", browser, "--cookies", file,
+	// yt-dlp writes the full browser jar into a private 0700 directory (no
+	// umask games needed, so this works on Windows too); we keep only Google
+	// domains and move that into place as 0600.
+	dir, err := os.MkdirTemp(filepath.Dir(file), ".ck-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	_ = os.Chmod(dir, 0o700)
+	raw := filepath.Join(dir, "jar.txt")
+	args := []string{"--ignore-config", "--cookies-from-browser", browser, "--cookies", raw,
 		"--skip-download", "--simulate", "--no-warnings", "--no-playlist", "--quiet"}
 	for _, r := range tools.JSRuntimes {
 		args = append(args, "--js-runtimes", r)
@@ -175,7 +193,7 @@ func export(ctx context.Context, tools deps.Tools, browser, file string) error {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	_ = cmd.Run() // yt-dlp writes the jar even if the probe video fails
-	if st, err := os.Stat(file); err != nil || st.Size() < 100 {
+	if st, err := os.Stat(raw); err != nil || st.Size() < 100 {
 		msg := strings.TrimSpace(stderr.String())
 		if i := strings.LastIndex(msg, "ERROR:"); i >= 0 {
 			msg = msg[i:]
@@ -185,7 +203,11 @@ func export(ctx context.Context, tools deps.Tools, browser, file string) error {
 		}
 		return fmt.Errorf("%s: %s", browser, firstLine(msg))
 	}
-	return os.Chmod(file, 0o600)
+	b, err := os.ReadFile(raw)
+	if err != nil {
+		return err
+	}
+	return writePrivate(file, filterJar(b))
 }
 
 func firstLine(s string) string {
@@ -213,5 +235,5 @@ func Copy(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, b, 0o600)
+	return writePrivate(dst, b)
 }

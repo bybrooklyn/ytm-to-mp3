@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 )
 
 // kind classifies a failure so the pipeline knows whether to retry, back off, or give up.
@@ -51,18 +53,25 @@ var (
 		"has been terminated", "members-only", "premieres in", "live event will begin",
 		"sign in to confirm your age", "age-restricted", "no longer available", "does not exist",
 	}
-	ansiRe   = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	errPrefx = regexp.MustCompile(`^ERROR:\s*(\[[^\]]+\]\s*[\w-]+:\s*)?`)
 )
 
+// maxMsg bounds how much tool output ends up in errors, the store and the terminal.
+const maxMsg = 400
+
 func classify(stderr string) *Error {
-	msg := ansiRe.ReplaceAllString(stderr, "")
+	// yt-dlp stderr is attacker-influenced (titles, server replies) and can echo the proxy
+	// URL: strip every escape sequence and credential before it is stored or shown.
+	msg := names.Clean(stderr)
 	if i := strings.LastIndex(msg, "ERROR:"); i >= 0 {
 		msg = msg[i:]
 	}
 	msg = strings.TrimSpace(errPrefx.ReplaceAllString(strings.TrimSpace(msg), ""))
 	if i := strings.IndexByte(msg, '\n'); i >= 0 {
 		msg = msg[:i]
+	}
+	if r := []rune(msg); len(r) > maxMsg {
+		msg = string(r[:maxMsg]) + "…"
 	}
 	if msg == "" {
 		msg = "yt-dlp failed"
@@ -141,7 +150,7 @@ type ytdlp struct {
 }
 
 func (y ytdlp) baseArgs(clientIdx int) []string {
-	a := []string{"--ignore-config", "--no-warnings", "--no-playlist", "--socket-timeout", "20"}
+	a := []string{"--ignore-config", "--no-plugin-dirs", "--no-warnings", "--no-playlist", "--socket-timeout", "20"}
 	for _, r := range y.tools.JSRuntimes {
 		a = append(a, "--js-runtimes", r)
 	}
@@ -196,6 +205,9 @@ func (y ytdlp) run(ctx context.Context, args ...string) ([]byte, error) {
 
 // Resolve asks yt-dlp for the best audio stream and metadata of one video.
 func (y ytdlp) Resolve(ctx context.Context, id string, clientIdx int) (*Resolved, error) {
+	if !model.ValidID(id) {
+		return nil, &Error{kindPermanent, "invalid video id"}
+	}
 	args := append(y.baseArgs(clientIdx), "-J", "-f", "bestaudio/best", "https://www.youtube.com/watch?v="+id)
 	b, err := y.run(ctx, args...)
 	if err != nil {
@@ -255,12 +267,23 @@ func firstNonEmpty(s ...string) string {
 	return ""
 }
 
+// outputTemplate is the yt-dlp -o template for a download: a fixed "dl-" prefix plus the id,
+// with '%' escaped in both the directory and the id so nothing is ever interpreted as a
+// yt-dlp field expression.
+func outputTemplate(dir, id string) string {
+	esc := func(s string) string { return strings.ReplaceAll(s, "%", "%%") }
+	return esc(filepath.Join(dir, "dl-"+id)) + ".%(ext)s"
+}
+
 // Download lets yt-dlp fetch the audio itself. This is the slower but most robust
 // path, used when the direct stream URL can't be fetched by ytm.
 func (y ytdlp) Download(ctx context.Context, id, dir string, clientIdx int) (string, error) {
+	if !model.ValidID(id) {
+		return "", &Error{kindPermanent, "invalid video id"}
+	}
 	args := append(y.baseArgs(clientIdx), "-f", "bestaudio/best", "--no-part", "--quiet",
 		"--concurrent-fragments", "4", "--http-chunk-size", "10M",
-		"-o", dir+"/"+id+".%(ext)s", "--print", "after_move:filepath",
+		"-o", outputTemplate(dir, id), "--print", "after_move:filepath",
 		"https://www.youtube.com/watch?v="+id)
 	b, err := y.run(ctx, args...)
 	if err != nil {
@@ -278,9 +301,9 @@ func (y ytdlp) Download(ctx context.Context, id, dir string, clientIdx int) (str
 
 // Expand turns a playlist / album URL into tracks.
 func (y ytdlp) Expand(ctx context.Context, url string) ([]model.Track, error) {
-	args := []string{"--ignore-config", "--no-warnings", "--flat-playlist", "-J", url}
+	args := []string{"--ignore-config", "--no-plugin-dirs", "--no-warnings", "--flat-playlist", "-J", "--", url}
 	if y.cookies != "" {
-		args = append(args[:2:2], append([]string{"--cookies", y.cookies}, args[2:]...)...)
+		args = append(args[:3:3], append([]string{"--cookies", y.cookies}, args[3:]...)...)
 	}
 	b, err := y.run(ctx, args...)
 	if err != nil {
@@ -298,11 +321,11 @@ func (y ytdlp) Expand(ctx context.Context, url string) ([]model.Track, error) {
 	}
 	var out []model.Track
 	for _, e := range pl.Entries {
-		if len(e.ID) == 11 {
+		if model.ValidID(e.ID) {
 			out = append(out, model.Track{ID: e.ID, Title: e.Title})
 		}
 	}
-	if len(out) == 0 && len(pl.ID) == 11 {
+	if len(out) == 0 && model.ValidID(pl.ID) {
 		out = append(out, model.Track{ID: pl.ID})
 	}
 	if len(out) == 0 {
@@ -312,6 +335,7 @@ func (y ytdlp) Expand(ctx context.Context, url string) ([]model.Track, error) {
 }
 
 // ExpandURL is the exported entry point for the CLI.
-func ExpandURL(ctx context.Context, tools deps.Tools, cookies, url string) ([]model.Track, error) {
-	return ytdlp{tools: tools, cookies: cookies}.Expand(ctx, url)
+// proxy, if set, is the exit to look the link up through ("" = your own connection).
+func ExpandURL(ctx context.Context, tools deps.Tools, cookies, proxy, url string) ([]model.Track, error) {
+	return ytdlp{tools: tools, cookies: cookies, proxy: proxy}.Expand(ctx, url)
 }

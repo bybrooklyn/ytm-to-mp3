@@ -42,6 +42,7 @@ func Ensure(ctx context.Context, logf Logger) (Tools, error) {
 		return Tools{}, err
 	}
 	var t Tools
+	verifyManaged(bin, logf)
 
 	if t.YtDlp, err = ensureYtDlp(ctx, bin, logf); err != nil {
 		return t, fmt.Errorf("yt-dlp: %w", err)
@@ -82,7 +83,9 @@ func exe(name string) string {
 var dateRe = regexp.MustCompile(`^(\d{4})\.(\d{2})\.(\d{2})`)
 
 func ytDlpVersion(path string) string {
-	out, err := exec.Command(path, "--version").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "--version").Output()
 	if err != nil {
 		return ""
 	}
@@ -153,6 +156,7 @@ func installYtDlp(ctx context.Context, bin string, logf Logger) (string, error) 
 	if err := downloadVerified(ctx, base+asset, base+"SHA2-256SUMS", asset, dst, 0o755, logf, "yt-dlp"); err != nil {
 		return "", err
 	}
+	recordHash(dst)
 	return dst, nil
 }
 
@@ -206,5 +210,6 @@ func EnsureMedia(ctx context.Context, logf Logger) (ffmpeg, ffprobe string, err 
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		return "", "", err
 	}
+	verifyManaged(bin, nil)
 	return ensureFFmpeg(ctx, bin, logf)
 }

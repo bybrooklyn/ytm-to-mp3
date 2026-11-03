@@ -144,6 +144,9 @@ func installFFmpeg(ctx context.Context, bin string, missing map[string]bool, log
 		}
 		tmp.Close()
 		defer os.Remove(tmp.Name())
+		if s.sums == "" {
+			logf("Warning: %s has no published checksum, so this download is UNVERIFIED. Prefer `brew install ffmpeg`.", s.name)
+		}
 		if s.sums != "" {
 			err = downloadVerified(ctx, s.url, s.sums, s.name, tmp.Name(), 0o644, logf, "ffmpeg")
 		} else {
@@ -165,6 +168,7 @@ func installFFmpeg(ctx context.Context, bin string, missing map[string]bool, log
 		if !fileExists(filepath.Join(bin, n)) {
 			return fmt.Errorf("%s missing from downloaded archive", n)
 		}
+		recordHash(filepath.Join(bin, n))
 	}
 	return nil
 }
@@ -226,8 +230,13 @@ func writeExec(dst string, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(f, r); err != nil {
+	n, err := io.Copy(f, io.LimitReader(r, maxDownloadBytes+1))
+	if err == nil && n > maxDownloadBytes {
+		err = fmt.Errorf("extracted file %s exceeds the %d MB limit", filepath.Base(dst), maxDownloadBytes>>20)
+	}
+	if err != nil {
 		f.Close()
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := f.Close(); err != nil {

@@ -13,6 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 )
 
 type Store struct{ db *sql.DB }
@@ -32,10 +33,11 @@ CREATE TABLE IF NOT EXISTS tracks (
 
 // Open opens (creating if needed) <dir>/state.db.
 func Open(dir string) (*Store, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := PrivateDir(dir); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dir, "state.db"))+
+	dbPath := filepath.Join(dir, "state.db")
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(dbPath)+
 		"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, err
@@ -44,6 +46,9 @@ func Open(dir string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, err
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		_ = os.Chmod(dbPath+suffix, 0o600) // missing files are fine
 	}
 	return &Store{db}, nil
 }
@@ -55,6 +60,7 @@ type Pending struct {
 	Todo      []model.Track
 	Done      int
 	Skipped   int // permanently unavailable, not retried
+	Invalid   int // malformed ids that were dropped
 	Preferred map[string]bool
 }
 
@@ -75,7 +81,11 @@ func (s *Store) Plan(tracks []model.Track, retryAll bool) (Pending, error) {
 	}
 	defer ins.Close()
 	for _, t := range tracks {
-		if _, err := ins.Exec(t.ID, t.Title, t.PrimaryArtist(), time.Now().Unix()); err != nil {
+		if !model.ValidID(t.ID) {
+			p.Invalid++
+			continue
+		}
+		if _, err := ins.Exec(t.ID, names.Clean(t.Title), names.Clean(t.PrimaryArtist()), time.Now().Unix()); err != nil {
 			return p, err
 		}
 		var status string
@@ -107,7 +117,7 @@ func (s *Store) MarkFailed(id, reason string, permanent bool) error {
 		p = 1
 	}
 	_, err := s.db.Exec(`UPDATE tracks SET status='failed', permanent=?, error=?, attempts=attempts+1, updated=? WHERE id=?`,
-		p, reason, time.Now().Unix(), id)
+		p, names.Clean(reason), time.Now().Unix(), id)
 	return err
 }
 
@@ -126,6 +136,7 @@ func (s *Store) Failures() ([]Failure, error) {
 		if err := rows.Scan(&f.ID, &f.Title, &f.Artist, &f.Error); err != nil {
 			return nil, err
 		}
+		f.ID, f.Title, f.Artist, f.Error = names.Clean(f.ID), names.Clean(f.Title), names.Clean(f.Artist), names.Clean(f.Error)
 		out = append(out, f)
 	}
 	return out, rows.Err()
@@ -144,7 +155,7 @@ func (s *Store) ImportDisk(dir string) (int, error) {
 		if d.IsDir() && strings.HasPrefix(d.Name(), ".") && p != dir {
 			return filepath.SkipDir
 		}
-		if m := fileIDRe.FindStringSubmatch(d.Name()); m != nil && !d.IsDir() {
+		if m := fileIDRe.FindStringSubmatch(d.Name()); m != nil && !d.IsDir() && model.ValidID(m[1]) {
 			found[m[1]] = p
 		}
 		return nil

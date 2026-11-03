@@ -170,6 +170,23 @@ const (
 
 // Run downloads every track in todo and records results in the store.
 func Run(ctx context.Context, o Options, todo []model.Track) Summary {
+	// Ids end up in URLs, file names and yt-dlp templates: nothing malformed gets past here.
+	valid := make([]model.Track, 0, len(todo))
+	dropped := 0
+	for _, t := range todo {
+		if model.ValidID(t.ID) {
+			valid = append(valid, t)
+		} else {
+			dropped++
+		}
+	}
+	if dropped > 0 {
+		o.UI.Printf("warning: ignoring %d track(s) with an invalid video id", dropped)
+	}
+	todo = valid
+	if len(todo) == 0 {
+		return Summary{}
+	}
 	e := &engine{Options: o, total: len(todo)}
 	exits := o.Exits
 	if len(exits) == 0 {
@@ -200,9 +217,13 @@ func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 	if len(e.lanes) == 0 {
 		return Summary{Failed: len(todo)}
 	}
-	e.tmp = filepath.Join(o.Out, ".ytm", "tmp")
-	_ = os.RemoveAll(e.tmp)
-	_ = os.MkdirAll(e.tmp, 0o755)
+	// A unique private directory per run: never delete another running instance's files.
+	tmp, err := store.NewTempDir(o.Out)
+	if err != nil {
+		o.UI.Printf("cannot create a temp directory in %s: %v", o.Out, err)
+		return Summary{Failed: len(todo)}
+	}
+	e.tmp = tmp
 	defer os.RemoveAll(e.tmp)
 
 	began := time.Now()
@@ -328,11 +349,11 @@ func (e *engine) fail(t model.Track, err error) {
 		return
 	}
 	perm := kindOf(err) == kindPermanent
-	if serr := e.Store.MarkFailed(t.ID, err.Error(), perm); serr != nil {
+	if serr := e.Store.MarkFailed(t.ID, names.Clean(err.Error()), perm); serr != nil {
 		e.UI.Printf("warning: couldn't record failure for %s: %v", t.ID, serr)
 	}
 	e.failed.Add(1)
-	e.UI.Printf("✗ %s  (%s)", t.Label(), err)
+	e.UI.Printf("✗ %s  (%s)", t.Label(), names.Clean(err.Error()))
 }
 
 func ctxErr(err error) bool { return err == context.Canceled || err == context.DeadlineExceeded }
@@ -519,17 +540,17 @@ func outputPath(root string, t model.Track, r *Resolved, format string) (path st
 	if album != "" {
 		parts = append(parts, names.Part(album, "Unknown Album"))
 	}
-	parts = append(parts, names.Part(title, t.ID)+" ["+t.ID+"]."+format)
+	parts = append(parts, names.PartWithSuffix(title, t.ID, " ["+t.ID+"]."+format))
 	meta = map[string]string{
-		"title":        title,
-		"artist":       joinArtists(artists),
-		"album_artist": firstString(artists),
-		"album":        album,
+		"title":        names.StripControl(title),
+		"artist":       names.StripControl(joinArtists(artists)),
+		"album_artist": names.StripControl(firstString(artists)),
+		"album":        names.StripControl(album),
 		"comment":      "https://music.youtube.com/watch?v=" + t.ID,
 	}
 	// Keep everything YouTube knows; empty values are dropped by encodeArgs.
 	meta["date"] = firstNonEmpty(r.Date, yearString(r.Year))
-	meta["genre"] = r.Genre
+	meta["genre"] = names.StripControl(r.Genre)
 	if r.Track > 0 {
 		meta["track"] = strconv.Itoa(r.Track)
 	}
@@ -583,8 +604,7 @@ func (e *engine) encodeJob(ctx context.Context, j *job) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_ = os.Remove(final)
-	if err := os.Rename(tmpOut, final); err != nil {
+	if err := store.Replace(tmpOut, final); err != nil { // atomic replace on unix
 		return "", err
 	}
 	return final, nil
