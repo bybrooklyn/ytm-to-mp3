@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -76,7 +77,8 @@ type opts struct {
 func parse(name string, args []string) (opts, []string, error) {
 	var o opts
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
+	fs.SetOutput(io.Discard) // errors are printed once by main, with a pointer to 'ytm help'
+	fs.Usage = func() {}
 	fs.StringVar(&o.out, "o", "", "")
 	fs.StringVar(&o.format, "f", "", "")
 	fs.IntVar(&o.jobs, "j", 0, "")
@@ -102,10 +104,21 @@ func parse(name string, args []string) (opts, []string, error) {
 		pos = append(pos, fs.Arg(0))
 		args = fs.Args()[1:]
 	}
-	cfg := config.Load()
-	if o.out == "" {
-		o.out = orDefault(cfg.Out, "Music")
+	cfg, cerr := config.LoadChecked()
+	if cerr != nil {
+		fmt.Fprintln(os.Stderr, "ytm: warning:", cerr)
 	}
+	if o.jobs < 0 {
+		return o, nil, fmt.Errorf("-j must be 1 or more")
+	}
+	o.format = strings.ToLower(o.format)
+	if o.out == "" {
+		o.out = cfg.Out
+	}
+	if o.out == "" {
+		o.out = config.DefaultOut()
+	}
+	o.out = config.ExpandPath(o.out)
 	if o.format == "" {
 		o.format = orDefault(cfg.Format, "mp3")
 	}
@@ -115,20 +128,27 @@ func parse(name string, args []string) (opts, []string, error) {
 	return o, pos, nil
 }
 
+// commands are the words that act as subcommands when they come first (flags may precede them).
+var commands = map[string]bool{"export": true, "tag": true, "update": true, "version": true, "help": true,
+	"setup": true, "login": true, "logout": true, "status": true}
+
 func run(args []string) error {
-	cmd := ""
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		switch args[0] {
-		case "export", "tag", "update", "version", "help", "setup", "login", "logout", "status":
-			cmd, args = args[0], args[1:]
-		}
+	if len(args) == 1 && (args[0] == "--version" || args[0] == "-v") {
+		args = []string{"version"}
 	}
 	o, pos, err := parse("ytm", args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("%w (see: ytm help)", err)
+	}
+	cmd := ""
+	if len(pos) > 0 && commands[pos[0]] {
+		cmd, pos = pos[0], pos[1:]
+		if len(pos) > 0 && cmd != "tag" && cmd != "export" {
+			return fmt.Errorf("'ytm %s' takes no arguments (got %q)", cmd, pos[0])
+		}
 	}
 	ctx, stop := signalContext()
 	defer stop()
@@ -227,6 +247,24 @@ func findExisting() (string, bool) {
 
 func isURL(s string) bool { return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") }
 
+// asURL accepts links pasted without a scheme (youtu.be/..., music.youtube.com/...) and
+// bare playlist ids, returning the full URL.
+func asURL(s string) (string, bool) {
+	if isURL(s) {
+		return s, true
+	}
+	for _, h := range []string{"youtube.com/", "youtu.be/", "music.youtube.com/", "www.youtube.com/"} {
+		if strings.HasPrefix(s, h) {
+			return "https://" + s, true
+		}
+	}
+	if len(s) >= 18 && (strings.HasPrefix(s, "PL") || strings.HasPrefix(s, "OLAK5uy_") || strings.HasPrefix(s, "RDCLAK")) &&
+		!strings.ContainsAny(s, `/\. `) {
+		return "https://www.youtube.com/playlist?list=" + s, true
+	}
+	return "", false
+}
+
 func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	logf := func(f string, a ...any) { u.Printf(f, a...) }
 	var tools deps.Tools
@@ -245,7 +283,8 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	}
 	for _, input := range inputs {
 		input = strings.Trim(input, `"' `)
-		if isURL(input) {
+		if link, ok := asURL(input); ok {
+			input = link
 			var err error
 			if tools.YtDlp == "" {
 				if tools, err = deps.Ensure(ctx, logf); err != nil {
@@ -263,7 +302,7 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 				add([]model.Track{{ID: id}})
 				continue
 			}
-			return err
+			return fmt.Errorf("%q is not a YouTube link or an existing file.\nPaste a video/playlist link (in quotes, since & and ? confuse shells) or the path to your Takeout .zip", input)
 		} else {
 			ts, err := takeout.Load(input, o.all)
 			if err != nil {

@@ -21,11 +21,26 @@ func TestAIMD(t *testing.T) {
 	if g.Cooling() <= 0 {
 		t.Fatal("should be cooling down")
 	}
+	// the rest of a burst of 429s is the same episode: no further escalation
 	for i := 0; i < 5; i++ {
+		g.Observe(Throttled)
+	}
+	if g.Limit() != 4 {
+		t.Fatalf("burst must not escalate, got %d", g.Limit())
+	}
+	// once the cooldown has passed, a new throttle halves again, down to the floor of 1
+	now := time.Now()
+	g.now = func() time.Time { return now }
+	for i := 0; i < 5; i++ {
+		now = now.Add(time.Hour)
 		g.Observe(Throttled)
 	}
 	if g.Limit() != 1 {
 		t.Fatalf("floor is 1, got %d", g.Limit())
+	}
+	g.Reset(3)
+	if g.Limit() != 3 || g.Cooling() != 0 {
+		t.Fatalf("reset should clear backoff, limit %d cooling %v", g.Limit(), g.Cooling())
 	}
 }
 

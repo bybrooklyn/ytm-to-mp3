@@ -65,6 +65,7 @@ type job struct {
 	src    string // downloaded source file
 	client int
 	lane   *lane // the exit this track was resolved on; stream URLs are tied to its IP
+	epoch  int64 // lane.epoch when resolved; if it changed, the stream URL is for an old IP
 }
 
 // lane is one exit with its own governor, HTTP client and yt-dlp settings.
@@ -78,6 +79,7 @@ type lane struct {
 	bytes    atomic.Int64
 	bad      atomic.Int32 // consecutive throttles / failures
 	swapping atomic.Bool
+	epoch    atomic.Int64 // bumps on every exit swap; stream URLs are valid for one epoch only
 }
 
 func (l *lane) http() *http.Client { l.mu.Lock(); defer l.mu.Unlock(); return l.client }
@@ -85,14 +87,17 @@ func (l *lane) ytdlp() ytdlp       { l.mu.Lock(); defer l.mu.Unlock(); return l.
 
 // sour records a bad outcome; after several in a row the exit is swapped for a fresh
 // server (a different IP usually clears a rate limit).
-func (e *engine) sour(ctx context.Context, l *lane) {
+func (e *engine) sour(ctx context.Context, l *lane, epoch int64) {
+	if l.epoch.Load() != epoch {
+		return // that failure belongs to an exit we've already replaced
+	}
 	if l.bad.Add(1) < 4 {
 		return
 	}
-	e.swap(ctx, l)
+	e.swap(ctx, l, "was rate limited")
 }
 
-func (e *engine) swap(ctx context.Context, l *lane) {
+func (e *engine) swap(ctx context.Context, l *lane, why string) {
 	l.bad.Store(0)
 	if e.Replace == nil || !l.swapping.CompareAndSwap(false, true) {
 		return
@@ -110,10 +115,16 @@ func (e *engine) swap(ctx context.Context, l *lane) {
 		return
 	}
 	l.mu.Lock()
+	oldClient := l.client
 	l.exit, l.client = ex, cl
 	l.yt.proxy = ex.Proxy
 	l.mu.Unlock()
-	e.UI.Printf("↻ %s was rate limited, switched to %s", old.Name, ex.Name)
+	l.epoch.Add(1)
+	l.gov.Reset(e.startLimit) // a fresh IP starts with a clean slate
+	oldClient.CloseIdleConnections()
+	if ctx.Err() == nil {
+		e.UI.Printf("↻ %s %s, switched to %s", old.Name, why, ex.Name)
+	}
 }
 
 // pick chooses the least-loaded exit that isn't cooling down, avoiding `avoid` if possible.
@@ -124,6 +135,9 @@ func (e *engine) pick(avoid *lane) *lane {
 		score := l.gov.Load()
 		if c := l.gov.Cooling(); c > 0 {
 			score += 10 + c.Seconds()
+		}
+		if l.swapping.Load() {
+			score += 100 // being replaced right now
 		}
 		if l == avoid && len(e.lanes) > 1 {
 			score += 5
@@ -144,6 +158,9 @@ type engine struct {
 	failed atomic.Int64
 	active atomic.Int64
 	total  int
+
+	startLimit int            // initial per-exit concurrency, restored when an exit is swapped
+	bg         sync.WaitGroup // health probes / swaps; joined before Run returns
 }
 
 const (
@@ -166,6 +183,7 @@ func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 		laneMax = max(1, (o.Jobs+len(exits)-1)/len(exits))
 		start = min(start, laneMax)
 	}
+	e.startLimit = start
 	maxC := 0
 	for _, x := range exits {
 		cl, err := vpn.NewClient(x.Proxy)
@@ -219,8 +237,8 @@ func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 				if e.Healthy != nil && time.Since(lastCheck) > 20*time.Second {
 					lastCheck = time.Now()
 					for _, l := range e.lanes {
-						if !e.Healthy(l.exitCopy()) {
-							go e.swap(ctx, l)
+						if e.Healthy != nil {
+							e.probeAsync(ctx, l)
 						}
 					}
 				}
@@ -252,7 +270,11 @@ feed:
 	ew.Wait()
 	tick.Stop()
 	close(stopStatus)
+	e.bg.Wait() // health probes / swaps must not outlive Run (the tunnels are closed after it)
 	o.UI.ClearStatus()
+	for _, l := range e.lanes {
+		l.http().CloseIdleConnections()
+	}
 
 	var per []ExitStat
 	for _, l := range e.lanes {
@@ -306,7 +328,9 @@ func (e *engine) fail(t model.Track, err error) {
 		return
 	}
 	perm := kindOf(err) == kindPermanent
-	_ = e.Store.MarkFailed(t.ID, err.Error(), perm)
+	if serr := e.Store.MarkFailed(t.ID, err.Error(), perm); serr != nil {
+		e.UI.Printf("warning: couldn't record failure for %s: %v", t.ID, serr)
+	}
 	e.failed.Add(1)
 	e.UI.Printf("✗ %s  (%s)", t.Label(), err)
 }
@@ -327,57 +351,65 @@ func (e *engine) resolveWorker(ctx context.Context, slot int, in <-chan model.Tr
 		if ctx.Err() != nil {
 			continue
 		}
-		res, client, ln, err := e.resolveWithRetry(ctx, t)
+		res, client, ln, epoch, err := e.resolveWithRetry(ctx, t)
 		if err != nil {
 			e.fail(t, err)
 			continue
 		}
 		e.active.Add(1)
 		select {
-		case out <- &job{tr: t, res: res, client: client, lane: ln}:
+		case out <- &job{tr: t, res: res, client: client, lane: ln, epoch: epoch}:
 		case <-ctx.Done():
 			e.active.Add(-1)
 		}
 	}
 }
 
-func (e *engine) resolveWithRetry(ctx context.Context, t model.Track) (*Resolved, int, *lane, error) {
+func (e *engine) resolveWithRetry(ctx context.Context, t model.Track) (*Resolved, int, *lane, int64, error) {
 	var err error
 	var prev *lane
-	transient, throttled := 0, 0
+	transient, throttled, netFails := 0, 0, 0
 	for client := 0; ; client++ {
 		ln := e.pick(prev)
 		if err = ln.gov.Acquire(ctx); err != nil {
-			return nil, 0, nil, err
+			return nil, 0, nil, 0, err
 		}
+		epoch := ln.epoch.Load()
 		var res *Resolved
 		res, err = ln.ytdlp().Resolve(ctx, t.ID, client)
 		switch {
 		case err == nil:
 			ln.gov.Release(OK)
 			ln.bad.Store(0)
-			return res, client, ln, nil
+			return res, client, ln, epoch, nil
 		case ctx.Err() != nil:
 			ln.gov.Release(Neutral)
-			return nil, 0, nil, ctx.Err()
+			return nil, 0, nil, 0, ctx.Err()
 		case kindOf(err) == kindPermanent:
 			ln.gov.Release(Neutral)
-			return nil, 0, nil, err
+			return nil, 0, nil, 0, err
 		case kindOf(err) == kindThrottled:
 			ln.gov.Release(Throttled)
-			e.sour(ctx, ln)
+			e.sour(ctx, ln, epoch)
 			prev = ln // try another exit next
 			if throttled++; throttled >= maxThrottled {
-				return nil, 0, nil, err
+				return nil, 0, nil, 0, err
 			}
+		case looksLikeNetwork(err):
+			// A dead tunnel is the exit's fault, not the track's: charge the exit, not the
+			// track's retry budget, and try another exit (bounded, so we still give up).
+			ln.gov.Release(Neutral)
+			e.sour(ctx, ln, epoch)
+			prev = ln
+			if netFails++; netFails >= 3*maxTransient {
+				return nil, 0, nil, 0, err
+			}
+			sleep(ctx, 2*time.Second)
 		default:
 			ln.gov.Release(Neutral)
 			prev = ln
-			if looksLikeNetwork(err) {
-				e.sour(ctx, ln)
-			}
 			if transient++; transient >= maxTransient {
-				return nil, 0, nil, err
+				return nil, 0, nil, 0, err
 			}
 			sleep(ctx, time.Duration(transient)*2*time.Second)
 		}
@@ -405,7 +437,9 @@ func (e *engine) fetchJob(ctx context.Context, j *job) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if canFetch(j.res) {
+	// A stream URL is only valid from the IP it was resolved on; if the exit was swapped
+	// since, skip straight to the yt-dlp path (which resolves afresh).
+	if canFetch(j.res) && j.lane.epoch.Load() == j.epoch {
 		dst := filepath.Join(e.tmp, j.tr.ID+".src")
 		err := fetch(ctx, j.lane.http(), j.res, dst, func(n int64) { e.bytes.Add(n); j.lane.bytes.Add(n) }, func() { j.lane.gov.Observe(Throttled) })
 		if err == nil {
@@ -421,13 +455,20 @@ func (e *engine) fetchJob(ctx context.Context, j *job) error {
 	}
 	var err error
 	for attempt := 0; attempt < maxTransient; attempt++ {
-		if err = j.lane.gov.Acquire(ctx); err != nil {
+		// yt-dlp resolves from scratch, so any healthy exit will do; don't sit in the
+		// queue of a resting one while other exits are idle.
+		ln := j.lane
+		if ln.gov.Cooling() > 0 || ln.swapping.Load() || attempt > 0 {
+			ln = e.pick(j.lane)
+		}
+		j.lane = ln
+		if err = ln.gov.Acquire(ctx); err != nil {
 			return err
 		}
 		var p string
-		p, err = j.lane.ytdlp().Download(ctx, j.tr.ID, e.tmp, j.client+attempt)
+		p, err = ln.ytdlp().Download(ctx, j.tr.ID, e.tmp, j.client+attempt)
 		if err == nil {
-			j.lane.gov.Release(OK)
+			ln.gov.Release(OK)
 			if st, serr := os.Stat(p); serr == nil {
 				e.bytes.Add(st.Size())
 			}
@@ -436,12 +477,12 @@ func (e *engine) fetchJob(ctx context.Context, j *job) error {
 		}
 		switch kindOf(err) {
 		case kindPermanent:
-			j.lane.gov.Release(Neutral)
+			ln.gov.Release(Neutral)
 			return err
 		case kindThrottled:
-			j.lane.gov.Release(Throttled)
+			ln.gov.Release(Throttled)
 		default:
-			j.lane.gov.Release(Neutral)
+			ln.gov.Release(Neutral)
 			sleep(ctx, 2*time.Second)
 		}
 	}
@@ -457,7 +498,9 @@ func (e *engine) encodeWorker(ctx context.Context, in <-chan *job) {
 			e.fail(j.tr, err)
 			continue
 		}
-		_ = e.Store.MarkDone(j.tr.ID, path)
+		if serr := e.Store.MarkDone(j.tr.ID, path); serr != nil {
+			e.UI.Printf("warning: couldn't record %s as done (it may download again next run): %v", j.tr.ID, serr)
+		}
 		e.done.Add(1)
 		j.lane.done.Add(1)
 		e.UI.Printf("✓ %s", j.tr.Label())
@@ -548,6 +591,18 @@ func (e *engine) encodeJob(ctx context.Context, j *job) (string, error) {
 }
 
 func (l *lane) exitName() string { l.mu.Lock(); defer l.mu.Unlock(); return l.exit.Name }
+
+// probeAsync checks a lane's tunnel off the status goroutine and swaps it if it died.
+// Run waits for these (e.bg) before returning, so none outlives the tunnels.
+func (e *engine) probeAsync(ctx context.Context, l *lane) {
+	e.bg.Add(1)
+	go func() {
+		defer e.bg.Done()
+		if ctx.Err() == nil && !e.Healthy(l.exitCopy()) {
+			e.swap(ctx, l, "stopped responding")
+		}
+	}()
+}
 
 func (l *lane) exitCopy() vpn.Exit { l.mu.Lock(); defer l.mu.Unlock(); return l.exit }
 

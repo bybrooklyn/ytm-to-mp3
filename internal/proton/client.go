@@ -39,11 +39,12 @@ type Session struct {
 
 // Client is an API client bound to a session file.
 type Client struct {
-	HTTP    *http.Client
-	Base    string
-	Path    string // where the session is saved ("" = don't save)
-	mu      sync.Mutex
-	Session *Session
+	HTTP      *http.Client
+	Base      string
+	Path      string // where the session is saved ("" = don't save)
+	mu        sync.Mutex
+	refreshMu sync.Mutex
+	Session   *Session
 }
 
 // New returns a client, loading a saved session from path if there is one.
@@ -69,13 +70,33 @@ func SessionPath() (string, error) {
 	return filepath.Join(d, "ytm", "proton.json"), nil
 }
 
+// save writes the session atomically (temp file + rename) so a crash can't lose the
+// WireGuard seed or a rotated refresh token.
 func (c *Client) save() {
-	if c.Path == "" || c.Session == nil {
-		return
+	if err := c.saveErr(); err != nil {
+		fmt.Fprintln(os.Stderr, "ytm: warning: couldn't save your Proton session:", err)
 	}
-	_ = os.MkdirAll(filepath.Dir(c.Path), 0o700)
-	b, _ := json.MarshalIndent(c.Session, "", "  ")
-	_ = os.WriteFile(c.Path, b, 0o600)
+}
+
+func (c *Client) saveErr() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Path == "" || c.Session == nil {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(c.Path), 0o700); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(c.Session, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := c.Path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	_ = os.Chmod(tmp, 0o600)
+	return os.Rename(tmp, c.Path)
 }
 
 // SignedIn reports whether a session is stored.
@@ -83,7 +104,9 @@ func (c *Client) SignedIn() bool { return c.Session != nil }
 
 // Logout forgets the session and key.
 func (c *Client) Logout() {
+	c.mu.Lock()
 	c.Session = nil
+	c.mu.Unlock()
 	if c.Path != "" {
 		_ = os.Remove(c.Path)
 	}
@@ -115,18 +138,24 @@ func (e *APIError) Error() string {
 
 // do sends a JSON request. out may be nil. It refreshes an expired session once.
 func (c *Client) do(ctx context.Context, method, path string, authed bool, in, out any) error {
+	c.mu.Lock()
+	stale := ""
+	if c.Session != nil {
+		stale = c.Session.AccessToken
+	}
+	c.mu.Unlock()
 	err := c.once(ctx, method, path, authed, in, out)
 	var ae *APIError
-	if authed && errors.As(err, &ae) && ae.Status == 401 && c.Session != nil && c.Session.RefreshToken != "" {
-		if rerr := c.refresh(ctx); rerr != nil {
-			return fmt.Errorf("session expired, sign in again with: ytm login (%w)", rerr)
+	if authed && errors.As(err, &ae) && ae.Status == 401 && stale != "" {
+		if rerr := c.refresh(ctx, stale); rerr != nil {
+			return rerr
 		}
 		return c.once(ctx, method, path, authed, in, out)
 	}
 	return err
 }
 
-func (c *Client) once(ctx context.Context, method, path string, authed bool, in, out any) error {
+func (c *Client) once(ctx context.Context, method, path string, authed bool, in, out any, extraHeaders ...string) error {
 	var body io.Reader
 	if in != nil {
 		b, _ := json.Marshal(in)
@@ -142,6 +171,9 @@ func (c *Client) once(ctx context.Context, method, path string, authed bool, in,
 	req.Header.Set("Accept", "application/vnd.protonmail.v1+json")
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for i := 0; i+1 < len(extraHeaders); i += 2 {
+		req.Header.Set(extraHeaders[i], extraHeaders[i+1])
 	}
 	if authed {
 		c.mu.Lock()
@@ -173,23 +205,42 @@ func (c *Client) once(ctx context.Context, method, path string, authed bool, in,
 	return nil
 }
 
-func (c *Client) refresh(ctx context.Context) error {
+// refresh renews the access token. Refresh tokens rotate, so only one refresh may run at
+// a time; if another caller already renewed it (the token differs from the one that got
+// the 401) there is nothing to do.
+func (c *Client) refresh(ctx context.Context, stale string) error {
+	c.refreshMu.Lock()
+	defer c.refreshMu.Unlock()
 	c.mu.Lock()
 	s := c.Session
+	if s == nil {
+		c.mu.Unlock()
+		return errors.New("not signed in: run ytm setup")
+	}
+	if s.AccessToken != stale {
+		c.mu.Unlock()
+		return nil
+	}
+	uid, rt := s.UID, s.RefreshToken
 	c.mu.Unlock()
+
 	var r struct {
 		AccessToken, RefreshToken string
 	}
-	err := c.once(ctx, "POST", "/auth/refresh", true, map[string]string{
-		"UID": s.UID, "RefreshToken": s.RefreshToken, "ResponseType": "token",
+	// Only x-pm-uid identifies the session here; the expired bearer token is not sent.
+	err := c.once(ctx, "POST", "/auth/refresh", false, map[string]string{
+		"UID": uid, "RefreshToken": rt, "ResponseType": "token",
 		"GrantType": "refresh_token", "RedirectURI": "http://protonmail.ch", "State": "ytm",
-	}, &r)
+	}, &r, "x-pm-uid", uid)
 	if err != nil {
-		return err
+		var ae *APIError
+		if errors.As(err, &ae) && (ae.Status == 400 || ae.Status == 401 || ae.Status == 422) {
+			return errors.New("your Proton session expired; run: ytm setup")
+		}
+		return fmt.Errorf("couldn't refresh the Proton session (network?): %w", err)
 	}
 	c.mu.Lock()
 	s.AccessToken, s.RefreshToken = r.AccessToken, r.RefreshToken
 	c.mu.Unlock()
-	c.save()
-	return nil
+	return c.saveErr()
 }

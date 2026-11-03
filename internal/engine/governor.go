@@ -75,8 +75,9 @@ func (g *Governor) Acquire(ctx context.Context) error {
 			wait = g.spacing - now.Sub(g.last)
 		}
 		if wait > 0 {
+			d := wait + time.Duration(g.rnd.Int63n(int64(wait)/4+1)) // g.rnd needs the lock
 			g.mu.Unlock()
-			t := time.NewTimer(wait + time.Duration(g.rnd.Int63n(int64(wait)/4+1)))
+			t := time.NewTimer(d)
 			select {
 			case <-t.C:
 			case <-ctx.Done():
@@ -127,6 +128,11 @@ func (g *Governor) observeLocked(o Outcome) {
 		}
 	case Throttled:
 		g.streak = 0
+		if g.now().Before(g.until) {
+			// Already backing off: the rest of a burst of 429s is the same episode and
+			// must not escalate the cooldown again.
+			return
+		}
 		g.limit = max(g.min, g.limit/2)
 		if g.cooldown == 0 {
 			g.cooldown = 10 * time.Second
@@ -149,6 +155,16 @@ func (g *Governor) Cooling() time.Duration {
 		return d
 	}
 	return 0
+}
+
+// Reset forgets all backoff, for a lane that just moved to a fresh IP.
+func (g *Governor) Reset(start int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.limit = min(max(start, g.min), g.max)
+	g.cooldown, g.until, g.streak = 0, time.Time{}, 0
+	g.spacing = g.baseGap
+	g.cond.Broadcast()
 }
 
 // Load is how full the governor is (in-flight requests / limit).

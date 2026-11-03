@@ -54,9 +54,8 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 	if b64(pr.ExpectedServerProof) != r.ServerProof {
 		return errors.New("Proton's reply failed verification; aborting")
 	}
-	if r.PasswordMode == 2 {
-		return errors.New("this account uses two-password mode, which ytm can't sign in to; switch to single-password mode in Proton account settings")
-	}
+	// (Two-password accounts only use the second password to unlock mail; VPN doesn't need it.)
+	c.mu.Lock()
 	keep := Session{}
 	if c.Session != nil && c.Session.Username == username {
 		keep = *c.Session // keep our WireGuard identity across logins
@@ -64,11 +63,14 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 	keep.Username, keep.UID, keep.AccessToken, keep.RefreshToken, keep.Scopes =
 		username, r.UID, r.AccessToken, r.RefreshToken, r.Scopes
 	c.Session = &keep
-	if r.TwoFA.Enabled&1 != 0 && !hasScope(r.Scopes, "vpn") {
+	c.mu.Unlock()
+	if r.TwoFA.Enabled != 0 {
+		if r.TwoFA.Enabled&1 == 0 {
+			return errors.New("this account only has a security key (FIDO2) for 2FA, which ytm can't use; add an authenticator-app code in Proton account settings")
+		}
 		return ErrNeed2FA
 	}
-	c.save()
-	return nil
+	return c.saveErr()
 }
 
 // Submit2FA completes a login that returned ErrNeed2FA.
@@ -77,16 +79,8 @@ func (c *Client) Submit2FA(ctx context.Context, code string) error {
 	if err := c.do(ctx, "POST", "/auth/2fa", true, map[string]string{"TwoFactorCode": code}, &r); err != nil {
 		return err
 	}
+	c.mu.Lock()
 	c.Session.Scopes = r.Scopes
-	c.save()
-	return nil
-}
-
-func hasScope(s []string, w string) bool {
-	for _, x := range s {
-		if x == w {
-			return true
-		}
-	}
-	return false
+	c.mu.Unlock()
+	return c.saveErr()
 }

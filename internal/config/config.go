@@ -3,8 +3,10 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Config struct {
@@ -45,26 +47,85 @@ func path() (string, error) {
 	return filepath.Join(d, "config.json"), nil
 }
 
-// Load returns the saved config, or a zero Config if none exists.
-func Load() Config {
-	var c Config
-	if p, err := path(); err == nil {
-		if b, err := os.ReadFile(p); err == nil {
-			_ = json.Unmarshal(b, &c)
-		}
+// Path is where the config file lives (for messages).
+func Path() string {
+	p, _ := path()
+	return p
+}
+
+// Exists reports whether a config file has been saved yet.
+func Exists() bool {
+	p, err := path()
+	if err != nil {
+		return false
 	}
+	_, err = os.Stat(p)
+	return err == nil
+}
+
+// Load returns the saved config, or a zero Config if none exists. A file that can't be
+// parsed is reported through the error but still yields a usable zero Config.
+func Load() Config {
+	c, _ := LoadChecked()
 	return c
 }
 
-// Save writes the config, ignoring failures: remembering is a convenience.
-func (c Config) Save() {
+// LoadChecked is Load plus the reason the file was ignored, if it was.
+func LoadChecked() (Config, error) {
+	var c Config
 	p, err := path()
 	if err != nil {
-		return
+		return c, nil
 	}
-	if os.MkdirAll(filepath.Dir(p), 0o700) != nil {
-		return
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return c, nil // no file yet is normal
 	}
-	b, _ := json.MarshalIndent(c, "", "  ")
-	_ = os.WriteFile(p, b, 0o600)
+	if err := json.Unmarshal(b, &c); err != nil {
+		return Config{}, fmt.Errorf("%s is not valid JSON (%v); fix or delete it", p, err)
+	}
+	return c, nil
+}
+
+// Save writes the config atomically.
+func (c Config) Save() error {
+	p, err := path()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
+}
+
+// ExpandPath turns "~/x" into an absolute path under the home directory and makes
+// relative paths absolute.
+func ExpandPath(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "~" || strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
+		if h, err := os.UserHomeDir(); err == nil {
+			p = filepath.Join(h, p[1:])
+		}
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
+}
+
+// DefaultOut is ~/Music, so libraries don't scatter across whatever folder you ran ytm from.
+func DefaultOut() string {
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, "Music")
+	}
+	return "Music"
 }
