@@ -75,3 +75,14 @@ func TestEncodeArgsRejectsNonImageCover(t *testing.T) {
 		}
 	}
 }
+
+func TestCodecFromExt(t *testing.T) {
+	for p, want := range map[string]string{
+		"/t/dl-x.webm": "opus", "/t/dl-x.opus": "opus", "/t/dl-x.m4a": "mp4a",
+		"/t/dl-x.MP4": "mp4a", "/t/dl-x.mp3": "", "/t/dl-x": "",
+	} {
+		if got := codecFromExt(p); got != want {
+			t.Errorf("codecFromExt(%q) = %q, want %q", p, got, want)
+		}
+	}
+}

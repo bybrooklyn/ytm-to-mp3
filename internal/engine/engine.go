@@ -982,6 +982,11 @@ func (e *engine) fetchJob(ctx context.Context, j *job) error {
 				ln.bytes.Add(st.Size())
 			}
 			j.src = p
+			// yt-dlp chose its own format, which may differ from the one resolved earlier;
+			// the encoder must copy only what the file really holds.
+			r := *j.res
+			r.Acodec = codecFromExt(p)
+			j.res = &r
 			return nil
 		}
 		switch kindOf(err) {
@@ -1214,4 +1219,16 @@ func looksLikeNetwork(err error) bool {
 		}
 	}
 	return false
+}
+
+// codecFromExt guesses the audio codec yt-dlp downloaded from the file extension, for the
+// common YouTube audio containers. "" means unknown (the encoder then re-encodes).
+func codecFromExt(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".webm", ".opus", ".ogg":
+		return "opus"
+	case ".m4a", ".mp4":
+		return "mp4a"
+	}
+	return ""
 }
