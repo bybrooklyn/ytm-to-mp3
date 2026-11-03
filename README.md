@@ -10,7 +10,7 @@ ytm                                # a short menu: import your library, download
 
 Plain `ytm` in a terminal opens a menu. **Import my YouTube Music library** looks through your Downloads, Desktop and Documents folders (including renamed folders like `~/Téléchargements`) for anything that contains YouTube Music data, whatever it is called, lists what it found with track counts, and shows a preview before it downloads. Exports split over several zips (`-001`, `-002`) are combined. You can also drag a zip, folder, `.csv` or text file of links into the terminal when it asks "Where is it?", or pass one on the command line.
 
-On first run ytm fetches the tools it needs (yt-dlp, ffmpeg and a JavaScript runtime) and downloads with embedded cover art. Without the Proton VPN it asks once whether it may use your browser's YouTube login; with it, browser cookies are not used. Music goes to `~/Music` unless you choose otherwise in `ytm setup` or with `-o`.
+On first run ytm fetches the tools it needs (yt-dlp, ffmpeg and a JavaScript runtime) and downloads with embedded cover art. Music goes to `~/Music` unless you choose otherwise in `ytm setup` or with `-o`.
 
 Always put links in quotes: `&` and `?` mean things to your shell.
 
@@ -42,7 +42,7 @@ ytm update                   refresh yt-dlp
 ytm version                  (or --version)
 ```
 
-Options: `-o DIR` (default `~/Music`), `-f mp3|m4a|opus|flac`, `-j N` max parallel downloads, `--no-vpn`, `--no-cookies`, `--dry-run`, `--retry`, `--all`. Flags can go before or after the command. Settings are saved in your config folder (`ytm status` prints the path); delete that file to reset.
+Options: `-o DIR` (default `~/Music`), `-f mp3|m4a|opus|flac`, `-j N` max parallel downloads, `--no-vpn`, `--dry-run`, `--retry`, `--all`. Flags can go before or after the command. Settings are saved in your config folder (`ytm status` prints the path); delete that file to reset.
 
 Re-running is always safe: finished tracks are skipped, temporary failures retry, and tracks YouTube says are unavailable are remembered (`--retry` tries them again). Files already named `... [id].ext` from an older run are recognised too.
 
@@ -53,9 +53,9 @@ Re-running is always safe: finished tracks are skipped, temporary failures retry
 - Concurrency is adaptive: it ramps up while requests succeed, halves and pauses with jittered backoff the moment YouTube pushes back (HTTP 429, "confirm you're not a bot"), and rotates YouTube player clients on retries. `-j` only sets the ceiling.
 - m4a/opus output is remuxed without re-encoding when the source already matches.
 
-## Cookies
+## No Google login, ever
 
-If you agree, ytm reads your YouTube login from an installed browser (Firefox, Chrome, Edge, Brave, Chromium, Vivaldi, Opera, Safari) through yt-dlp, keeps a private copy in your cache directory and sends it only to YouTube. Logged-in requests get much higher limits. Say no and it runs anonymously. Note that newer Chrome/Edge on Windows lock their cookie storage; ytm falls back to another browser and Firefox is the reliable choice there. Use `--no-cookies` to skip entirely.
+ytm never reads or uses your Google account or browser cookies. When YouTube blocks or throttles an exit, ytm drops that location, remembers it as blocked, and carries on from a different one.
 
 ## Metadata
 

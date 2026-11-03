@@ -10,10 +10,6 @@ import (
 )
 
 type Config struct {
-	// Cookies is "", "yes" or "no". Empty means the user has not been asked yet.
-	Cookies string `json:"cookies,omitempty"`
-	Browser string `json:"browser,omitempty"`
-
 	// Saved by `ytm setup`; command-line flags override them for one run.
 	Out         string `json:"out,omitempty"`
 	Format      string `json:"format,omitempty"`
@@ -29,7 +25,7 @@ func dir() (string, error) {
 	return filepath.Join(d, "ytm"), nil
 }
 
-// CacheDir is where managed tools and the cookie jar live.
+// CacheDir is where managed tools and the server cache live.
 func CacheDir() (string, error) {
 	d, err := os.UserCacheDir()
 	if err != nil {

@@ -9,15 +9,39 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/term"
+
 	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 )
 
 type UI struct {
-	mu     sync.Mutex
-	out    io.Writer
-	tty    bool
-	status string
-	in     *bufio.Reader
+	mu    sync.Mutex
+	out   io.Writer
+	tty   bool
+	block []string // the live block pinned under the scrolling output (redrawn in place)
+	drawn int      // how many terminal rows the block currently occupies
+	in    *bufio.Reader
+}
+
+// Width is the terminal width in columns (80 when unknown).
+func (u *UI) Width() int {
+	if f, ok := u.out.(*os.File); ok {
+		if w, _, err := term.GetSize(f.Fd()); err == nil && w > 0 {
+			return w
+		}
+	}
+	return 80
+}
+
+// Height is the terminal height in rows (24 when unknown).
+func (u *UI) Height() int {
+	if f, ok := u.out.(*os.File); ok {
+		if _, h, err := term.GetSize(f.Fd()); err == nil && h > 0 {
+			return h
+		}
+	}
+	return 24
 }
 
 func New() *UI {
@@ -32,16 +56,31 @@ func (u *UI) Interactive() bool {
 	return u.tty && err == nil && st.Mode()&os.ModeCharDevice != 0
 }
 
+// clear erases the live block: back to its first row, then wipe to the end of the screen.
 func (u *UI) clear() {
-	if u.tty && u.status != "" {
-		fmt.Fprint(u.out, "\r\033[K")
+	if !u.tty || u.drawn == 0 {
+		return
 	}
+	if u.drawn > 1 {
+		fmt.Fprintf(u.out, "\033[%dA", u.drawn-1)
+	}
+	fmt.Fprint(u.out, "\r\033[J")
+	u.drawn = 0
 }
 
+// redraw prints the live block, each row cut to the terminal width so it never wraps
+// (a wrapped row would break the cursor arithmetic in clear).
 func (u *UI) redraw() {
-	if u.tty && u.status != "" {
-		fmt.Fprint(u.out, u.status)
+	if !u.tty || len(u.block) == 0 {
+		return
 	}
+	w := u.Width()
+	rows := make([]string, len(u.block))
+	for i, l := range u.block {
+		rows[i] = ansi.Truncate(l, w-1, "…")
+	}
+	fmt.Fprint(u.out, strings.Join(rows, "\n"))
+	u.drawn = len(rows)
 }
 
 // Printf prints a line above the status line.
@@ -53,6 +92,19 @@ func (u *UI) Printf(format string, a ...any) {
 	if !strings.HasSuffix(format, "\n") {
 		fmt.Fprintln(u.out)
 	}
+	u.redraw()
+}
+
+// Line prints "prefix text" above the live block. The prefix is the caller's own (it may
+// carry colour codes, dropped when not on a terminal); the text is untrusted and sanitized.
+func (u *UI) Line(prefix, text string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.clear()
+	if !u.tty {
+		prefix = ansi.Strip(prefix)
+	}
+	fmt.Fprintln(u.out, prefix+" "+Sanitize(text))
 	u.redraw()
 }
 
@@ -68,16 +120,30 @@ func (u *UI) Status(format string, a ...any) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.clear()
-	u.status = strings.NewReplacer("\n", " ", "\t", " ").Replace(Sanitize(fmt.Sprintf(format, a...)))
+	u.block = []string{strings.NewReplacer("\n", " ", "\t", " ").Replace(Sanitize(fmt.Sprintf(format, a...)))}
 	u.redraw()
 }
 
-// ClearStatus removes the status line for good.
+// Block replaces the live block with several rows. Rows may carry the caller's own
+// colour codes; any untrusted text in them (titles, errors) must go through Sanitize first.
+// Ignored when not on a terminal.
+func (u *UI) Block(rows []string) {
+	if !u.tty {
+		return
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.clear()
+	u.block = rows
+	u.redraw()
+}
+
+// ClearStatus removes the live block for good.
 func (u *UI) ClearStatus() {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.clear()
-	u.status = ""
+	u.block = nil
 }
 
 // Ask prompts for a line of input; empty input returns def.

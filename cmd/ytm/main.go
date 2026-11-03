@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/cookies"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/export"
@@ -61,19 +60,18 @@ func main() {
 
 // opts are the flags shared by every command.
 type opts struct {
-	out       string
-	format    string
-	jobs      int
-	noCookies bool
-	dryRun    bool
-	retry     bool
-	all       bool
-	yes       bool
-	apply     bool
-	rename    bool
-	undo      bool
-	offline   bool
-	noVPN     bool
+	out     string
+	format  string
+	jobs    int
+	dryRun  bool
+	retry   bool
+	all     bool
+	yes     bool
+	apply   bool
+	rename  bool
+	undo    bool
+	offline bool
+	noVPN   bool
 }
 
 func parse(name string, args []string) (opts, []string, error) {
@@ -84,7 +82,6 @@ func parse(name string, args []string) (opts, []string, error) {
 	fs.StringVar(&o.out, "o", "", "")
 	fs.StringVar(&o.format, "f", "", "")
 	fs.IntVar(&o.jobs, "j", 0, "")
-	fs.BoolVar(&o.noCookies, "no-cookies", false, "")
 	fs.BoolVar(&o.dryRun, "dry-run", false, "")
 	fs.BoolVar(&o.retry, "retry", false, "")
 	fs.BoolVar(&o.all, "all", false, "")
@@ -292,8 +289,7 @@ func asURL(s string) (string, bool) {
 func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	logf := func(f string, a ...any) { u.Printf(f, a...) }
 	var tools deps.Tools
-	var jar cookies.Result
-	cfg := config.Load()
+	removeLegacyCookies()
 
 	// The VPN is brought up the first time anything needs the network, so even looking up
 	// a pasted playlist goes out through it and not from your own address.
@@ -339,7 +335,6 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 				if tools, err = deps.Ensure(ctx, logf); err != nil {
 					return err
 				}
-				jar = cookies.Setup(ctx, u, &cfg, tools, o.noCookies || vpnWanted(o))
 			}
 			if err := connect(); err != nil {
 				return err
@@ -348,7 +343,7 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 			if len(exits) > 0 {
 				proxy = exits[0].Proxy
 			}
-			ts, err := engine.ExpandURL(ctx, tools, jar.File, proxy, input)
+			ts, err := engine.ExpandURL(ctx, tools, proxy, input)
 			if err != nil {
 				return err
 			}
@@ -409,14 +404,13 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		if tools, err = deps.Ensure(ctx, logf); err != nil {
 			return err
 		}
-		jar = cookies.Setup(ctx, u, &cfg, tools, o.noCookies || vpnWanted(o))
 	}
 	if err := connect(); err != nil {
 		return err
 	}
 	cache, _ := config.CacheDir()
 	sum := engine.Run(ctx, engine.Options{
-		Out: o.out, Format: o.format, Jobs: o.jobs, Cookies: jar.File, Tools: tools,
+		Out: o.out, Format: o.format, Jobs: o.jobs, Tools: tools,
 		Store: st, UI: u, CacheDir: filepath.Join(cache, "yt-dlp"), Exits: exits, Replace: replace, Healthy: healthy,
 	}, plan.Todo)
 
@@ -447,11 +441,13 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	return nil
 }
 
-// vpnWanted is true when downloads will go through Proton. Browser cookies are skipped
-// then: a logged-in Google session suddenly appearing from several countries is exactly
-// what gets accounts flagged.
-func vpnWanted(o opts) bool {
-	return !o.noVPN && !config.Load().NoVPN && protonClient().SignedIn()
+// removeLegacyCookies deletes the cookie jar older ytm versions may have left behind.
+// ytm never uses a Google account login: when YouTube blocks an exit, ytm moves to a
+// different location instead.
+func removeLegacyCookies() {
+	if cache, err := config.CacheDir(); err == nil {
+		_ = os.Remove(filepath.Join(cache, "cookies.txt"))
+	}
 }
 
 // buildExits connects the Proton VPN tunnels when you're signed in (unless --no-vpn).

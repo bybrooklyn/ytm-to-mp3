@@ -25,11 +25,7 @@ user cache directory under `ytm`.
   Your password is never written to disk. On Windows the 0600 mode has no effect and the
   folder's normal permissions protect the file. The device key stays listed in your Proton
   account until you remove it at account.protonvpn.com.
-- `cookies.txt` (cache dir): only if you allow ytm to use your browser's YouTube login.
-  yt-dlp exports your browser cookies into a private temporary folder; ytm keeps only the
-  lines for youtube.com, google.com, googlevideo.com, ytimg.com and gstatic.com, writes them
-  with mode 0600, and deletes the file after 12 hours or when it holds no login. Cookies are
-  not used at all while the Proton VPN is on.
+- No browser cookies or Google login are ever read. (Older versions' `cookies.txt` is deleted on the next run.)
 - `<music folder>/.ytm/state.db`: which tracks were downloaded or failed, with titles and
   error text (mode 0600).
 - `bin/` (cache dir): yt-dlp, ffmpeg, ffprobe and deno if ytm had to download them. Each is

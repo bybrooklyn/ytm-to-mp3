@@ -88,24 +88,14 @@ func runSetup(ctx context.Context, u *ui.UI, accountOnly bool) error {
 		huh.NewSelect[string]().Title("Format").Options(huh.NewOptions(engine.Formats...)...).Value(&format),
 	}
 	vpnOn := pc.SignedIn() && !cfg.NoVPN
-	login := cfg.Cookies
 	if vpnOn {
 		opts = append(opts, huh.NewSelect[int]().Title("VPN connections at once").
 			Description("more = faster; each uses a different Proton server").
 			Options(huh.NewOption("1", 1), huh.NewOption("2", 2), huh.NewOption("3 (recommended)", 3),
 				huh.NewOption("4", 4), huh.NewOption("6", 6)).Value(&conns))
-	} else {
-		// Without the VPN, a logged-in YouTube session is the other way to avoid throttling.
-		opts = append(opts, huh.NewSelect[string]().Title("Use your browser's YouTube login?").
-			Description("Fewer limits. Read from your browser, kept on this computer, sent only to YouTube.").
-			Options(huh.NewOption("Ask me when I download", ""), huh.NewOption("Yes", "yes"), huh.NewOption("No", "no")).
-			Value(&login))
 	}
 	if err := huh.NewForm(huh.NewGroup(opts...)).RunWithContext(ctx); err != nil {
 		return err
-	}
-	if !vpnOn {
-		cfg.Cookies = login
 	}
 	cfg.Out, cfg.Format, cfg.Connections = config.ExpandPath(out), format, conns
 	if err := cfg.Save(); err != nil {

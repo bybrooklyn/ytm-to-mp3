@@ -7,7 +7,7 @@ import (
 
 var (
 	subcommands = []string{"setup", "login", "logout", "status", "doctor", "export", "tag", "update", "version", "help", "completion"}
-	flagNames   = []string{"-o", "-f", "-j", "--no-vpn", "--no-cookies", "--dry-run", "--retry", "--all", "-y", "--version"}
+	flagNames   = []string{"-o", "-f", "-j", "--no-vpn", "--dry-run", "--retry", "--all", "-y", "--version"}
 )
 
 // completionScript returns a tab-completion script for the given shell.
@@ -53,7 +53,7 @@ compdef _ytm ytm
 		b.WriteString("complete -c ytm -s o -r -F -d 'music folder'\n")
 		b.WriteString("complete -c ytm -s f -x -a 'mp3 m4a opus flac' -d 'format'\n")
 		b.WriteString("complete -c ytm -s j -x -d 'max parallel downloads'\n")
-		for _, f := range []string{"no-vpn", "no-cookies", "dry-run", "retry", "all", "version"} {
+		for _, f := range []string{"no-vpn", "dry-run", "retry", "all", "version"} {
 			fmt.Fprintf(&b, "complete -c ytm -l %s\n", f)
 		}
 		return b.String(), nil

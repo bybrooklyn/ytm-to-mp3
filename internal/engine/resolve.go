@@ -140,13 +140,12 @@ type ytInfo struct {
 }
 
 // playerClients are tried in turn on retries; a different client often gets past a block.
-var playerClients = []string{"", "tv", "web_safari", "mweb"}
+var playerClients = []string{"", "tv_simply", "tv", "web_safari", "mweb"}
 
 type ytdlp struct {
-	tools   deps.Tools
-	cookies string // path to a cookie jar or ""
-	cache   string
-	proxy   string // SOCKS/HTTP proxy for this exit, or ""
+	tools deps.Tools
+	cache string
+	proxy string // SOCKS/HTTP proxy for this exit, or ""
 }
 
 func (y ytdlp) baseArgs(clientIdx int) []string {
@@ -159,9 +158,6 @@ func (y ytdlp) baseArgs(clientIdx int) []string {
 	}
 	// The proxy (which carries a password) goes through the environment, not argv, where
 	// other local users could read it with ps. See env().
-	if y.cookies != "" {
-		a = append(a, "--cookies", y.cookies)
-	}
 	if c := playerClients[clientIdx%len(playerClients)]; c != "" {
 		a = append(a, "--extractor-args", "youtube:player_client="+c)
 	}
@@ -302,9 +298,6 @@ func (y ytdlp) Download(ctx context.Context, id, dir string, clientIdx int) (str
 // Expand turns a playlist / album URL into tracks.
 func (y ytdlp) Expand(ctx context.Context, url string) ([]model.Track, error) {
 	args := []string{"--ignore-config", "--no-plugin-dirs", "--no-warnings", "--flat-playlist", "-J", "--", url}
-	if y.cookies != "" {
-		args = append(args[:3:3], append([]string{"--cookies", y.cookies}, args[3:]...)...)
-	}
 	b, err := y.run(ctx, args...)
 	if err != nil {
 		return nil, err
@@ -336,6 +329,6 @@ func (y ytdlp) Expand(ctx context.Context, url string) ([]model.Track, error) {
 
 // ExpandURL is the exported entry point for the CLI.
 // proxy, if set, is the exit to look the link up through ("" = your own connection).
-func ExpandURL(ctx context.Context, tools deps.Tools, cookies, proxy, url string) ([]model.Track, error) {
-	return ytdlp{tools: tools, cookies: cookies, proxy: proxy}.Expand(ctx, url)
+func ExpandURL(ctx context.Context, tools deps.Tools, proxy, url string) ([]model.Track, error) {
+	return ytdlp{tools: tools, proxy: proxy}.Expand(ctx, url)
 }

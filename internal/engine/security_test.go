@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,7 +101,7 @@ func TestFetchSizeCapAndHost(t *testing.T) {
 	if canFetch(huge) {
 		t.Error("absurd clen must not be fetched directly")
 	}
-	if err := fetch(context.Background(), nil, huge, filepath.Join(t.TempDir(), "f"), nil, nil); err != errUnfetchable {
+	if err := fetch(context.Background(), nil, huge, filepath.Join(t.TempDir(), "f"), nil, nil); !errors.Is(err, errUnfetchable) {
 		t.Errorf("fetch err = %v", err)
 	}
 	if !canFetch(&Resolved{URL: "https://x.googlevideo.com/p?clen=1000", Protocol: "https"}) {

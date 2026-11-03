@@ -156,18 +156,20 @@ func fetchChunk(ctx context.Context, client *http.Client, r *Resolved, f *os.Fil
 			continue
 		case http.StatusForbidden, http.StatusNotFound, http.StatusGone:
 			resp.Body.Close()
-			return errUnfetchable
+			return fmt.Errorf("%w (HTTP %s)", errUnfetchable, resp.Status)
 		default:
 			resp.Body.Close()
 			lastErr = &Error{kindTransient, "stream server: " + resp.Status}
 			continue
 		}
 		want := end - start + 1
-		if resp.StatusCode == http.StatusOK && (start > 0 || resp.ContentLength > want+1) {
-			// Server ignored the range and is sending the file from the start: writing it
+		if resp.StatusCode == http.StatusOK && resp.ContentLength != want {
+			// A plain 200 is only trustworthy when its length is exactly the range asked
+			// for (googlevideo answers range= queries that way). Anything else means the
+			// server ignored the range and is sending the file from the start: writing it
 			// at this offset would silently corrupt the track.
 			resp.Body.Close()
-			return errUnfetchable
+			return fmt.Errorf("%w (HTTP 200 with length %d, wanted %d)", errUnfetchable, resp.ContentLength, want)
 		}
 		n, err := copyAt(f, resp.Body, start, want, onBytes)
 		resp.Body.Close()

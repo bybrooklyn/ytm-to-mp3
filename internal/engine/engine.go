@@ -4,6 +4,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -29,7 +30,6 @@ type Options struct {
 	Out      string
 	Format   string
 	Jobs     int // 0 = automatic
-	Cookies  string
 	Tools    deps.Tools
 	Store    *store.Store
 	UI       *ui.UI
@@ -66,6 +66,7 @@ type job struct {
 	client int
 	lane   *lane // the exit this track was resolved on; stream URLs are tied to its IP
 	epoch  int64 // lane.epoch when resolved; if it changed, the stream URL is for an old IP
+	ts     *tstate
 }
 
 // lane is one exit with its own governor, HTTP client and yt-dlp settings.
@@ -94,7 +95,7 @@ func (e *engine) sour(ctx context.Context, l *lane, epoch int64) {
 	if l.bad.Add(1) < 4 {
 		return
 	}
-	e.swap(ctx, l, "was rate limited")
+	e.swap(ctx, l, "kept failing")
 }
 
 func (e *engine) swap(ctx context.Context, l *lane, why string) {
@@ -151,13 +152,15 @@ func (e *engine) pick(avoid *lane) *lane {
 
 type engine struct {
 	Options
-	lanes  []*lane
-	tmp    string
-	bytes  atomic.Int64
-	done   atomic.Int64
-	failed atomic.Int64
-	active atomic.Int64
-	total  int
+	lanes      []*lane
+	tmp        string
+	bytes      atomic.Int64
+	done       atomic.Int64
+	failed     atomic.Int64
+	active     atomic.Int64
+	total      int
+	live       liveSet      // in-flight tracks, for the live display
+	goodClient atomic.Int32 // the player client that last gave a fetchable URL
 
 	startLimit int            // initial per-exit concurrency, restored when an exit is swapped
 	bg         sync.WaitGroup // health probes / swaps; joined before Run returns
@@ -193,9 +196,6 @@ func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 		exits = []vpn.Exit{vpn.Direct}
 	}
 	start, laneMax, gap := 3, 8, 600*time.Millisecond
-	if o.Cookies != "" {
-		start, laneMax, gap = 4, 12, 400*time.Millisecond
-	}
 	if o.Jobs > 0 {
 		laneMax = max(1, (o.Jobs+len(exits)-1)/len(exits))
 		start = min(start, laneMax)
@@ -210,7 +210,7 @@ func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 		}
 		e.lanes = append(e.lanes, &lane{
 			exit: x, gov: NewGovernor(start, laneMax, gap), client: cl,
-			yt: ytdlp{tools: o.Tools, cookies: o.Cookies, cache: o.CacheDir, proxy: x.Proxy},
+			yt: ytdlp{tools: o.Tools, cache: o.CacheDir, proxy: x.Proxy},
 		})
 		maxC += laneMax
 	}
@@ -268,7 +268,7 @@ func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 				inst := float64(b-lastB) / now.Sub(lastT).Seconds()
 				speed = speed*0.7 + inst*0.3
 				lastB, lastT = b, now
-				e.status(speed)
+				e.status(speed, began)
 			case <-stopStatus:
 				return
 			}
@@ -308,25 +308,8 @@ feed:
 	}
 }
 
-func (e *engine) status(speed float64) {
-	finished := int(e.done.Load() + e.failed.Load())
-	limit, cooling := 0, 0
-	for _, l := range e.lanes {
-		limit += l.gov.Limit()
-		if l.gov.Cooling() > 0 {
-			cooling++
-		}
-	}
-	line := fmt.Sprintf("[%d/%d] %s/s  active %d  limit %d", finished, e.total, HumanBytes(int64(speed)), e.active.Load(), limit)
-	if len(e.lanes) > 1 {
-		line += fmt.Sprintf("  exits %d", len(e.lanes)-cooling)
-		if cooling > 0 {
-			line += fmt.Sprintf("+%d resting", cooling)
-		}
-	} else if c := e.lanes[0].gov.Cooling(); c > 0 {
-		line += fmt.Sprintf("  (rate limited, pausing %ds)", int(c.Seconds())+1)
-	}
-	e.UI.Status("%s", line)
+func (e *engine) status(speed float64, began time.Time) {
+	e.UI.Block(e.liveRows(speed, began))
 }
 
 // HumanBytes formats n as KB/MB/GB.
@@ -345,6 +328,7 @@ func HumanBytes(n int64) string {
 }
 
 func (e *engine) fail(t model.Track, err error) {
+	e.live.remove(t.ID)
 	if ctxErr(err) {
 		return
 	}
@@ -353,7 +337,7 @@ func (e *engine) fail(t model.Track, err error) {
 		e.UI.Printf("warning: couldn't record failure for %s: %v", t.ID, serr)
 	}
 	e.failed.Add(1)
-	e.UI.Printf("✗ %s  (%s)", t.Label(), names.Clean(err.Error()))
+	e.UI.Line(red+"✗"+reset, t.Label()+"  ("+names.Clean(err.Error())+")")
 }
 
 func ctxErr(err error) bool { return err == context.Canceled || err == context.DeadlineExceeded }
@@ -372,24 +356,36 @@ func (e *engine) resolveWorker(ctx context.Context, slot int, in <-chan model.Tr
 		if ctx.Err() != nil {
 			continue
 		}
+		ts := e.live.add(t)
 		res, client, ln, epoch, err := e.resolveWithRetry(ctx, t)
 		if err != nil {
 			e.fail(t, err)
 			continue
 		}
+		ts.stage.Store(stFetch)
+		if canFetch(res) {
+			ts.total.Store(contentLength(res))
+		}
 		e.active.Add(1)
 		select {
-		case out <- &job{tr: t, res: res, client: client, lane: ln, epoch: epoch}:
+		case out <- &job{tr: t, res: res, client: client, lane: ln, epoch: epoch, ts: ts}:
 		case <-ctx.Done():
+			e.live.remove(t.ID)
 			e.active.Add(-1)
 		}
 	}
 }
 
+type suspect struct {
+	l     *lane
+	epoch int64
+}
+
 func (e *engine) resolveWithRetry(ctx context.Context, t model.Track) (*Resolved, int, *lane, int64, error) {
 	var err error
 	var prev *lane
-	transient, throttled, netFails := 0, 0, 0
+	transient, throttled, netFails, permanent := 0, 0, 0, 0
+	var suspects []suspect // exits that said "unavailable" for this track
 	for client := 0; ; client++ {
 		ln := e.pick(prev)
 		if err = ln.gov.Acquire(ctx); err != nil {
@@ -397,17 +393,35 @@ func (e *engine) resolveWithRetry(ctx context.Context, t model.Track) (*Resolved
 		}
 		epoch := ln.epoch.Load()
 		var res *Resolved
-		res, err = ln.ytdlp().Resolve(ctx, t.ID, client)
+		idx := int(e.goodClient.Load()) + client
+		res, err = ln.ytdlp().Resolve(ctx, t.ID, idx)
 		switch {
 		case err == nil:
 			ln.gov.Release(OK)
 			ln.bad.Store(0)
-			return res, client, ln, epoch, nil
+			// Another exit played what these refused: they're being blocked, not the video
+			// being gone. Two strikes each and they're replaced with a fresh server.
+			for _, sp := range suspects {
+				if sp.l != ln {
+					e.sour(ctx, sp.l, sp.epoch)
+					e.sour(ctx, sp.l, sp.epoch)
+				}
+			}
+			return res, idx, ln, epoch, nil
 		case ctx.Err() != nil:
 			ln.gov.Release(Neutral)
 			return nil, 0, nil, 0, ctx.Err()
 		case kindOf(err) == kindPermanent:
 			ln.gov.Release(Neutral)
+			// "Unavailable" is often just this exit's country or IP. Only believe it once
+			// other exits (other countries) agree, so a track isn't written off for good
+			// on one server's say-so.
+			if len(e.lanes) > 1 && permanent < 2 {
+				permanent++
+				suspects = append(suspects, suspect{ln, epoch})
+				prev = ln
+				continue
+			}
 			return nil, 0, nil, 0, err
 		case kindOf(err) == kindThrottled:
 			ln.gov.Release(Throttled)
@@ -461,19 +475,16 @@ func (e *engine) fetchJob(ctx context.Context, j *job) error {
 	// A stream URL is only valid from the IP it was resolved on; if the exit was swapped
 	// since, skip straight to the yt-dlp path (which resolves afresh).
 	if canFetch(j.res) && j.lane.epoch.Load() == j.epoch {
-		dst := filepath.Join(e.tmp, j.tr.ID+".src")
-		err := fetch(ctx, j.lane.http(), j.res, dst, func(n int64) { e.bytes.Add(n); j.lane.bytes.Add(n) }, func() { j.lane.gov.Observe(Throttled) })
-		if err == nil {
-			j.src = dst
-			j.lane.gov.Observe(OK)
+		if e.tryDirect(ctx, j) == nil {
 			return nil
 		}
-		_ = os.Remove(dst)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		// Fall through: let yt-dlp download it the slow, robust way.
 	}
+	j.ts.total.Store(0) // size unknown while yt-dlp does the download
+	j.ts.got.Store(0)
 	var err error
 	for attempt := 0; attempt < maxTransient; attempt++ {
 		// yt-dlp resolves from scratch, so any healthy exit will do; don't sit in the
@@ -510,9 +521,59 @@ func (e *engine) fetchJob(ctx context.Context, j *job) error {
 	return err
 }
 
+// altClients is how many other YouTube player clients to try when Google refuses to serve
+// a stream URL to a plain HTTP client (which clients hand out fetchable URLs changes with
+// yt-dlp versions, so ytm learns it instead of hard-coding it).
+const altClients = 2
+
+// tryDirect downloads j.res itself. On a refusal (403/404) it re-resolves with the next
+// player client and tries again, remembering which client worked for the following tracks.
+func (e *engine) tryDirect(ctx context.Context, j *job) error {
+	dst := filepath.Join(e.tmp, j.tr.ID+".src")
+	res, cur := j.res, j.client // j itself keeps its original client for the yt-dlp fallback
+	var err error
+	for k := 0; k <= altClients; k++ {
+		if k > 0 {
+			ln := j.lane
+			if aerr := ln.gov.Acquire(ctx); aerr != nil {
+				return aerr
+			}
+			cur++
+			r2, rerr := ln.ytdlp().Resolve(ctx, j.tr.ID, cur)
+			ln.gov.Release(Neutral)
+			if rerr != nil || !canFetch(r2) || ln.epoch.Load() != j.epoch {
+				continue // this client can't serve it; try the next
+			}
+			res = r2
+			j.ts.total.Store(contentLength(res))
+		}
+		j.ts.got.Store(0)
+		err = fetch(ctx, j.lane.http(), res, dst, func(n int64) { e.bytes.Add(n); j.lane.bytes.Add(n); j.ts.got.Add(n) }, func() { j.lane.gov.Observe(Throttled) })
+		if err == nil {
+			j.src, j.res = dst, res // the encoder needs the codec of the stream actually fetched
+			j.lane.gov.Observe(OK)
+			e.goodClient.Store(int32(cur))
+			return nil
+		}
+		_ = os.Remove(dst)
+		if os.Getenv("YTM_DEBUG") != "" {
+			e.UI.Printf("debug: direct fetch of %s with client %d failed: %v", j.tr.ID, cur, err)
+		}
+		if !errors.Is(err, errUnfetchable) || ctx.Err() != nil {
+			return err // only a refusal is worth another client
+		}
+	}
+	if err == nil {
+		err = errUnfetchable // every alternate client failed to resolve
+	}
+	return err
+}
+
 func (e *engine) encodeWorker(ctx context.Context, in <-chan *job) {
 	for j := range in {
+		j.ts.stage.Store(stEncode)
 		path, err := e.encodeJob(ctx, j)
+		e.live.remove(j.tr.ID)
 		e.active.Add(-1)
 		_ = os.Remove(j.src)
 		if err != nil {
@@ -524,7 +585,7 @@ func (e *engine) encodeWorker(ctx context.Context, in <-chan *job) {
 		}
 		e.done.Add(1)
 		j.lane.done.Add(1)
-		e.UI.Printf("✓ %s", j.tr.Label())
+		e.UI.Line(green+"✓"+reset, j.tr.Label())
 	}
 }
 
