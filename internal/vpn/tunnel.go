@@ -9,10 +9,8 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.zx2c4.com/wireguard/conn"
@@ -29,7 +27,19 @@ type Tunnel struct {
 	Exit   Exit
 	dev    *device.Device
 	cancel context.CancelFunc
+	seq    int // order the pool installed it in
+	// Connect is how long the first handshake plus a test connection took.
+	Connect time.Duration
 }
+
+// handshakeTimeout bounds one attempt to bring a tunnel up. WireGuard re-sends its
+// handshake every 5s, so this allows one retransmission; a server that hasn't answered by
+// then is skipped in favour of the next candidate.
+var handshakeTimeout = 8 * time.Second
+
+// aliveWithin is how stale the last handshake may be. WireGuard refuses to use a session
+// after 180s, and a healthy tunnel re-keys every 120s, so older means dead.
+const aliveWithin = 200 * time.Second
 
 // OpenTunnel connects to one Proton server and checks traffic really flows.
 func OpenTunnel(ctx context.Context, key *proton.WGKey, s proton.Server) (*Tunnel, error) {
@@ -48,10 +58,15 @@ func openTunnel(ctx context.Context, key *proton.WGKey, s proton.Server, endpoin
 		return nil, err
 	}
 	dev := device.NewDevice(tun, conn.NewDefaultBind(), device.NewLogger(device.LogLevelSilent, ""))
-	err = dev.IpcSet(fmt.Sprintf("private_key=%s\npublic_key=%s\nendpoint=%s\nallowed_ip=0.0.0.0/0\npersistent_keepalive_interval=25\n",
+	err = dev.IpcSet(fmt.Sprintf("private_key=%s\npublic_key=%s\nendpoint=%s\nallowed_ip=0.0.0.0/0\n",
 		hex.EncodeToString(key.Private[:]), hex.EncodeToString(pub), endpoint))
 	if err == nil {
 		err = dev.Up()
+	}
+	if err == nil {
+		// Turning the keepalive on once the device is up makes WireGuard send a packet at
+		// once, i.e. start the handshake now rather than when the first connection asks.
+		err = dev.IpcSet(fmt.Sprintf("public_key=%s\nupdate_only=true\npersistent_keepalive_interval=25\n", hex.EncodeToString(pub)))
 	}
 	if err != nil {
 		dev.Close()
@@ -70,18 +85,22 @@ func openTunnel(ctx context.Context, key *proton.WGKey, s proton.Server, endpoin
 	go ServeSOCKS5(tctx, l, "ytm", token, tnet.DialContext)
 	t.Exit = Exit{Name: fmt.Sprintf("%s %s", s.Name, s.Country), Proxy: "socks5h://ytm:" + token + "@" + l.Addr().String()}
 
-	// First packet triggers the handshake; retry briefly.
+	// The first packet triggers the handshake. A timeout means the server is dead (it
+	// already had a retransmission); another error (reset, DNS) deserves one more go.
+	start := time.Now()
 	var last error
-	for try := 0; try < 3; try++ {
-		pctx, pc := context.WithTimeout(ctx, 12*time.Second)
+	for try := 0; try < 2; try++ {
+		pctx, pc := context.WithTimeout(ctx, handshakeTimeout)
 		c, err := tnet.DialContext(pctx, "tcp", probe)
+		timedOut := pctx.Err() != nil
 		pc()
 		if err == nil {
 			c.Close()
+			t.Connect = time.Since(start)
 			return t, nil
 		}
 		last = err
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || timedOut {
 			break
 		}
 	}
@@ -90,8 +109,11 @@ func openTunnel(ctx context.Context, key *proton.WGKey, s proton.Server, endpoin
 }
 
 // Alive reports whether the tunnel has completed a WireGuard handshake recently. With a
-// 25s keepalive a healthy tunnel re-handshakes about every two minutes.
+// 25s keepalive a healthy tunnel re-handshakes about every two minutes; see aliveWithin.
 func (t *Tunnel) Alive() bool {
+	if t.dev == nil {
+		return true
+	}
 	cfg, err := t.dev.IpcGet()
 	if err != nil {
 		return true
@@ -102,172 +124,15 @@ func (t *Tunnel) Alive() bool {
 			sec, _ = strconv.ParseInt(v, 10, 64)
 		}
 	}
-	return sec > 0 && time.Since(time.Unix(sec, 0)) < 4*time.Minute
+	return sec > 0 && time.Since(time.Unix(sec, 0)) < aliveWithin
 }
 
-// Healthy reports whether the tunnel behind e is alive (true for unknown exits).
-func (p *Pool) Healthy(e Exit) bool {
-	p.mu.Lock()
-	t := p.tunnels[e.Name]
-	p.mu.Unlock()
-	return t == nil || t.Alive()
-}
-
-// Close shuts the tunnel down.
+// Close shuts the tunnel down. It is safe to call more than once.
 func (t *Tunnel) Close() {
-	t.cancel()
-	t.dev.Close()
-}
-
-// Pool is a set of tunnels built from one Proton account, with spare servers to swap in.
-type Pool struct {
-	mu      sync.Mutex
-	key     *proton.WGKey
-	spare   []proton.Server
-	closed  bool
-	tunnels map[string]*Tunnel // by exit name
-	logf    func(string, ...any)
-}
-
-// Open connects n tunnels to different countries. Servers that fail are replaced from
-// the spare list; it errors only if none work.
-func Open(ctx context.Context, pc *proton.Client, n int, logf func(string, ...any)) (*Pool, error) {
-	key, err := pc.Identity(ctx)
-	if err != nil {
-		return nil, err
+	if t.cancel != nil {
+		t.cancel()
 	}
-	all, err := pc.Servers(ctx)
-	if err != nil {
-		return nil, err
-	}
-	// Every tunnel counts as a device on the account; opening more than the plan allows
-	// just gets the extras refused.
-	if mc := pc.MaxConnect; mc > 0 && n > mc {
-		logf("  your Proton plan allows %d devices at once; using %d tunnels", mc, mc)
-		n = mc
-	}
-	picks, err := proton.Pick(all, n*3, nil)
-	if err != nil {
-		return nil, err
-	}
-	p := &Pool{key: key, tunnels: map[string]*Tunnel{}, logf: logf}
-	used := map[string]bool{}
-	for _, s := range picks {
-		used[s.Name] = true
-	}
-	// spares: the unused picks first, then every other server, best score first
-	var rest []proton.Server
-	for _, s := range all {
-		if !used[s.Name] {
-			rest = append(rest, s)
-		}
-	}
-	sort.Slice(rest, func(i, j int) bool { return rest[i].Score < rest[j].Score })
-	p.spare = append(append([]proton.Server(nil), picks[min(n, len(picks)):]...), rest...)
-	cand := picks[:min(n, len(picks))]
-
-	var wg sync.WaitGroup
-	for _, s := range cand {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if t, err := OpenTunnel(ctx, key, s); err != nil {
-				logf("  ✗ %s %s: %v", s.Name, s.Country, err)
-			} else {
-				logf("  ✓ %s (%s)", s.Name, s.City)
-				p.mu.Lock()
-				p.tunnels[t.Exit.Name] = t
-				p.mu.Unlock()
-			}
-		}()
-	}
-	wg.Wait()
-	// Top up to n, but give up after a few misses in a row: if several different servers
-	// don't answer, more of them won't either, and each miss costs ~30s.
-	for fails := 0; len(p.Exits()) < n && fails < 4 && ctx.Err() == nil; {
-		if _, err := p.next(ctx); err != nil {
-			if errors.Is(err, errNoSpare) {
-				break
-			}
-			fails++
-		}
-	}
-	if len(p.Exits()) == 0 {
-		p.Close()
-		return nil, errors.New("couldn't reach any Proton server: UDP to port 51820 may be blocked by your network, or your Proton plan's device limit is used up (sign out other devices at account.protonvpn.com)")
-	}
-	return p, nil
-}
-
-var errNoSpare = errors.New("no spare servers")
-
-// next opens a tunnel to the next spare server.
-func (p *Pool) next(ctx context.Context) (Exit, error) {
-	p.mu.Lock()
-	if p.closed {
-		p.mu.Unlock()
-		return Exit{}, errors.New("closed")
-	}
-	if len(p.spare) == 0 {
-		p.mu.Unlock()
-		return Exit{}, errNoSpare
-	}
-	s := p.spare[0]
-	p.spare = p.spare[1:]
-	p.mu.Unlock()
-	t, err := OpenTunnel(ctx, p.key, s)
-	if err != nil {
-		p.logf("  ✗ %s %s: %v", s.Name, s.Country, err)
-		return Exit{}, err
-	}
-	p.mu.Lock()
-	if p.closed { // Close ran while we were connecting
-		p.mu.Unlock()
-		t.Close()
-		return Exit{}, errors.New("closed")
-	}
-	p.tunnels[t.Exit.Name] = t
-	p.mu.Unlock()
-	p.logf("  ✓ %s (%s)", s.Name, s.City)
-	return t.Exit, nil
-}
-
-// Exits lists the live exits.
-func (p *Pool) Exits() []Exit {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	var out []Exit
-	for _, t := range p.tunnels {
-		out = append(out, t.Exit)
-	}
-	return out
-}
-
-// Replace swaps a dead or throttled exit for one on a different server.
-func (p *Pool) Replace(ctx context.Context, old Exit) (Exit, error) {
-	p.mu.Lock()
-	t := p.tunnels[old.Name]
-	delete(p.tunnels, old.Name)
-	p.mu.Unlock()
-	if t != nil {
-		defer t.Close() // after the replacement is up, so there's no gap
-	}
-	for i := 0; i < 3 && ctx.Err() == nil; i++ {
-		if ex, err := p.next(ctx); err == nil {
-			return ex, nil
-		}
-	}
-	return Exit{}, errors.New("no replacement server")
-}
-
-// Close tears down every tunnel.
-func (p *Pool) Close() {
-	p.mu.Lock()
-	p.closed = true
-	ts := p.tunnels
-	p.tunnels = map[string]*Tunnel{}
-	p.mu.Unlock()
-	for _, t := range ts { // closing can block; don't hold the lock
-		t.Close()
+	if t.dev != nil {
+		t.dev.Close()
 	}
 }

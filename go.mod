@@ -3,6 +3,7 @@ module github.com/bybrooklyn/ytm-to-mp3
 go 1.26.0
 
 require (
+	charm.land/bubbletea/v2 v2.0.2
 	charm.land/huh/v2 v2.0.3
 	github.com/ProtonMail/go-srp v0.0.7
 	github.com/charmbracelet/x/ansi v0.11.6
@@ -15,7 +16,6 @@ require (
 
 require (
 	charm.land/bubbles/v2 v2.0.0 // indirect
-	charm.land/bubbletea/v2 v2.0.2 // indirect
 	charm.land/lipgloss/v2 v2.0.1 // indirect
 	github.com/ProtonMail/bcrypt v0.0.0-20210511135022-227b4adcab57 // indirect
 	github.com/ProtonMail/go-crypto v0.0.0-20230321155629-9a39f2531310 // indirect

@@ -147,9 +147,10 @@ func (e *engine) liveRows(speed float64, began time.Time) []string {
 	rows := []string{head}
 
 	// exits (only worth a row when there's more than one, or one is struggling)
-	if len(e.lanes) > 1 {
+	lanes := e.snap()
+	if len(lanes) > 1 {
 		var parts []string
-		for _, l := range e.lanes {
+		for _, l := range lanes {
 			name := ui.Sanitize(l.exitName())
 			switch {
 			case l.swapping.Load():
@@ -161,7 +162,7 @@ func (e *engine) liveRows(speed float64, began time.Time) []string {
 			}
 		}
 		rows = append(rows, "  "+dim+"exits "+reset+strings.Join(parts, dim+" · "+reset))
-	} else if c := e.lanes[0].gov.Cooling(); c > 0 {
+	} else if c := lanes[0].gov.Cooling(); c > 0 {
 		rows = append(rows, fmt.Sprintf("  %srate limited, pausing %ds%s", yel, int(c.Seconds())+1, reset))
 	}
 

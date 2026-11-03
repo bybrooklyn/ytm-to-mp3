@@ -73,6 +73,9 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 		if choice == "library" || choice == "link" {
 			return nil // a download ran; we're done
 		}
+		if choice == "settings" {
+			continue // settings are saved as you go; straight back to the menu
+		}
 		back := true
 		if one(ctx, huh.NewConfirm().Title("Back to the menu?").Affirmative("Menu").Negative("Quit").Value(&back)) != nil || !back {
 			return nil

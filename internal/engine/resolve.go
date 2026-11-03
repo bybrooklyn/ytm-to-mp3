@@ -110,6 +110,7 @@ type Resolved struct {
 }
 
 type ytInfo struct {
+	ID             string            `json:"id"`
 	URL            string            `json:"url"`
 	Ext            string            `json:"ext"`
 	Acodec         string            `json:"acodec"`
@@ -185,18 +186,26 @@ func (y ytdlp) env() []string {
 	return append(out, "no_proxy=", "NO_PROXY=")
 }
 
-func (y ytdlp) run(ctx context.Context, args ...string) ([]byte, error) {
+// runRaw runs yt-dlp and returns its stdout and stderr even when it exits non-zero (err is
+// then the exit error); callers that tolerate partial failure use this.
+func (y ytdlp) runRaw(ctx context.Context, args ...string) ([]byte, string, error) {
 	cmd := exec.CommandContext(ctx, y.tools.YtDlp, args...)
 	cmd.Env = y.env()
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	return out.Bytes(), errb.String(), err
+}
+
+func (y ytdlp) run(ctx context.Context, args ...string) ([]byte, error) {
+	out, stderr, err := y.runRaw(ctx, args...)
+	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, classify(errb.String())
+		return nil, classify(stderr)
 	}
-	return out.Bytes(), nil
+	return out, nil
 }
 
 // Resolve asks yt-dlp for the best audio stream and metadata of one video.
@@ -213,6 +222,10 @@ func (y ytdlp) Resolve(ctx context.Context, id string, clientIdx int) (*Resolved
 	if err := json.Unmarshal(b, &in); err != nil {
 		return nil, &Error{kindTransient, "unreadable yt-dlp output"}
 	}
+	return resolvedFrom(in), nil
+}
+
+func resolvedFrom(in ytInfo) *Resolved {
 	r := &Resolved{
 		URL: in.URL, Headers: in.Headers, Ext: in.Ext, Acodec: in.Acodec, Protocol: in.Protocol,
 		// Only an exact size is safe: an approximate one would truncate or over-read the
@@ -233,7 +246,83 @@ func (y ytdlp) Resolve(ctx context.Context, id string, clientIdx int) (*Resolved
 			r.Artists = []string{c}
 		}
 	}
-	return r, nil
+	return r
+}
+
+// batchResult is the outcome for one id of a batch resolve.
+type batchResult struct {
+	res *Resolved
+	err error
+}
+
+// ResolveBatch resolves several videos with a single yt-dlp process (one process start and
+// one JS-runtime warm-up for all of them). The result has an entry per id it could attribute;
+// ids missing from it had no recognisable output and should be resolved on their own.
+// A non-nil error means the whole batch failed (cancelled, or yt-dlp could not run).
+func (y ytdlp) ResolveBatch(ctx context.Context, ids []string, clientIdx int) (map[string]batchResult, error) {
+	args := append(y.baseArgs(clientIdx), "--ignore-errors", "-j", "-f", "bestaudio/best")
+	for _, id := range ids {
+		if !model.ValidID(id) {
+			return nil, &Error{kindPermanent, "invalid video id"}
+		}
+		args = append(args, "https://www.youtube.com/watch?v="+id)
+	}
+	out, stderr, err := y.runRaw(ctx, args...)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if err != nil && len(out) == 0 && strings.TrimSpace(stderr) == "" {
+		return nil, classify("") // could not even run
+	}
+	return parseBatch(ids, out, stderr), nil
+}
+
+var errLineID = regexp.MustCompile(`^ERROR:\s*\[[^\]]+\]\s*([\w-]{11}):`)
+
+// parseBatch maps yt-dlp's `-j --ignore-errors` output back to ids: one JSON object per
+// line on stdout, one "ERROR: [youtube] <id>: ..." line per failed video on stderr.
+func parseBatch(ids []string, stdout []byte, stderr string) map[string]batchResult {
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	res := make(map[string]batchResult, len(ids))
+	for _, line := range bytes.Split(stdout, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
+		var in ytInfo
+		if json.Unmarshal(line, &in) != nil || !want[in.ID] {
+			continue
+		}
+		res[in.ID] = batchResult{res: resolvedFrom(in)}
+	}
+	var loose []string // error lines we couldn't tie to an id
+	for _, line := range strings.Split(stderr, "\n") {
+		line = strings.TrimSpace(names.Clean(line))
+		if !strings.HasPrefix(line, "ERROR:") {
+			continue
+		}
+		if m := errLineID.FindStringSubmatch(line); m != nil && want[m[1]] {
+			if _, ok := res[m[1]]; !ok {
+				res[m[1]] = batchResult{err: classify(line)}
+			}
+			continue
+		}
+		loose = append(loose, line)
+	}
+	// One video unaccounted for and one unattributed error: they belong together.
+	var missing []string
+	for _, id := range ids {
+		if _, ok := res[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 1 && len(loose) == 1 {
+		res[missing[0]] = batchResult{err: classify(loose[0])}
+	}
+	return res
 }
 
 // isoDate turns yt-dlp's YYYYMMDD into YYYY-MM-DD ("" if malformed).

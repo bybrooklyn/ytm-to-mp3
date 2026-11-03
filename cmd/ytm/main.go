@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -109,6 +110,9 @@ func parse(name string, args []string) (opts, []string, error) {
 	}
 	if o.jobs < 0 {
 		return o, nil, fmt.Errorf("-j must be 1 or more")
+	}
+	if o.jobs == 0 {
+		o.jobs = cfg.Jobs // saved in settings; 0 = automatic
 	}
 	o.format = strings.ToLower(o.format)
 	if o.out == "" {
@@ -294,20 +298,17 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	// The VPN is brought up the first time anything needs the network, so even looking up
 	// a pasted playlist goes out through it and not from your own address.
 	var (
-		exits      []vpn.Exit
-		replace    func(context.Context, vpn.Exit) (vpn.Exit, error)
-		healthy    func(vpn.Exit) bool
-		closeExits = func() {}
-		connected  bool
+		xs        = exitSet{Close: func() {}}
+		connected bool
 	)
-	defer func() { closeExits() }()
+	defer func() { xs.Close() }()
 	connect := func() error {
 		if connected {
 			return nil
 		}
 		connected = true
 		var err error
-		exits, replace, healthy, closeExits, err = buildExits(ctx, u, o)
+		xs, err = buildExits(ctx, u, o)
 		return err
 	}
 
@@ -340,8 +341,8 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 				return err
 			}
 			proxy := ""
-			if len(exits) > 0 {
-				proxy = exits[0].Proxy
+			if len(xs.Exits) > 0 {
+				proxy = xs.Exits[0].Proxy
 			}
 			ts, err := engine.ExpandURL(ctx, tools, proxy, input)
 			if err != nil {
@@ -411,10 +412,14 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	cache, _ := config.CacheDir()
 	sum := engine.Run(ctx, engine.Options{
 		Out: o.out, Format: o.format, Jobs: o.jobs, Tools: tools,
-		Store: st, UI: u, CacheDir: filepath.Join(cache, "yt-dlp"), Exits: exits, Replace: replace, Healthy: healthy,
+		Store: st, UI: u, CacheDir: filepath.Join(cache, "yt-dlp"), Exits: xs.Exits, Replace: xs.Replace, Healthy: xs.Healthy,
+		OnBlocked: xs.Blocked, OnGood: xs.Good, NewExits: xs.New,
 	}, plan.Todo)
 
 	u.Printf("\n%d downloaded, %d failed, %s in %s", sum.Done, sum.Failed, engine.HumanBytes(sum.Bytes), sum.Elapsed.Round(time.Second))
+	if sum.Swaps > 0 {
+		u.Printf("%d exit(s) were blocked and replaced with other locations", sum.Swaps)
+	}
 	if len(sum.PerExit) > 1 {
 		for _, x := range sum.PerExit {
 			u.Printf("  %-24s %4d tracks  %s", x.Name, x.Done, engine.HumanBytes(x.Bytes))
@@ -453,20 +458,59 @@ func removeLegacyCookies() {
 // buildExits connects the Proton VPN tunnels when you're signed in (unless --no-vpn).
 // It never silently falls back to your own IP: if the VPN was meant to be on and can't
 // connect, it stops.
-func buildExits(ctx context.Context, u *ui.UI, o opts) ([]vpn.Exit, func(ctx context.Context, old vpn.Exit) (vpn.Exit, error), func(vpn.Exit) bool, func(), error) {
+// exitSet is the VPN side of a run: the exits that are up, how to replace or check one,
+// the hooks that feed block/throughput results back into the server cache, and a channel
+// of exits that finish connecting after the run has started.
+type exitSet struct {
+	Exits   []vpn.Exit
+	Replace func(context.Context, vpn.Exit) (vpn.Exit, error)
+	Healthy func(vpn.Exit) bool
+	Blocked func(vpn.Exit, string)
+	Good    func(vpn.Exit, float64)
+	New     <-chan vpn.Exit
+	Close   func()
+}
+
+// buildExits connects the Proton VPN tunnels when you're signed in (unless --no-vpn).
+// Downloads start as soon as the first two are up; the rest join while it runs. It never
+// silently falls back to your own IP: if the VPN was meant to be on and can't connect,
+// it stops.
+func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
+	none := exitSet{Close: func() {}}
 	cfg := config.Load()
 	pc := protonClient()
 	if o.noVPN || cfg.NoVPN || !pc.SignedIn() {
 		if !o.noVPN && !cfg.NoVPN {
 			u.Printf("(no VPN: run 'ytm setup' to sign in to Proton and download faster)")
 		}
-		return nil, nil, nil, func() {}, nil
+		return none, nil
 	}
 	n := orInt(cfg.Connections, 3)
 	u.Printf("Connecting %d VPN tunnel(s)...", n)
-	pool, err := vpn.Open(ctx, pc, n, func(f string, a ...any) { u.Printf(f, a...) })
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("%w (use --no-vpn to download without it)", err)
+	var countries []string
+	if c := strings.ToUpper(strings.TrimSpace(cfg.Countries)); c != "" {
+		countries = []string{c}
 	}
-	return pool.Exits(), pool.Replace, pool.Healthy, pool.Close, nil
+	late := make(chan vpn.Exit, 64)
+	done := make(chan struct{})
+	pool, err := vpn.OpenWith(ctx, pc, n, func(f string, a ...any) { u.Printf(f, a...) }, vpn.Options{
+		MinReady:  min(n, 2),
+		Countries: countries,
+		OnExit: func(e vpn.Exit) {
+			select {
+			case late <- e:
+			case <-done:
+			case <-ctx.Done():
+			}
+		},
+	})
+	if err != nil {
+		return none, fmt.Errorf("%w (use --no-vpn to download without it)", err)
+	}
+	var once sync.Once
+	return exitSet{
+		Exits: pool.Exits(), Replace: pool.Replace, Healthy: pool.Healthy,
+		Blocked: pool.MarkBlocked, Good: pool.MarkGood, New: late,
+		Close: func() { once.Do(func() { close(done); pool.Close() }) },
+	}, nil
 }

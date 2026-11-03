@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func resolvedFor(url string, size int) *Resolved {
@@ -46,5 +47,31 @@ func TestFetchRejectsServerIgnoringRange(t *testing.T) {
 	err := fetch(context.Background(), srv.Client(), resolvedFor(srv.URL, len(body)), dst, func(int64) {}, func() {})
 	if !errors.Is(err, errUnfetchable) {
 		t.Fatalf("want errUnfetchable, got %v", err)
+	}
+}
+
+// An exit that accepts the request but never sends data must be abandoned after stallAfter,
+// not after the 2-minute chunk timeout.
+func TestFetchStallIsDetectedFast(t *testing.T) {
+	old := stallAfter
+	stallAfter = 300 * time.Millisecond
+	defer func() { stallAfter = old }()
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-block:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(block)
+	dst := filepath.Join(t.TempDir(), "x.src")
+	start := time.Now()
+	err := fetch(context.Background(), srv.Client(), resolvedFor(srv.URL, 2<<20), dst, func(int64) {}, func() {})
+	if !errors.Is(err, errStalled) {
+		t.Fatalf("want errStalled, got %v", err)
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("took %v to notice the stall", d)
 	}
 }

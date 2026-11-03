@@ -15,6 +15,8 @@ type Config struct {
 	Format      string `json:"format,omitempty"`
 	Connections int    `json:"connections,omitempty"` // VPN exits to use at once
 	NoVPN       bool   `json:"no_vpn,omitempty"`      // sign-in is kept but VPN is off
+	Jobs        int    `json:"jobs,omitempty"`        // parallel downloads; 0 = auto
+	Countries   string `json:"countries,omitempty"`   // preferred exit country code; "" = auto/best
 }
 
 func dir() (string, error) {

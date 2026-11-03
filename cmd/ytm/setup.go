@@ -13,7 +13,6 @@ import (
 	"charm.land/huh/v2/spinner"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/vpn"
@@ -62,54 +61,15 @@ func runSetup(ctx context.Context, u *ui.UI, accountOnly bool) error {
 	if !u.Interactive() {
 		return errors.New("setup needs a terminal")
 	}
-	cfg := config.Load()
-	pc := protonClient()
-
-	fmt.Print("\n  ytm setup\n\n")
-	if err := signIn(ctx, pc, &cfg); err != nil {
-		return err
-	}
 	if accountOnly {
+		cfg := config.Load()
+		fmt.Print("\n  ytm login\n\n")
+		if err := signIn(ctx, protonClient(), &cfg); err != nil {
+			return err
+		}
 		return cfg.Save()
 	}
-
-	out, format, conns := cfg.Out, cfg.Format, cfg.Connections
-	if out == "" {
-		out = config.DefaultOut()
-	}
-	if format == "" {
-		format = "mp3"
-	}
-	if conns == 0 {
-		conns = 3
-	}
-	opts := []huh.Field{
-		huh.NewInput().Title("Where should music go?").Value(&out).Validate(checkFolder),
-		huh.NewSelect[string]().Title("Format").Options(huh.NewOptions(engine.Formats...)...).Value(&format),
-	}
-	vpnOn := pc.SignedIn() && !cfg.NoVPN
-	if vpnOn {
-		opts = append(opts, huh.NewSelect[int]().Title("VPN connections at once").
-			Description("more = faster; each uses a different Proton server").
-			Options(huh.NewOption("1", 1), huh.NewOption("2", 2), huh.NewOption("3 (recommended)", 3),
-				huh.NewOption("4", 4), huh.NewOption("6", 6)).Value(&conns))
-	}
-	if err := huh.NewForm(huh.NewGroup(opts...)).RunWithContext(ctx); err != nil {
-		return err
-	}
-	cfg.Out, cfg.Format, cfg.Connections = config.ExpandPath(out), format, conns
-	if err := cfg.Save(); err != nil {
-		return fmt.Errorf("couldn't save your settings to %s: %w", config.Path(), err)
-	}
-
-	fmt.Printf("\n  ✓ saved to %s\n    music goes to %s\n    now run:  ytm \"<playlist-or-video-link>\"   or just   ytm   (for your Takeout)\n\n", config.Path(), cfg.Out)
-	if pc.SignedIn() && !cfg.NoVPN {
-		test := true
-		if one(ctx, huh.NewConfirm().Title("Test the VPN now?").Value(&test)) == nil && test {
-			return runStatus(ctx, u)
-		}
-	}
-	return nil
+	return runSettings(ctx, u)
 }
 
 func signIn(ctx context.Context, pc *proton.Client, cfg *config.Config) error {
@@ -124,6 +84,11 @@ func signIn(ctx context.Context, pc *proton.Client, cfg *config.Config) error {
 			return nil
 		}
 	}
+	return loginFlow(ctx, pc, cfg)
+}
+
+// loginFlow asks whether to use the VPN and, if so, signs in (with 2FA and retries).
+func loginFlow(ctx context.Context, pc *proton.Client, cfg *config.Config) error {
 	useVPN := true
 	if err := one(ctx, huh.NewConfirm().Title("Download through Proton VPN?").
 		Description("Uses several servers at once so YouTube can't throttle you. Needs a Proton VPN account.").

@@ -122,6 +122,14 @@ func isGoogleVideo(host string) bool {
 	return host == "googlevideo.com" || strings.HasSuffix(host, ".googlevideo.com")
 }
 
+// stallAfter is how long a chunk may go without receiving a single byte before the attempt is
+// abandoned. Some exits can resolve a video yet can't pull data from Google's CDN; waiting
+// the full chunk timeout on each of them is what made whole runs take minutes.
+var stallAfter = 10 * time.Second
+
+// errStalled means this exit isn't delivering data; the track should move to another exit.
+var errStalled = &Error{kindTransient, "stream stalled (no data from this exit)"}
+
 func fetchChunk(ctx context.Context, client *http.Client, r *Resolved, f *os.File, start, end int64, onBytes func(int64), onThrottle func()) error {
 	var lastErr error
 	for attempt := 0; attempt < 4; attempt++ {
@@ -132,56 +140,72 @@ func fetchChunk(ctx context.Context, client *http.Client, r *Resolved, f *os.Fil
 				return ctx.Err()
 			}
 		}
-		// A stalled stream must not hang a worker forever: each 10 MB chunk gets a deadline.
-		cctx, ccancel := context.WithTimeout(ctx, 2*time.Minute)
-		defer ccancel()
-		req, err := chunkRequest(cctx, r, start, end)
-		if err != nil {
+		done, err := fetchAttempt(ctx, client, r, f, start, end, onBytes, onThrottle)
+		if done {
 			return err
 		}
-		resp, err := client.Do(req)
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			lastErr = &Error{kindTransient, err.Error()}
-			continue
-		}
-		switch resp.StatusCode {
-		case http.StatusOK, http.StatusPartialContent:
-		case http.StatusTooManyRequests:
-			resp.Body.Close()
-			onThrottle()
-			lastErr = &Error{kindThrottled, "HTTP 429 from stream server"}
-			continue
-		case http.StatusForbidden, http.StatusNotFound, http.StatusGone:
-			resp.Body.Close()
-			return fmt.Errorf("%w (HTTP %s)", errUnfetchable, resp.Status)
-		default:
-			resp.Body.Close()
-			lastErr = &Error{kindTransient, "stream server: " + resp.Status}
-			continue
-		}
-		want := end - start + 1
-		if resp.StatusCode == http.StatusOK && resp.ContentLength != want {
-			// A plain 200 is only trustworthy when its length is exactly the range asked
-			// for (googlevideo answers range= queries that way). Anything else means the
-			// server ignored the range and is sending the file from the start: writing it
-			// at this offset would silently corrupt the track.
-			resp.Body.Close()
-			return fmt.Errorf("%w (HTTP 200 with length %d, wanted %d)", errUnfetchable, resp.ContentLength, want)
-		}
-		n, err := copyAt(f, resp.Body, start, want, onBytes)
-		resp.Body.Close()
-		if err == nil && n == want {
-			return nil
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		lastErr = &Error{kindTransient, fmt.Sprintf("short read (%d/%d bytes)", n, want)}
+		lastErr = err
 	}
 	return lastErr
+}
+
+// fetchAttempt is one try at one chunk. done=false means "worth retrying".
+func fetchAttempt(ctx context.Context, client *http.Client, r *Resolved, f *os.File, start, end int64, onBytes func(int64), onThrottle func()) (done bool, err error) {
+	// Each 10 MB chunk gets an overall deadline, and a stall watchdog that fires if no
+	// bytes arrive for stallAfter.
+	cctx, ccancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer ccancel()
+	var stalled atomic.Bool
+	wd := time.AfterFunc(stallAfter, func() { stalled.Store(true); ccancel() })
+	defer wd.Stop()
+	progress := func(n int64) { wd.Reset(stallAfter); onBytes(n) }
+	stall := func() (bool, error) { return true, errStalled }
+
+	req, err := chunkRequest(cctx, r, start, end)
+	if err != nil {
+		return true, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		if stalled.Load() {
+			return stall()
+		}
+		if ctx.Err() != nil {
+			return true, ctx.Err()
+		}
+		return false, &Error{kindTransient, err.Error()}
+	}
+	defer resp.Body.Close()
+	wd.Reset(stallAfter) // headers arrived; now the body has to flow
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusPartialContent:
+	case http.StatusTooManyRequests:
+		onThrottle()
+		return false, &Error{kindThrottled, "HTTP 429 from stream server"}
+	case http.StatusForbidden, http.StatusNotFound, http.StatusGone:
+		return true, fmt.Errorf("%w (HTTP %s)", errUnfetchable, resp.Status)
+	default:
+		return false, &Error{kindTransient, "stream server: " + resp.Status}
+	}
+	want := end - start + 1
+	if resp.StatusCode == http.StatusOK && resp.ContentLength != want {
+		// A plain 200 is only trustworthy when its length is exactly the range asked
+		// for (googlevideo answers range= queries that way). Anything else means the
+		// server ignored the range and is sending the file from the start: writing it
+		// at this offset would silently corrupt the track.
+		return true, fmt.Errorf("%w (HTTP 200 with length %d, wanted %d)", errUnfetchable, resp.ContentLength, want)
+	}
+	n, err := copyAt(f, resp.Body, start, want, progress)
+	if err == nil && n == want {
+		return true, nil
+	}
+	if stalled.Load() {
+		return stall()
+	}
+	if ctx.Err() != nil {
+		return true, ctx.Err()
+	}
+	return false, &Error{kindTransient, fmt.Sprintf("short read (%d/%d bytes)", n, want)}
 }
 
 // copyAt writes up to limit bytes of r into f at off, reporting progress.
