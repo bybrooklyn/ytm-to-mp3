@@ -45,9 +45,11 @@ func appIDs() []appID {
 		arch = runtime.GOARCH
 	}
 	return []appID{
+		// The official clients send linux-vpn-<cli|gui>@<proton-vpn-api-core version>+<arch>
+		// (read from the installed client's session_holder.py; api-core 5.8.7 is accepted).
+		{"linux-vpn-cli@5.8.7+" + arch, "ProtonVPN/1.1.0 (Linux; ubuntu/24.04)"},
+		{"linux-vpn-gui@5.8.7+" + arch, "ProtonVPN/4.19.0 (Linux; Ubuntu)"},
 		{"linux-vpn@4.19.0", "ProtonVPN/4.19.0 (Linux; Ubuntu)"},
-		{"linux-vpn-cli@1.1.0+" + arch, "ProtonVPN/1.1.0 (Linux; ubuntu/24.04)"},
-		{"linux-vpn@4.18.8", "ProtonVPN/4.18.8 (Linux; Ubuntu)"},
 	}
 }
 
