@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -126,26 +127,41 @@ func (c *Client) Logout() {
 
 // APIError is a failure reported by Proton.
 type APIError struct {
-	Status int
-	Code   int
-	Msg    string
+	Status     int
+	Code       int
+	Msg        string        // Proton's own message
+	RetryAfter time.Duration // from the Retry-After header, if sent
 }
 
+// RateLimited reports whether Proton is telling us to slow down. Retrying makes it worse.
+func (e *APIError) RateLimited() bool { return e.Status == 429 || e.Code == 2028 }
+
 func (e *APIError) Error() string {
+	var hint string
 	switch {
 	case e.Code == 5003:
-		return "Proton rejected this app version (ytm needs an update)"
+		hint = "Proton rejected this app version (ytm needs an update)"
 	case e.Code == 9001:
-		return "Proton wants a human check (CAPTCHA). Sign in once at account.protonvpn.com in a browser, then try again"
+		hint = "Proton wants a human check (CAPTCHA). Sign in once at account.protonvpn.com in a browser, then try again"
 	case e.Code == 8002:
-		return "wrong password or 2FA code"
-	case e.Code == 2028:
-		return "too many attempts, wait a few minutes"
+		hint = "wrong password or 2FA code"
+	case e.RateLimited():
+		hint = "Proton is rate limiting sign-ins. Stop retrying and wait"
+		if e.RetryAfter > 0 {
+			hint += fmt.Sprintf(" about %d minutes", int(e.RetryAfter.Minutes())+1)
+		} else {
+			hint += " an hour or so"
+		}
 	}
+	// always show what Proton actually said, so a wrong guess above can be spotted
+	detail := fmt.Sprintf("HTTP %d, code %d", e.Status, e.Code)
 	if e.Msg != "" {
-		return fmt.Sprintf("%s (code %d)", e.Msg, e.Code)
+		detail = fmt.Sprintf("Proton says %q; %s", e.Msg, detail)
 	}
-	return fmt.Sprintf("HTTP %d (code %d)", e.Status, e.Code)
+	if hint != "" {
+		return hint + " (" + detail + ")"
+	}
+	return detail
 }
 
 // do sends a JSON request. out may be nil. It refreshes an expired session once.
@@ -209,7 +225,14 @@ func (c *Client) once(ctx context.Context, method, path string, authed bool, in,
 	}
 	_ = json.Unmarshal(raw, &env)
 	if resp.StatusCode != 200 || (env.Code != 1000 && env.Code != 0 && env.Code != 1001) {
-		return &APIError{Status: resp.StatusCode, Code: env.Code, Msg: strings.TrimSpace(env.Error)}
+		ae := &APIError{Status: resp.StatusCode, Code: env.Code, Msg: strings.TrimSpace(env.Error)}
+		if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 {
+			ae.RetryAfter = time.Duration(s) * time.Second
+		}
+		if os.Getenv("YTM_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "ytm debug: %s %s -> HTTP %d %s\n", method, path, resp.StatusCode, strings.TrimSpace(string(raw[:min(len(raw), 400)])))
+		}
+		return ae
 	}
 	if out != nil {
 		return json.Unmarshal(raw, out)

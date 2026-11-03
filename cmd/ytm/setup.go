@@ -179,6 +179,11 @@ func signIn(ctx context.Context, pc *proton.Client, cfg *config.Config) error {
 			return nil
 		}
 		fmt.Println("  ✗", err)
+		var ae *proton.APIError
+		if errors.As(err, &ae) && (ae.RateLimited() || ae.Code == 5003 || ae.Code == 9001) {
+			// retrying can't help and a rate limit gets longer with every attempt
+			return errors.New("stopping here; fix the above, then run ytm setup again (set YTM_DEBUG=1 to see Proton's raw reply)")
+		}
 		again := true
 		if one(ctx, huh.NewConfirm().Title("Try again?").Value(&again)) != nil || !again {
 			return errors.New("not signed in; run ytm setup to try again")
