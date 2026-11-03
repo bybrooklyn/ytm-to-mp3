@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -84,6 +86,30 @@ func openTunnel(ctx context.Context, key *proton.WGKey, s proton.Server, endpoin
 	}
 	t.Close()
 	return nil, fmt.Errorf("%s unreachable: %v", s.Name, last)
+}
+
+// Alive reports whether the tunnel has completed a WireGuard handshake recently. With a
+// 25s keepalive a healthy tunnel re-handshakes about every two minutes.
+func (t *Tunnel) Alive() bool {
+	cfg, err := t.dev.IpcGet()
+	if err != nil {
+		return true
+	}
+	var sec int64
+	for _, line := range strings.Split(cfg, "\n") {
+		if v, ok := strings.CutPrefix(line, "last_handshake_time_sec="); ok {
+			sec, _ = strconv.ParseInt(v, 10, 64)
+		}
+	}
+	return sec > 0 && time.Since(time.Unix(sec, 0)) < 4*time.Minute
+}
+
+// Healthy reports whether the tunnel behind e is alive (true for unknown exits).
+func (p *Pool) Healthy(e Exit) bool {
+	p.mu.Lock()
+	t := p.tunnels[e.Name]
+	p.mu.Unlock()
+	return t == nil || t.Alive()
 }
 
 // Close shuts the tunnel down.

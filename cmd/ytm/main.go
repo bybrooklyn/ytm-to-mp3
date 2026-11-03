@@ -251,7 +251,7 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 				if tools, err = deps.Ensure(ctx, logf); err != nil {
 					return err
 				}
-				jar = cookies.Setup(ctx, u, &cfg, tools, o.noCookies)
+				jar = cookies.Setup(ctx, u, &cfg, tools, o.noCookies || vpnWanted(o))
 			}
 			ts, err := engine.ExpandURL(ctx, tools, jar.File, input)
 			if err != nil {
@@ -304,9 +304,9 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		if tools, err = deps.Ensure(ctx, logf); err != nil {
 			return err
 		}
-		jar = cookies.Setup(ctx, u, &cfg, tools, o.noCookies)
+		jar = cookies.Setup(ctx, u, &cfg, tools, o.noCookies || vpnWanted(o))
 	}
-	exits, replace, closeExits, err := buildExits(ctx, u, o)
+	exits, replace, healthy, closeExits, err := buildExits(ctx, u, o)
 	if err != nil {
 		return err
 	}
@@ -314,7 +314,7 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	cache, _ := config.CacheDir()
 	sum := engine.Run(ctx, engine.Options{
 		Out: o.out, Format: o.format, Jobs: o.jobs, Cookies: jar.File, Tools: tools,
-		Store: st, UI: u, CacheDir: filepath.Join(cache, "yt-dlp"), Exits: exits, Replace: replace,
+		Store: st, UI: u, CacheDir: filepath.Join(cache, "yt-dlp"), Exits: exits, Replace: replace, Healthy: healthy,
 	}, plan.Todo)
 
 	u.Printf("\n%d downloaded, %d failed, %s in %s", sum.Done, sum.Failed, engine.HumanBytes(sum.Bytes), sum.Elapsed.Round(time.Second))
@@ -344,23 +344,30 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	return nil
 }
 
+// vpnWanted is true when downloads will go through Proton. Browser cookies are skipped
+// then: a logged-in Google session suddenly appearing from several countries is exactly
+// what gets accounts flagged.
+func vpnWanted(o opts) bool {
+	return !o.noVPN && !config.Load().NoVPN && protonClient().SignedIn()
+}
+
 // buildExits connects the Proton VPN tunnels when you're signed in (unless --no-vpn).
 // It never silently falls back to your own IP: if the VPN was meant to be on and can't
 // connect, it stops.
-func buildExits(ctx context.Context, u *ui.UI, o opts) ([]vpn.Exit, func(ctx context.Context, old vpn.Exit) (vpn.Exit, error), func(), error) {
+func buildExits(ctx context.Context, u *ui.UI, o opts) ([]vpn.Exit, func(ctx context.Context, old vpn.Exit) (vpn.Exit, error), func(vpn.Exit) bool, func(), error) {
 	cfg := config.Load()
 	pc := protonClient()
 	if o.noVPN || cfg.NoVPN || !pc.SignedIn() {
 		if !o.noVPN && !cfg.NoVPN {
 			u.Printf("(no VPN: run 'ytm setup' to sign in to Proton and download faster)")
 		}
-		return nil, nil, func() {}, nil
+		return nil, nil, nil, func() {}, nil
 	}
 	n := orInt(cfg.Connections, 3)
 	u.Printf("Connecting %d VPN tunnel(s)...", n)
 	pool, err := vpn.Open(ctx, pc, n, func(f string, a ...any) { u.Printf(f, a...) })
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("%w (use --no-vpn to download without it)", err)
+		return nil, nil, nil, nil, fmt.Errorf("%w (use --no-vpn to download without it)", err)
 	}
-	return pool.Exits(), pool.Replace, pool.Close, nil
+	return pool.Exits(), pool.Replace, pool.Healthy, pool.Close, nil
 }

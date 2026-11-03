@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,6 +39,8 @@ type Options struct {
 	Exits []vpn.Exit
 	// Replace, if set, swaps a rate-limited exit for one on a different server.
 	Replace func(ctx context.Context, old vpn.Exit) (vpn.Exit, error)
+	// Healthy, if set, is polled to catch tunnels that died silently.
+	Healthy func(vpn.Exit) bool
 }
 
 // Summary is the result of a run.
@@ -66,14 +69,15 @@ type job struct {
 
 // lane is one exit with its own governor, HTTP client and yt-dlp settings.
 type lane struct {
-	mu     sync.Mutex
-	exit   vpn.Exit
-	gov    *Governor
-	client *http.Client
-	yt     ytdlp
-	done   atomic.Int64
-	bytes  atomic.Int64
-	bad    atomic.Int32 // consecutive throttles / failures
+	mu       sync.Mutex
+	exit     vpn.Exit
+	gov      *Governor
+	client   *http.Client
+	yt       ytdlp
+	done     atomic.Int64
+	bytes    atomic.Int64
+	bad      atomic.Int32 // consecutive throttles / failures
+	swapping atomic.Bool
 }
 
 func (l *lane) http() *http.Client { l.mu.Lock(); defer l.mu.Unlock(); return l.client }
@@ -82,10 +86,18 @@ func (l *lane) ytdlp() ytdlp       { l.mu.Lock(); defer l.mu.Unlock(); return l.
 // sour records a bad outcome; after several in a row the exit is swapped for a fresh
 // server (a different IP usually clears a rate limit).
 func (e *engine) sour(ctx context.Context, l *lane) {
-	if l.bad.Add(1) < 4 || e.Replace == nil {
+	if l.bad.Add(1) < 4 {
 		return
 	}
+	e.swap(ctx, l)
+}
+
+func (e *engine) swap(ctx context.Context, l *lane) {
 	l.bad.Store(0)
+	if e.Replace == nil || !l.swapping.CompareAndSwap(false, true) {
+		return
+	}
+	defer l.swapping.Store(false)
 	l.mu.Lock()
 	old := l.exit
 	l.mu.Unlock()
@@ -185,7 +197,7 @@ func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 		rw.Add(1)
 		go func(slot int) { defer rw.Done(); e.resolveWorker(ctx, slot, resolveCh, fetchCh) }(i)
 	}
-	for i := 0; i < min(maxC, 6); i++ {
+	for i := 0; i < min(maxC, 4*len(e.lanes)+2); i++ {
 		fw.Add(1)
 		go func() { defer fw.Done(); e.fetchWorker(ctx, fetchCh, encodeCh) }()
 	}
@@ -198,11 +210,20 @@ func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 	stopStatus := make(chan struct{})
 	go func() {
 		var lastB int64
+		lastCheck := time.Now().Add(30 * time.Second) // give new tunnels time to handshake
 		lastT := time.Now()
 		var speed float64
 		for {
 			select {
 			case <-tick.C:
+				if e.Healthy != nil && time.Since(lastCheck) > 20*time.Second {
+					lastCheck = time.Now()
+					for _, l := range e.lanes {
+						if !e.Healthy(l.exitCopy()) {
+							go e.swap(ctx, l)
+						}
+					}
+				}
 				now := time.Now()
 				b := e.bytes.Load()
 				inst := float64(b-lastB) / now.Sub(lastT).Seconds()
@@ -352,6 +373,9 @@ func (e *engine) resolveWithRetry(ctx context.Context, t model.Track) (*Resolved
 		default:
 			ln.gov.Release(Neutral)
 			prev = ln
+			if looksLikeNetwork(err) {
+				e.sour(ctx, ln)
+			}
 			if transient++; transient >= maxTransient {
 				return nil, 0, nil, err
 			}
@@ -524,3 +548,16 @@ func (e *engine) encodeJob(ctx context.Context, j *job) (string, error) {
 }
 
 func (l *lane) exitName() string { l.mu.Lock(); defer l.mu.Unlock(); return l.exit.Name }
+
+func (l *lane) exitCopy() vpn.Exit { l.mu.Lock(); defer l.mu.Unlock(); return l.exit }
+
+// looksLikeNetwork spots failures that point at a dead tunnel/proxy rather than a bad video.
+func looksLikeNetwork(err error) bool {
+	m := strings.ToLower(err.Error())
+	for _, k := range []string{"proxy", "socks", "timed out", "timeout", "connection", "unreachable", "network", "eof", "tls"} {
+		if strings.Contains(m, k) {
+			return true
+		}
+	}
+	return false
+}

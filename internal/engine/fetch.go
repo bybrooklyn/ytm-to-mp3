@@ -117,7 +117,10 @@ func fetchChunk(ctx context.Context, client *http.Client, r *Resolved, f *os.Fil
 				return ctx.Err()
 			}
 		}
-		req, err := chunkRequest(ctx, r, start, end)
+		// A stalled stream must not hang a worker forever: each 10 MB chunk gets a deadline.
+		cctx, ccancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer ccancel()
+		req, err := chunkRequest(cctx, r, start, end)
 		if err != nil {
 			return err
 		}
@@ -188,6 +191,8 @@ func copyAt(f *os.File, r io.Reader, off, limit int64, onBytes func(int64)) (int
 
 // getFile downloads a small file (cover art).
 func getFile(ctx context.Context, client *http.Client, rawurl, dst string) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawurl, nil)
 	if err != nil {
 		return err
