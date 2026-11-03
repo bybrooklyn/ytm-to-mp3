@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -21,6 +22,24 @@ import (
 func protonClient() *proton.Client {
 	p, _ := proton.SessionPath()
 	return proton.New(p)
+}
+
+// checkFolder makes sure the music folder can be created and written, so a typo shows up
+// here instead of after a long download.
+func checkFolder(s string) error {
+	if strings.TrimSpace(s) == "" {
+		return errors.New("required")
+	}
+	dir := config.ExpandPath(s)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("can't create that folder: %v", err)
+	}
+	f, err := os.CreateTemp(dir, ".ytm-write-test-*")
+	if err != nil {
+		return fmt.Errorf("can't write there: %v", err)
+	}
+	f.Close()
+	return os.Remove(f.Name())
 }
 
 func one(ctx context.Context, f huh.Field) error {
@@ -51,13 +70,12 @@ func runSetup(ctx context.Context, u *ui.UI, accountOnly bool) error {
 		return err
 	}
 	if accountOnly {
-		cfg.Save()
-		return nil
+		return cfg.Save()
 	}
 
 	out, format, conns := cfg.Out, cfg.Format, cfg.Connections
 	if out == "" {
-		out = "Music"
+		out = config.DefaultOut()
 	}
 	if format == "" {
 		format = "mp3"
@@ -66,7 +84,7 @@ func runSetup(ctx context.Context, u *ui.UI, accountOnly bool) error {
 		conns = 3
 	}
 	opts := []huh.Field{
-		huh.NewInput().Title("Where should music go?").Value(&out),
+		huh.NewInput().Title("Where should music go?").Value(&out).Validate(checkFolder),
 		huh.NewSelect[string]().Title("Format").Options(huh.NewOptions(engine.Formats...)...).Value(&format),
 	}
 	if pc.SignedIn() && !cfg.NoVPN {
@@ -78,10 +96,12 @@ func runSetup(ctx context.Context, u *ui.UI, accountOnly bool) error {
 	if err := huh.NewForm(huh.NewGroup(opts...)).RunWithContext(ctx); err != nil {
 		return err
 	}
-	cfg.Out, cfg.Format, cfg.Connections = strings.TrimSpace(out), format, conns
-	cfg.Save()
+	cfg.Out, cfg.Format, cfg.Connections = config.ExpandPath(out), format, conns
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("couldn't save your settings to %s: %w", config.Path(), err)
+	}
 
-	fmt.Print("\n  ✓ saved. Now just run:  ytm <playlist-or-video-link>   or   ytm  (for your Takeout)\n\n")
+	fmt.Printf("\n  ✓ saved to %s\n    music goes to %s\n    now run:  ytm \"<playlist-or-video-link>\"   or just   ytm   (for your Takeout)\n\n", config.Path(), cfg.Out)
 	if pc.SignedIn() && !cfg.NoVPN {
 		test := true
 		if one(ctx, huh.NewConfirm().Title("Test the VPN now?").Value(&test)) == nil && test {
@@ -176,7 +196,10 @@ func ask2FA(ctx context.Context, pc *proton.Client) error {
 func runStatus(ctx context.Context, u *ui.UI) error {
 	cfg := config.Load()
 	pc := protonClient()
-	u.Printf("Settings: out=%s format=%s connections=%d", orDefault(cfg.Out, "Music"), orDefault(cfg.Format, "mp3"), orInt(cfg.Connections, 3))
+	u.Printf("Settings (%s):", config.Path())
+	u.Printf("  music folder: %s", config.ExpandPath(orDefault(cfg.Out, config.DefaultOut())))
+	u.Printf("  format:       %s", orDefault(cfg.Format, "mp3"))
+	u.Printf("  VPN exits:    %d", orInt(cfg.Connections, 3))
 	if !pc.SignedIn() {
 		u.Printf("VPN: not signed in (run: ytm setup)")
 		return nil

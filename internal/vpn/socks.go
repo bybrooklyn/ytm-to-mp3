@@ -2,6 +2,7 @@ package vpn
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"errors"
@@ -91,11 +92,15 @@ func handleSOCKS(ctx context.Context, c net.Conn, user, pass string, dial Dialer
 	switch rq[3] {
 	case 1:
 		b := make([]byte, 4)
-		io.ReadFull(br, b)
+		if _, err := io.ReadFull(br, b); err != nil {
+			return err
+		}
 		host = net.IP(b).String()
 	case 4:
 		b := make([]byte, 16)
-		io.ReadFull(br, b)
+		if _, err := io.ReadFull(br, b); err != nil {
+			return err
+		}
 		host = net.IP(b).String()
 	case 3:
 		h, err := rd()
@@ -116,18 +121,48 @@ func handleSOCKS(ctx context.Context, c net.Conn, user, pass string, dial Dialer
 	defer dcancel()
 	up, err := dial(dctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
-		reply(c, 5)
+		code := byte(5) // connection refused
+		if dctx.Err() != nil {
+			code = 6 // TTL expired / timed out
+		} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			code = 4 // host unreachable
+		}
+		reply(c, code)
 		return err
 	}
 	defer up.Close()
 	reply(c, 0)
 	_ = c.SetDeadline(time.Time{})
+	// When the tunnel is closed, drop live connections too so clients fail fast (and the
+	// exit can be replaced) instead of hanging on a dead path.
+	stop := context.AfterFunc(ctx, func() { c.Close(); up.Close() })
+	defer stop()
+	cc, uc := &idleConn{Conn: c}, &idleConn{Conn: up}
+	// bytes the client already sent along with its request sit in br; send them first
+	pre, _ := br.Peek(br.Buffered())
+	src := io.MultiReader(bytes.NewReader(append([]byte(nil), pre...)), cc)
 	done := make(chan struct{}, 2)
-	go func() { io.Copy(up, br); closeWrite(up); done <- struct{}{} }()
-	go func() { io.Copy(c, up); closeWrite(c); done <- struct{}{} }()
+	go func() { io.Copy(uc, src); closeWrite(up); done <- struct{}{} }()
+	go func() { io.Copy(cc, uc); closeWrite(c); done <- struct{}{} }()
 	<-done
 	<-done
 	return nil
+}
+
+// idleConn gives a connection a rolling idle deadline: no bytes either way for this long
+// means the path is dead (or the peer is wedged).
+type idleConn struct{ net.Conn }
+
+const idleLimit = 2 * time.Minute
+
+func (c *idleConn) Read(p []byte) (int, error) {
+	_ = c.Conn.SetReadDeadline(time.Now().Add(idleLimit))
+	return c.Conn.Read(p)
+}
+
+func (c *idleConn) Write(p []byte) (int, error) {
+	_ = c.Conn.SetWriteDeadline(time.Now().Add(idleLimit))
+	return c.Conn.Write(p)
 }
 
 func closeWrite(c net.Conn) {

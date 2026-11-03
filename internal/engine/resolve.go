@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -147,9 +148,8 @@ func (y ytdlp) baseArgs(clientIdx int) []string {
 	if y.cache != "" {
 		a = append(a, "--cache-dir", y.cache)
 	}
-	if y.proxy != "" {
-		a = append(a, "--proxy", y.proxy)
-	}
+	// The proxy (which carries a password) goes through the environment, not argv, where
+	// other local users could read it with ps. See env().
 	if y.cookies != "" {
 		a = append(a, "--cookies", y.cookies)
 	}
@@ -159,8 +159,30 @@ func (y ytdlp) baseArgs(clientIdx int) []string {
 	return a
 }
 
+// env is the process environment for yt-dlp, with this exit's proxy set the way yt-dlp
+// (via urllib) reads system proxies.
+func (y ytdlp) env() []string {
+	if y.proxy == "" {
+		return nil // inherit
+	}
+	env := os.Environ()
+	out := env[:0:0]
+	for _, kv := range env {
+		k := strings.ToLower(kv[:max(0, strings.IndexByte(kv, '='))])
+		if k == "http_proxy" || k == "https_proxy" || k == "all_proxy" || k == "no_proxy" {
+			continue
+		}
+		out = append(out, kv)
+	}
+	for _, k := range []string{"http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"} {
+		out = append(out, k+"="+y.proxy)
+	}
+	return append(out, "no_proxy=", "NO_PROXY=")
+}
+
 func (y ytdlp) run(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, y.tools.YtDlp, args...)
+	cmd.Env = y.env()
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
@@ -185,7 +207,9 @@ func (y ytdlp) Resolve(ctx context.Context, id string, clientIdx int) (*Resolved
 	}
 	r := &Resolved{
 		URL: in.URL, Headers: in.Headers, Ext: in.Ext, Acodec: in.Acodec, Protocol: in.Protocol,
-		Size:  int64(max(in.Filesize, in.FilesizeApprox)),
+		// Only an exact size is safe: an approximate one would truncate or over-read the
+		// track. Without one (and without clen in the URL) yt-dlp downloads it instead.
+		Size:  int64(in.Filesize),
 		Title: firstNonEmpty(in.Track, in.Title), Album: in.Album, Year: in.ReleaseYear, Duration: in.Duration,
 		Date: isoDate(firstNonEmpty(in.ReleaseDate, in.UploadDate)), Track: in.TrackNumber,
 		Genre: firstNonEmpty(in.Genre, strings.Join(in.Genres, "; ")),
@@ -255,9 +279,6 @@ func (y ytdlp) Download(ctx context.Context, id, dir string, clientIdx int) (str
 // Expand turns a playlist / album URL into tracks.
 func (y ytdlp) Expand(ctx context.Context, url string) ([]model.Track, error) {
 	args := []string{"--ignore-config", "--no-warnings", "--flat-playlist", "-J", url}
-	if y.proxy != "" {
-		args = append(args[:2:2], append([]string{"--proxy", y.proxy}, args[2:]...)...)
-	}
 	if y.cookies != "" {
 		args = append(args[:2:2], append([]string{"--cookies", y.cookies}, args[2:]...)...)
 	}

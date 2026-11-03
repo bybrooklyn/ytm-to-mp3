@@ -3,11 +3,14 @@
 Download your YouTube Music library as properly tagged audio files. One small binary for Windows, macOS and Linux.
 
 ```
-ytm                  # guided: finds or helps you get your export, then downloads it
-ytm takeout.zip      # or point it straight at your Google Takeout export
+ytm setup                          # once: Proton sign-in (optional), music folder, format
+ytm "https://youtu.be/..."         # any video, playlist or album link (keep the quotes)
+ytm                                # your whole YouTube Music library from a Takeout export
 ```
 
-That's it. On first run ytm fetches the tools it needs (yt-dlp, ffmpeg and a JavaScript runtime), asks once whether it may use your browser's YouTube login for faster, less throttled downloads, and then downloads everything with embedded cover art.
+On first run ytm fetches the tools it needs (yt-dlp, ffmpeg and a JavaScript runtime) and downloads with embedded cover art. Without the Proton VPN it asks once whether it may use your browser's YouTube login; with it, browser cookies are not used. Music goes to `~/Music` unless you choose otherwise in `ytm setup` or with `-o`.
+
+Always put links in quotes: `&` and `?` mean things to your shell.
 
 ## Install
 
@@ -25,13 +28,17 @@ Run `ytm export`. It opens [Google Takeout](https://takeout.google.com/), tells 
 ## Commands
 
 ```
-ytm <input>...               download video/playlist URLs, a Takeout .zip/folder/.csv, or a text file of links
+ytm setup                    one-time setup (Proton sign-in, music folder, format)
+ytm <input>...               download video/playlist links, a Takeout .zip/folder/.csv, or a text file of links
+ytm status                   show settings and test the VPN exits
+ytm logout                   forget your Proton login
 ytm export                   guide me through getting the export
 ytm tag <folder>             improve metadata (preview; add --apply to write, --undo to revert)
 ytm update                   refresh yt-dlp
+ytm version                  (or --version)
 ```
 
-Options: `-o DIR` (default `./Music`), `-f mp3|m4a|opus|flac`, `-j N` max parallel downloads, `--no-cookies`, `--dry-run`, `--retry`, `--all`, `-y`.
+Options: `-o DIR` (default `~/Music`), `-f mp3|m4a|opus|flac`, `-j N` max parallel downloads, `--no-vpn`, `--no-cookies`, `--dry-run`, `--retry`, `--all`. Flags can go before or after the command. Settings are saved in your config folder (`ytm status` prints the path); delete that file to reset.
 
 Re-running is always safe: finished tracks are skipped, temporary failures retry, and tracks YouTube says are unavailable are remembered (`--retry` tries them again). Files already named `... [id].ext` from an older run are recognised too.
 
@@ -70,7 +77,7 @@ MIT licensed.
 Any video, playlist or album URL works, and you can pass several at once:
 
 ```
-ytm https://music.youtube.com/playlist?list=... https://youtu.be/dQw4w9WgXcQ -o ~/Music
+ytm "https://music.youtube.com/playlist?list=..." "https://youtu.be/dQw4w9WgXcQ" -o ~/Music
 ```
 
 ## Proton VPN (optional, much faster)

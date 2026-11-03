@@ -148,8 +148,9 @@ func fetchChunk(ctx context.Context, client *http.Client, r *Resolved, f *os.Fil
 			continue
 		}
 		want := end - start + 1
-		if resp.StatusCode == http.StatusOK && resp.ContentLength > want+1 {
-			// Server ignored the range and is sending the whole file: not usable in chunks.
+		if resp.StatusCode == http.StatusOK && (start > 0 || resp.ContentLength > want+1) {
+			// Server ignored the range and is sending the file from the start: writing it
+			// at this offset would silently corrupt the track.
 			resp.Body.Close()
 			return errUnfetchable
 		}
