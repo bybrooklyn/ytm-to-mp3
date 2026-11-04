@@ -10,10 +10,11 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
 )
 
-// goLookup reports whether lookups try the native player API first (YTM_RESOLVER=go).
-// yt-dlp stays the default until the native path has proven itself; it is always the
+// goLookup reports whether lookups try the native player API first: the default since it
+// did 120 songs through 6 VPN exits in 37 s with no failures, against 3-4 minutes with
+// yt-dlp lookups (2026-11-04). YTM_RESOLVER=yt-dlp turns it off; yt-dlp is always the
 // fallback for whatever the native path can't handle.
-func goLookup() bool { return strings.EqualFold(os.Getenv("YTM_RESOLVER"), "go") }
+func goLookup() bool { return !strings.EqualFold(os.Getenv("YTM_RESOLVER"), "yt-dlp") }
 
 // resolveGo looks t up with one player API request on the least-loaded exit: about 0.2 s,
 // against ~2 s for a yt-dlp process. Any failure (bot check, age gate, no plain audio

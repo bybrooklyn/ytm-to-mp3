@@ -13,6 +13,7 @@ import (
 
 	"charm.land/huh/v2"
 
+	"github.com/bybrooklyn/ytm-to-mp3/internal/browsercookies"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
@@ -46,29 +47,59 @@ func premiumSetup(ctx context.Context, u *ui.UI) error {
 		cfg.Premium = false
 		return cfg.Save()
 	}
+	browsers := browsercookies.Detect()
+	var sources []huh.Option[string]
+	for _, b := range browsers {
+		label := "Import from " + b.Name
+		if b.Note != "" {
+			label += " (" + b.Note + ")"
+		}
+		sources = append(sources, huh.NewOption(label, b.ID))
+	}
+	sources = append(sources, huh.NewOption("Use a cookies.txt file", "file"))
 	var accept bool
-	var path string
+	source, path := sources[0].Value, ""
 	err := huh.NewForm(
 		huh.NewGroup(huh.NewNote().Title("YouTube Premium upgrade").Description(premiumWarning),
 			huh.NewConfirm().Title("Turn it on anyway?").Affirmative("Yes, I understand").Negative("No").Value(&accept)),
-		huh.NewGroup(huh.NewInput().Title("Your YouTube cookies file (cookies.txt)").
-			Description("How to get it safely (yt-dlp's advice): open a private/incognito window, sign in to\nYouTube Music, export the youtube.com cookies with a \"cookies.txt\" browser extension,\nthen CLOSE the private window (opening YouTube there again invalidates them).").
-			Value(&path).Validate(func(s string) error { return checkCookies(config.ExpandPath(strings.Trim(s, `"' `))) })).
+		huh.NewGroup(huh.NewSelect[string]().Title("Where should ytm get your YouTube sign-in from?").
+			Description("Sign in to music.youtube.com in that browser first (with the Premium account).\nImporting copies its current session: YouTube rotates those cookies while the browser\nhas YouTube open, so you may have to import again now and then. A cookies.txt exported\nfrom a private window you then close lasts longer (yt-dlp's advice).").
+			Options(sources...).Value(&source)).
 			WithHideFunc(func() bool { return !accept }),
+		huh.NewGroup(huh.NewInput().Title("Your YouTube cookies file (cookies.txt)").
+			Description("Open a private/incognito window, sign in to YouTube Music, export the youtube.com\ncookies with a \"cookies.txt\" browser extension, then CLOSE the private window.").
+			Value(&path).Validate(func(s string) error { return checkCookies(config.ExpandPath(strings.Trim(s, `"' `))) })).
+			WithHideFunc(func() bool { return !accept || source != "file" }),
 	).RunWithContext(ctx)
 	if err != nil || !accept {
 		return err
 	}
-	b, err := os.ReadFile(config.ExpandPath(strings.Trim(path, `"' `)))
-	if err != nil {
-		return err
-	}
 	dst := config.PremiumCookiesPath()
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		return err
-	}
-	if err := os.WriteFile(dst, b, 0o600); err != nil {
-		return err
+	if source == "file" {
+		b, err := os.ReadFile(config.ExpandPath(strings.Trim(path, `"' `)))
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, b, 0o600); err != nil {
+			return err
+		}
+	} else {
+		var cs []browsercookies.Cookie
+		for _, b := range browsers {
+			if b.ID == source {
+				fmt.Printf("  Reading %s's cookies (your keyring may ask for permission)...\n", b.Name)
+				if cs, err = b.Import(); err != nil {
+					return err
+				}
+			}
+		}
+		if err := browsercookies.WriteNetscape(dst, cs); err != nil {
+			return err
+		}
+		fmt.Printf("  %s✓%s %d YouTube cookies imported\n", cGreen, cReset, len(cs))
 	}
 	cfg.Premium = true
 	if err := cfg.Save(); err != nil {
