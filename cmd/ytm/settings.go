@@ -30,6 +30,7 @@ const (
 	rowJobs
 	rowCountries
 	rowPremium
+	rowApple
 	rowTest
 )
 
@@ -57,6 +58,7 @@ var settingsRows = []struct {
 	{rowJobs, "Parallel downloads"},
 	{rowCountries, "Exit countries"},
 	{rowPremium, "YouTube Premium"},
+	{rowApple, "Apple Music"},
 	{rowTest, "Test VPN"},
 }
 
@@ -65,6 +67,7 @@ var settingsRows = []struct {
 type settingsModel struct {
 	cfg      config.Config
 	signedIn bool
+	appleIn  bool // an Apple Music login is saved
 	user     string
 	cur      int
 
@@ -186,6 +189,12 @@ func (m *settingsModel) activate() tea.Cmd {
 		return tea.Quit
 	case rowPremium:
 		m.action = "premium"
+		return tea.Quit
+	case rowApple:
+		m.action = "applein"
+		if m.appleIn {
+			m.action = "appleout"
+		}
 		return tea.Quit
 	}
 	return nil
@@ -316,6 +325,11 @@ func (m *settingsModel) value(k rowKind) (val, hint string, dim bool) {
 			return "on (upgrade pass only)", "enter to turn off", false
 		}
 		return "off", "experimental: enter to read the warning and turn on", false
+	case rowApple:
+		if m.appleIn {
+			return "signed in (store " + strings.ToUpper(orDefault(m.cfg.AppleStorefront, "us")) + ")", "enter to sign out", false
+		}
+		return "not signed in", "optional: 256 kbps AAC with your Apple Music subscription; enter to sign in", false
 	case rowTest:
 		if !m.signedIn {
 			return "", "sign in first", true
@@ -414,6 +428,7 @@ func runSettings(ctx context.Context, u *ui.UI) error {
 			user = pc.Session.Username
 		}
 		m := newSettingsModel(cfg, pc.SignedIn(), user, cur)
+		m.appleIn = appleSignedIn()
 		final, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 		if err != nil {
 			return err
@@ -441,6 +456,14 @@ func runSettings(ctx context.Context, u *ui.UI) error {
 			}
 		case "premium":
 			if err := premiumSetup(ctx, u); err != nil {
+				fmt.Println("  ✗", err)
+			}
+		case "applein":
+			if err := appleLogin(ctx, u); err != nil {
+				fmt.Println("  ✗", err)
+			}
+		case "appleout":
+			if err := appleLogout(u); err != nil {
 				fmt.Println("  ✗", err)
 			}
 		case "test":

@@ -50,12 +50,12 @@ func TestLiveCatalog(t *testing.T) {
 	}
 
 	// Library-style match.
-	m, ok, err := c.Match(ctx, "The Less I Know The Better", "Tame Impala", "Currents", 0)
+	m, ok, err := c.Match(ctx, Query{Title: "The Less I Know The Better", Artists: []string{"Tame Impala"}, Album: "Currents"})
 	if err != nil {
 		t.Fatalf("Match: %v", err)
 	}
 	if !ok {
 		t.Fatal("Match found nothing for a known song")
 	}
-	t.Logf("match: %q by %q (id %s, isrc %s)", m.Title, m.Artist, m.ID, m.ISRC)
+	t.Logf("match: %q by %q (id %s, isrc %s, score %.2f, sure %v)", m.Track.Title, m.Track.Artist, m.Track.ID, m.Track.ISRC, m.Score, m.Sure)
 }

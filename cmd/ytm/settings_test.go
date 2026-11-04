@@ -204,6 +204,19 @@ func TestActionsAndQuit(t *testing.T) {
 	if m5.action != "premium" {
 		t.Fatalf("premium row: action=%q", m5.action)
 	}
+	m6, _, _ := testModel(false)
+	m6.cur = int(rowApple)
+	press(m6, "enter")
+	if m6.action != "applein" {
+		t.Fatalf("apple row signed out: action=%q", m6.action)
+	}
+	m7, _, _ := testModel(false)
+	m7.appleIn = true
+	m7.cur = int(rowApple)
+	press(m7, "enter")
+	if m7.action != "appleout" {
+		t.Fatalf("apple row signed in: action=%q", m7.action)
+	}
 	m4, _, _ := testModel(true)
 	press(m4, "esc")
 	if !m4.done {

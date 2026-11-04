@@ -11,6 +11,7 @@ import (
 
 	"charm.land/huh/v2"
 
+	"github.com/bybrooklyn/ytm-to-mp3/internal/apple"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/export"
@@ -44,6 +45,7 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 		err := one(ctx, huh.NewSelect[string]().Title("What do you want to do?").Options(
 			huh.NewOption("Download my YouTube Music library", "library"),
 			huh.NewOption("Download a link (video, playlist or album)", "link"),
+			huh.NewOption("Apple Music...", "apple"),
 			huh.NewOption("Settings", "settings"),
 			huh.NewOption("More tools...", "tools"),
 			huh.NewOption("Quit", "quit"),
@@ -63,6 +65,8 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 			continue // settings are saved as you go; straight back to the menu
 		case "tools":
 			err = toolsMenu(ctx, u, o)
+		case "apple":
+			err = appleMenu(ctx, u, o)
 		default:
 			return nil
 		}
@@ -178,12 +182,32 @@ func tilde(p string) string {
 
 // libraryFlow finds (or helps get) a Takeout export, shows what's in it, and downloads it.
 func libraryFlow(ctx context.Context, u *ui.UI, o opts) error {
+	src, err := chooseExport(ctx, u)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("\n  \x1b[32m✓\x1b[0m %d tracks (%d with song details) in %s\n    saving to %s as %s\n\n",
+		src.Tracks, src.WithMeta, src.Name(), tilde(o.out), o.format)
+	fmt.Printf("    %s%s%s\n\n", cDim, extras(o), cReset)
+	go_ := true
+	if err := one(ctx, huh.NewConfirm().Title("Download?").Affirmative("Download").Negative("Back").Value(&go_)); err != nil {
+		return err
+	}
+	if !go_ {
+		return errBack
+	}
+	return download(ctx, u, o, src.Paths...)
+}
+
+// chooseExport finds the YouTube Music exports on this computer and lets you pick one
+// (or another file, or shows how to get one). errBack = backed out.
+func chooseExport(ctx context.Context, u *ui.UI) (takeout.Source, error) {
 	var srcs []takeout.Source
 	if err := working(ctx, "Looking for your export in Downloads, Desktop and Documents...", func(context.Context) error {
 		srcs = takeout.Discover(export.SearchDirs())
 		return nil
 	}); err != nil {
-		return err
+		return takeout.Source{}, err
 	}
 
 	var opts []huh.Option[string]
@@ -203,46 +227,26 @@ func libraryFlow(ctx context.Context, u *ui.UI, o opts) error {
 	}
 	var choice string
 	if err := one(ctx, huh.NewSelect[string]().Title(title).Description(desc).Options(opts...).Value(&choice)); err != nil {
-		return err
+		return takeout.Source{}, err
 	}
 
-	var src takeout.Source
 	switch choice {
 	case "back":
-		return errBack
+		return takeout.Source{}, errBack
 	case "pick":
-		s, err := askForExport(ctx)
-		if err != nil {
-			return err
-		}
-		src = s
+		return askForExport(ctx)
 	case "guide":
 		p, err := export.Guide(ctx, u)
 		if err != nil {
-			return err
+			return takeout.Source{}, err
 		}
 		var s takeout.Source
-		if err := working(ctx, "Reading it...", func(context.Context) (e error) { s, e = takeout.Inspect([]string{p}); return }); err != nil {
-			return err
-		}
-		src = s
-	default:
-		var i int
-		fmt.Sscan(choice, &i)
-		src = srcs[i]
+		err = working(ctx, "Reading it...", func(context.Context) (e error) { s, e = takeout.Inspect([]string{p}); return })
+		return s, err
 	}
-
-	fmt.Printf("\n  \x1b[32m✓\x1b[0m %d tracks (%d with song details) in %s\n    saving to %s as %s\n\n",
-		src.Tracks, src.WithMeta, src.Name(), tilde(o.out), o.format)
-	fmt.Printf("    %s%s%s\n\n", cDim, extras(o), cReset)
-	go_ := true
-	if err := one(ctx, huh.NewConfirm().Title("Download?").Affirmative("Download").Negative("Back").Value(&go_)); err != nil {
-		return err
-	}
-	if !go_ {
-		return errBack
-	}
-	return download(ctx, u, o, src.Paths...)
+	var i int
+	fmt.Sscan(choice, &i)
+	return srcs[i], nil
 }
 
 func describeSource(s takeout.Source) string {
@@ -292,18 +296,26 @@ func askForExport(ctx context.Context) (takeout.Source, error) {
 	return found, err
 }
 
-// linkFlow asks for one or more YouTube links and downloads them.
+// linkFlow asks for one or more YouTube (or Apple Music) links and downloads them.
 func linkFlow(ctx context.Context, u *ui.UI, o opts) error {
 	var in string
 	var links []string
 	if err := one(ctx, huh.NewInput().Title("Paste a link").
-		Description("A video, playlist or album from YouTube or YouTube Music. Several links separated by spaces work too.").
+		Description("A video, playlist or album from YouTube or YouTube Music, or an Apple Music album, song\nor playlist (needs your Apple Music sign-in). Several links separated by spaces work too.").
 		Value(&in).Validate(func(s string) error {
 		links = links[:0]
 		for _, f := range strings.Fields(s) {
-			l, ok := asURL(strings.Trim(f, `"'`))
+			f = strings.Trim(f, `"'`)
+			if apple.IsURL(f) {
+				if !appleSignedIn() {
+					return errors.New("sign in to Apple Music first (Apple Music... in the menu)")
+				}
+				links = append(links, f)
+				continue
+			}
+			l, ok := asURL(f)
 			if !ok {
-				return fmt.Errorf("%q isn't a YouTube link", f)
+				return fmt.Errorf("%q isn't a YouTube or Apple Music link", f)
 			}
 			links = append(links, l)
 		}

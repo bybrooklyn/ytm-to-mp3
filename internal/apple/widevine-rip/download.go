@@ -22,19 +22,22 @@ const (
 // Progress, when set, receives the number of bytes read as downloads proceed.
 // It lets the host render progress through its own UI; the vendored upstream
 // drew a terminal progress bar here, which does not fit ytm's live display.
-var Progress func(n int)
+var Progress func(ctx context.Context, n, total int64)
 
-func reportProgress(n int) {
+func reportProgress(ctx context.Context, n, total int64) {
 	if Progress != nil {
-		Progress(n)
+		Progress(ctx, n, total)
 	}
 }
 
 // progressWriter reports bytes written through the Progress hook.
-type progressWriter struct{}
+type progressWriter struct {
+	ctx   context.Context
+	total int64
+}
 
-func (progressWriter) Write(p []byte) (int, error) {
-	reportProgress(len(p))
+func (w progressWriter) Write(p []byte) (int, error) {
+	reportProgress(w.ctx, int64(len(p)), w.total)
 	return len(p), nil
 }
 
@@ -67,7 +70,7 @@ func DownloadStream(ctx context.Context, stream Stream, outputPath string) error
 	err = download.DownloadSegments(ctx, download.Client, stream.URLs, tempFile, download.SegmentConfig{
 		Concurrency: streamDownloadConcurrency,
 		MaxRetries:  streamDownloadMaxRetries,
-		Progress:    reportProgress,
+		Progress:    func(n int) { reportProgress(ctx, int64(n), 0) },
 	})
 	if err != nil {
 		return fmt.Errorf("download stream: %w", err)
@@ -131,7 +134,7 @@ func downloadWithProgress(ctx context.Context, url string) (*bytes.Buffer, error
 	}
 
 	var buffer bytes.Buffer
-	if _, err := buffer.ReadFrom(io.TeeReader(resp.Body, progressWriter{})); err != nil {
+	if _, err := buffer.ReadFrom(io.TeeReader(resp.Body, progressWriter{ctx, resp.ContentLength})); err != nil {
 		return nil, fmt.Errorf("download media: %w", err)
 	}
 	return &buffer, nil

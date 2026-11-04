@@ -42,6 +42,7 @@ ytm export                   guide me through getting the export
 ytm tag <folder>             improve metadata (preview; add --apply to write, --undo to revert)
 ytm update                   refresh yt-dlp
 ytm version                  (or --version)
+ytm apple ...                Apple Music with your own subscription (see below)
 ```
 
 Options: `-o DIR` (default `~/Music`), `-f mp3|m4a|opus|flac`, `-j N` max parallel downloads, `--no-vpn`, `--connections N` (VPN exits this run), `--dry-run`, `--retry`, `--albums` (also the rest of every album you have a song from; `--albums-min N` limits it to albums with N or more of your songs), `--all`. Flags can go before or after the command.
@@ -68,6 +69,19 @@ Re-running is always safe: finished tracks are skipped, temporary failures retry
 Normal downloads never use your Google account or browser cookies. When YouTube blocks or throttles an exit, ytm drops that location, remembers it as blocked, and carries on from a different one.
 
 If you have YouTube Premium you can optionally turn on the **Premium upgrade** (settings, or the menu): it re-downloads songs you already have at Premium quality (Opus or AAC at about 256 kbps), replacing each file in place. It is **experimental and uses your account**: YouTube can flag or ban accounts it thinks are bulk-downloading, so it goes slowly (one song at a time, 5-10 s apart, one VPN exit, at most 300 per run, `--premium-limit N`), never re-downloads a song at the same quality, and stops at the first bot check. YouTube doesn't always offer the Premium streams; songs without one are left alone. Use a spare Premium account if you can. ytm can import the sign-in straight from Firefox (and Zen, LibreWolf, Waterfox) or a Chromium-based browser (Chrome, Chromium, Brave, Vivaldi, Edge, Opera; on Linux the key comes from your KWallet or GNOME keyring, which may ask first), reading only youtube.com cookies. Or give it a `cookies.txt` exported from a private browser window that you then close (yt-dlp's advice; it lasts longer, because YouTube rotates the cookies of an open browser session). Chrome, Edge and Brave 127+ on Windows lock their cookies away from other apps: use a cookies.txt or Firefox there. ytm keeps its copy in its config folder, readable only by you.
+
+## Apple Music (optional, your own subscription)
+
+With an Apple Music subscription, ytm can download songs as **256 kbps AAC** (`.m4a`), decrypted locally with your account. Lossless (ALAC) is not available this way. Sign in from **Apple Music...** in the menu, the settings screen, or `ytm apple login`: ytm finds a live music.apple.com session in Firefox or a Chromium-based browser, checks it with Apple and picks up your country's store.
+
+```
+ytm apple <link>...          an Apple Music album, song or playlist (plain `ytm <link>` works too)
+ytm apple match [export]     find your YouTube library on Apple Music and download it as AAC
+ytm apple status | logout
+```
+
+- **Library match** looks every song up once (the answers are kept in the music folder's `.ytm` database), ignoring YouTube's upload noise ("Official Audio", "- Topic"). It refuses a different version: a live, remix, instrumental or sped-up recording doesn't count as the song. It shows how many it found, sure and less certain, and lists the less certain ones and the misses in `.ytm/apple-match.txt`. Then you choose: only the sure matches or all of them (`--maybe`), and **next to** the YouTube copies (same name, `.m4a`) or **instead of** them (`--replace`: each YouTube file moves to `.ytm/replaced/`, and later library runs won't fetch it from YouTube again). `--dry-run` stops after the preview.
+- Songs are named like the YouTube downloads (`Artist/Album/01 - Title.m4a`), with Apple's tags, cover art, genre and a link back in the comment tag. Several download at once over your VPN exits. A song that fails on the network is retried on another exit, and a song Apple doesn't offer your account is remembered and skipped. Catalog lookups are paced per exit, because Apple rate-limits quick searches.
 
 ## Metadata
 

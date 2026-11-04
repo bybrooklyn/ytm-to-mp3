@@ -94,6 +94,8 @@ type opts struct {
 	premiumLimit   int
 	// after a download: fix the new songs' tags, and run the Premium upgrade if signed in
 	tagAfter, premiumAfter bool
+	// ytm apple match: replace the YouTube copies; also take the less certain matches
+	replace, maybe bool
 }
 
 func parse(name string, args []string) (opts, []string, error) {
@@ -120,6 +122,8 @@ func parse(name string, args []string) (opts, []string, error) {
 	fs.IntVar(&o.premiumLimit, "premium-limit", 300, "")
 	fs.BoolVar(&o.tagAfter, "tag-after", false, "")
 	fs.BoolVar(&o.premiumAfter, "premium-after", false, "")
+	fs.BoolVar(&o.replace, "replace", false, "")
+	fs.BoolVar(&o.maybe, "maybe", false, "")
 	// Go's flag package stops at the first positional; keep going so flags may follow it.
 	var pos []string
 	for {

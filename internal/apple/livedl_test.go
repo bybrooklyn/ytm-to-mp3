@@ -36,7 +36,7 @@ func TestLiveDownload(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		if err := cand.Verify(ctx); err != nil {
+		if _, err := cand.Verify(ctx); err != nil {
 			t.Logf("%s: login expired (%v)", b.Name, err)
 			continue
 		}

@@ -48,7 +48,7 @@ func Open(dir string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1) // single writer; the workload is tiny
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.Exec(schema + appleSchema); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -389,6 +389,9 @@ func (s *Store) SetPath(id, path string) error {
 
 // MovePath records that a file moved (e.g. renamed by `ytm tag`).
 func (s *Store) MovePath(from, to string) error {
-	_, err := s.db.Exec(`UPDATE tracks SET path=? WHERE path=?`, to, from)
+	if _, err := s.db.Exec(`UPDATE tracks SET path=? WHERE path=?`, to, from); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE apple_tracks SET path=? WHERE path=?`, to, from)
 	return err
 }

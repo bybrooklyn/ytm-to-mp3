@@ -1,6 +1,7 @@
 package ampapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +11,7 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/apple/download"
 )
 
-func GetPlaylistResp(storefront string, id string, language string, token string) (*PlaylistResp, error) {
+func GetPlaylistResp(ctx context.Context, storefront string, id string, language string, token string) (*PlaylistResp, error) {
 	var err error
 	if token == "" {
 		token, err = GetToken()
@@ -19,7 +20,7 @@ func GetPlaylistResp(storefront string, id string, language string, token string
 		}
 	}
 
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://amp-api.music.apple.com/v1/catalog/%s/playlists/%s", storefront, id), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://amp-api.music.apple.com/v1/catalog/%s/playlists/%s", storefront, id), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +53,7 @@ func GetPlaylistResp(storefront string, id string, language string, token string
 	if len(obj.Data[0].Relationships.Tracks.Next) > 0 {
 		next := obj.Data[0].Relationships.Tracks.Next
 		for {
-			obj2, err := fetchTrackPage(next, token)
+			obj2, err := fetchTrackPage(ctx, next, token)
 			if err != nil {
 				return nil, err
 			}

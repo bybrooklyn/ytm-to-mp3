@@ -45,6 +45,16 @@ type Credentials struct {
 	// header value. The MZPlay webPlayback/license endpoints need the iTunes
 	// store-session cookies (dssid2, dssf, ...), not just the media-user-token.
 	Cookie string
+	// StoreFront is the X-Apple-Store-Front value of the account's country
+	// ("143441-1,25" is the US); "" = the US.
+	StoreFront string
+}
+
+func (c Credentials) storeFront() string {
+	if c.StoreFront != "" {
+		return c.StoreFront
+	}
+	return appleStoreFront
 }
 
 // mediaHeaders returns the browser-like headers Apple expects for media requests.
@@ -54,7 +64,7 @@ func (c Credentials) mediaHeaders() map[string]string {
 		"Origin":              appleOrigin,
 		"Referer":             appleReferer,
 		"Accept":              "application/vnd.apple.mpegurl,application/x-mpegURL,text/plain;q=0.8,*/*;q=0.5",
-		"X-Apple-Store-Front": appleStoreFront,
+		"X-Apple-Store-Front": c.storeFront(),
 	}
 	if c.MediaUserToken != "" {
 		headers["x-apple-music-user-token"] = c.MediaUserToken

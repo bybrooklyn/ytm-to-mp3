@@ -1,6 +1,7 @@
 package ampapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -52,7 +53,7 @@ type ArtistResults struct {
 }
 
 // Search performs a search query against the Apple Music API.
-func Search(storefront, term, types, language, token string, limit, offset int) (*SearchResp, error) {
+func Search(ctx context.Context, storefront, term, types, language, token string, limit, offset int) (*SearchResp, error) {
 	var err error
 	if token == "" {
 		token, err = GetToken()
@@ -61,7 +62,7 @@ func Search(storefront, term, types, language, token string, limit, offset int) 
 		}
 	}
 
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://amp-api.music.apple.com/v1/catalog/%s/search", storefront), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://amp-api.music.apple.com/v1/catalog/%s/search", storefront), nil)
 	if err != nil {
 		return nil, err
 	}

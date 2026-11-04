@@ -12,12 +12,15 @@ package apple
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 
 	ampapi "github.com/bybrooklyn/ytm-to-mp3/internal/apple/amp-api"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/apple/download"
@@ -32,30 +35,48 @@ var ErrNotAppleURL = errors.New("not an Apple Music URL")
 // track (e.g. not in the account's storefront, or not streamable).
 var ErrUnavailable = widevinerip.ErrUnavailable
 
+// ErrLogin reports that Apple rejected the saved login: nothing else will work until
+// the user signs in again.
+var ErrLogin = errors.New("Apple rejected the login; sign in again at music.apple.com and re-run ytm apple login")
+
 // Track is one Apple Music song: its catalog adamID plus the metadata needed
 // to name and tag the output file.
 type Track struct {
-	ID             string // Apple catalog adamID
-	Title          string
-	Artist         string
-	Album          string
-	AlbumArtist    string
-	TrackNumber    int
-	DiscNumber     int
-	DurationMillis int
-	ISRC           string
-	ReleaseDate    string
-	ArtworkURL     string // template URL containing {w}x{h}
-	Storefront     string
+	ID             string `json:"id"` // Apple catalog adamID
+	Title          string `json:"title"`
+	Artist         string `json:"artist"`
+	Album          string `json:"album"`
+	AlbumArtist    string `json:"album_artist"`
+	TrackNumber    int    `json:"track"`
+	TrackCount     int    `json:"track_count,omitempty"` // tracks on the album, when known
+	DiscNumber     int    `json:"disc"`
+	DurationMillis int    `json:"duration_ms"`
+	ISRC           string `json:"isrc,omitempty"`
+	ReleaseDate    string `json:"date,omitempty"`
+	Genre          string `json:"genre,omitempty"`
+	ArtworkURL     string `json:"artwork,omitempty"` // template URL containing {w}x{h}
+	Storefront     string `json:"storefront"`
 }
 
-// Client talks to Apple Music as a signed-in user.
+// URL is the song's page on music.apple.com (kept in the comment tag, like ytm keeps
+// the YouTube link).
+func (t Track) URL() string {
+	sf := t.Storefront
+	if sf == "" {
+		sf = "us"
+	}
+	return "https://music.apple.com/" + sf + "/song/" + t.ID
+}
+
+// Client talks to Apple Music as a signed-in user. It is safe for concurrent use.
 type Client struct {
 	mediaUserToken string
 	cookie         string // full apple cookie jar (Cookie header), optional
 	storefront     string
 	language       string
-	bearer         string // developer token, auto-fetched and cached
+
+	mu     sync.Mutex
+	bearer string // developer token, auto-fetched and cached
 }
 
 // New builds a client. mediaUserToken is the user's login (the
@@ -78,18 +99,30 @@ func New(mediaUserToken, cookie, storefront, language string) (*Client, error) {
 	}, nil
 }
 
+// Storefront is the account's country code ("us").
+func (c *Client) Storefront() string { return c.storefront }
+
 // SetProxy routes all Apple Music traffic through proxyURL (e.g. a Proton
-// exit's "socks5://host:port"). Empty means a direct connection. It must be
-// called before any request; it configures a process-wide HTTP client.
+// exit's "socks5://host:port") unless a request's context names another exit
+// (WithExit). Empty means a direct connection.
 func SetProxy(proxyURL string) error { return download.Init(proxyURL) }
 
-// SetProgress registers a callback that receives bytes as downloads proceed,
-// so the host can render progress through its own UI.
-func SetProgress(fn func(n int)) { widevinerip.Progress = fn }
+// WithExit returns a context whose Apple requests go through proxyURL, so several
+// downloads can run at once over different exits.
+func WithExit(ctx context.Context, proxyURL string) context.Context {
+	return download.WithProxy(ctx, proxyURL)
+}
+
+// SetProgress registers a callback that receives bytes as downloads proceed (with the
+// download's context, so the host can tell songs apart, and its size when known), so
+// the host can render progress through its own UI.
+func SetProgress(fn func(ctx context.Context, n, total int64)) { widevinerip.Progress = fn }
 
 // creds returns the Apple credentials, fetching and caching the developer
 // bearer token on first use.
-func (c *Client) creds() (widevinerip.Credentials, error) {
+func (c *Client) creds(ctx context.Context) (widevinerip.Credentials, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.bearer == "" {
 		tok, err := ampapi.GetToken()
 		if err != nil {
@@ -100,12 +133,13 @@ func (c *Client) creds() (widevinerip.Credentials, error) {
 		}
 		c.bearer = tok
 	}
-	return widevinerip.Credentials{AuthToken: c.bearer, MediaUserToken: c.mediaUserToken, Cookie: c.cookie}, nil
+	return widevinerip.Credentials{AuthToken: c.bearer, MediaUserToken: c.mediaUserToken, Cookie: c.cookie,
+		StoreFront: storefrontHeader(c.storefront)}, nil
 }
 
 // token returns the cached developer bearer token, fetching it if needed.
-func (c *Client) token() (string, error) {
-	cr, err := c.creds()
+func (c *Client) token(ctx context.Context) (string, error) {
+	cr, err := c.creds(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -113,17 +147,17 @@ func (c *Client) token() (string, error) {
 }
 
 // Verify checks the login is a live session by calling an authenticated
-// endpoint (the account's storefront). It returns a short human-readable error
-// when Apple rejects the credentials, so a stale token is caught before a
-// download reports a confusing "Unavailable".
-func (c *Client) Verify(ctx context.Context) error {
-	cr, err := c.creds()
+// endpoint, and returns the account's storefront (country code) as Apple reports
+// it. It returns ErrLogin when Apple rejects the credentials, so a stale token is
+// caught before a download reports a confusing "Unavailable".
+func (c *Client) Verify(ctx context.Context) (storefront string, err error) {
+	cr, err := c.creds(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://amp-api.music.apple.com/v1/me/storefront", nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+cr.AuthToken)
 	req.Header.Set("Music-User-Token", cr.MediaUserToken)
@@ -135,28 +169,78 @@ func (c *Client) Verify(ctx context.Context) error {
 	}
 	resp, err := download.Client.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusOK {
-		return nil
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return "", fmt.Errorf("%w (%s)", ErrLogin, resp.Status)
+	case resp.StatusCode != http.StatusOK:
+		return "", fmt.Errorf("Apple: %s", resp.Status)
 	}
-	return fmt.Errorf("Apple rejected the login (%s); sign in again at music.apple.com and re-run ytm apple login", resp.Status)
+	var body struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&body) == nil && len(body.Data) > 0 && validStorefront(body.Data[0].ID) {
+		storefront = strings.ToLower(body.Data[0].ID)
+		c.storefront = storefront
+	}
+	return storefront, nil
 }
+
+var storefrontRe = regexp.MustCompile(`^[A-Za-z]{2}$`)
+
+func validStorefront(s string) bool { return storefrontRe.MatchString(s) }
 
 // browserUA is the user agent the Apple web player sends.
 const browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 
-// Download fetches track t as 256 kbps AAC and writes it to destPath (.m4a).
+// Download fetches track t as 256 kbps AAC and writes it to destPath (.m4a). The exit
+// is the one on ctx (WithExit), else the SetProxy default.
 func (c *Client) Download(ctx context.Context, t Track, destPath string) error {
-	cr, err := c.creds()
+	cr, err := c.creds(ctx)
 	if err != nil {
 		return err
 	}
-	if err := widevinerip.DownloadSong(ctx, t.ID, destPath, cr, ""); err != nil {
-		return err
+	return widevinerip.DownloadSong(ctx, t.ID, destPath, cr, "")
+}
+
+// Permanent reports whether a download error will not go away by retrying (the song
+// has no stream for this account, or the license was refused for it).
+func Permanent(err error) bool {
+	if err == nil {
+		return false
 	}
-	return nil
+	return errors.Is(err, ErrUnavailable) || strings.Contains(err.Error(), "license rejected")
+}
+
+// RateLimited reports whether Apple refused a request for coming too fast (HTTP 429).
+// The catalog search keeps refusing an address for a long while once it does, so
+// retrying right away doesn't help.
+func RateLimited(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "429")
+}
+
+// Transient reports whether retrying (ideally over another exit) may help: network
+// trouble, timeouts, rate limits and server errors.
+func Transient(err error) bool {
+	if err == nil || Permanent(err) || errors.Is(err, ErrLogin) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var ne net.Error
+	if errors.As(err, &ne) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	s := err.Error()
+	for _, m := range []string{"429", "500", "502", "503", "504", "EOF", "connection reset", "timeout",
+		"no such host", "connection refused", "socks", "unexpected end", "parse response"} {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // --- URL handling ----------------------------------------------------------
@@ -184,23 +268,22 @@ func IsURL(link string) bool {
 // ResolveURL expands an Apple Music album, song or playlist link into its
 // tracks. An album link with "?i=<songID>" resolves to just that track.
 func (c *Client) ResolveURL(ctx context.Context, link string) ([]Track, error) {
-	token, err := c.token()
+	token, err := c.token(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// A single track addressed as album/...?i=<id>.
 	if m := urlPatterns["album"].FindStringSubmatch(link); m != nil {
 		storefront, albumID := m[1], m[2]
 		if i := songIDParam(link); i != "" {
-			return c.resolveSong(storefront, i, token)
+			return c.resolveSong(ctx, storefront, i, token)
 		}
-		return c.resolveAlbum(storefront, albumID, token)
+		return c.resolveAlbum(ctx, storefront, albumID, token)
 	}
 	if m := urlPatterns["song"].FindStringSubmatch(link); m != nil {
-		return c.resolveSong(m[1], m[2], token)
+		return c.resolveSong(ctx, m[1], m[2], token)
 	}
 	if m := urlPatterns["playlist"].FindStringSubmatch(link); m != nil {
-		return c.resolvePlaylist(m[1], m[2], token)
+		return c.resolvePlaylist(ctx, m[1], m[2], token)
 	}
 	return nil, ErrNotAppleURL
 }
@@ -213,10 +296,18 @@ func songIDParam(link string) string {
 	return u.Query().Get("i")
 }
 
-func (c *Client) resolveSong(storefront, songID, token string) ([]Track, error) {
-	resp, err := ampapi.GetSongResp(storefront, songID, c.language, token)
+// apiErr turns a catalog error into ErrLogin when Apple refused the tokens.
+func apiErr(err error) error {
+	if err != nil && (strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "403")) {
+		return fmt.Errorf("%w (%v)", ErrLogin, err)
+	}
+	return err
+}
+
+func (c *Client) resolveSong(ctx context.Context, storefront, songID, token string) ([]Track, error) {
+	resp, err := ampapi.GetSongResp(ctx, storefront, songID, c.language, token)
 	if err != nil {
-		return nil, err
+		return nil, apiErr(err)
 	}
 	if len(resp.Data) == 0 {
 		return nil, ErrUnavailable
@@ -227,28 +318,37 @@ func (c *Client) resolveSong(storefront, songID, token string) ([]Track, error) 
 		ID: d.ID, Title: a.Name, Artist: a.ArtistName, Album: a.AlbumName,
 		AlbumArtist: a.ArtistName, TrackNumber: a.TrackNumber, DiscNumber: a.DiscNumber,
 		DurationMillis: a.DurationInMillis, ISRC: a.Isrc, ReleaseDate: a.ReleaseDate,
-		ArtworkURL: a.Artwork.URL, Storefront: storefront,
+		Genre: firstGenre(a.GenreNames), ArtworkURL: a.Artwork.URL, Storefront: storefront,
 	}
 	return []Track{t}, nil
 }
 
-func (c *Client) resolveAlbum(storefront, albumID, token string) ([]Track, error) {
-	resp, err := ampapi.GetAlbumResp(storefront, albumID, c.language, token)
+func (c *Client) resolveAlbum(ctx context.Context, storefront, albumID, token string) ([]Track, error) {
+	resp, err := ampapi.GetAlbumResp(ctx, storefront, albumID, c.language, token)
 	if err != nil {
-		return nil, err
+		return nil, apiErr(err)
 	}
 	if len(resp.Data) == 0 {
 		return nil, ErrUnavailable
 	}
 	albumArtist := resp.Data[0].Attributes.ArtistName
 	albumName := resp.Data[0].Attributes.Name
-	return tracksFrom(resp.Data[0].Relationships.Tracks.Data, storefront, albumArtist, albumName), nil
+	ts := tracksFrom(resp.Data[0].Relationships.Tracks.Data, storefront, albumArtist, albumName)
+	// The track total per disc, for "NN/TT" in the track tag.
+	perDisc := map[int]int{}
+	for _, t := range ts {
+		perDisc[t.DiscNumber]++
+	}
+	for i := range ts {
+		ts[i].TrackCount = perDisc[ts[i].DiscNumber]
+	}
+	return ts, nil
 }
 
-func (c *Client) resolvePlaylist(storefront, playlistID, token string) ([]Track, error) {
-	resp, err := ampapi.GetPlaylistResp(storefront, playlistID, c.language, token)
+func (c *Client) resolvePlaylist(ctx context.Context, storefront, playlistID, token string) ([]Track, error) {
+	resp, err := ampapi.GetPlaylistResp(ctx, storefront, playlistID, c.language, token)
 	if err != nil {
-		return nil, err
+		return nil, apiErr(err)
 	}
 	if len(resp.Data) == 0 {
 		return nil, ErrUnavailable
@@ -260,6 +360,9 @@ func (c *Client) resolvePlaylist(storefront, playlistID, token string) ([]Track,
 func tracksFrom(data []ampapi.TrackRespData, storefront, albumArtist, albumName string) []Track {
 	out := make([]Track, 0, len(data))
 	for _, d := range data {
+		if d.Type != "" && d.Type != "songs" {
+			continue // music videos in a playlist have no AAC song stream
+		}
 		a := d.Attributes
 		aa := albumArtist
 		if aa == "" {
@@ -273,8 +376,18 @@ func tracksFrom(data []ampapi.TrackRespData, storefront, albumArtist, albumName 
 			ID: d.ID, Title: a.Name, Artist: a.ArtistName, Album: an,
 			AlbumArtist: aa, TrackNumber: a.TrackNumber, DiscNumber: a.DiscNumber,
 			DurationMillis: a.DurationInMillis, ISRC: a.Isrc, ReleaseDate: a.ReleaseDate,
-			ArtworkURL: a.Artwork.URL, Storefront: storefront,
+			Genre: firstGenre(a.GenreNames), ArtworkURL: a.Artwork.URL, Storefront: storefront,
 		})
 	}
 	return out
+}
+
+// firstGenre is the most specific genre Apple lists, skipping the catch-all "Music".
+func firstGenre(gs []string) string {
+	for _, g := range gs {
+		if g != "" && g != "Music" {
+			return g
+		}
+	}
+	return ""
 }
