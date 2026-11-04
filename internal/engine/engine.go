@@ -237,7 +237,9 @@ func (e *engine) swapNow(ctx context.Context, l *lane, why string) {
 	l.gov.Reset(e.startLimit) // a fresh IP starts with a clean slate
 	oldClient.CloseIdleConnections()
 	if ctx.Err() == nil {
-		e.UI.Line(yel+"↻"+reset, fmt.Sprintf("%s blocked (%s), switched to %s", ui.Sanitize(old.Name), why, ui.Sanitize(ex.Name)))
+		if debugOn() { // swaps are routine; the summary counts them
+			e.UI.Line(yel+"↻"+reset, fmt.Sprintf("%s blocked (%s), switched to %s", ui.Sanitize(old.Name), why, ui.Sanitize(ex.Name)))
+		}
 	}
 }
 
@@ -568,7 +570,9 @@ func (e *engine) addLane(x vpn.Exit) {
 	}
 	e.gmu.Unlock()
 	if e.pctx.Err() == nil {
-		e.UI.Line(cyan+"+"+reset, "new exit "+ui.Sanitize(x.Name))
+		if debugOn() {
+			e.UI.Line(cyan+"+"+reset, "new exit "+ui.Sanitize(x.Name))
+		}
 	}
 }
 
@@ -1229,6 +1233,9 @@ func (e *engine) encodeWorker(ctx context.Context, in <-chan *job) {
 		j.lane.done.Add(1)
 		e.tm.record(j.ts, j.lane.exitName(), srcSize, time.Now())
 		label := j.tr.Label()
+		if j.tr.Title == "" && j.res.Title != "" { // a bare link: name it from what YouTube said
+			label = ui.Sanitize(model.Track{Title: j.res.Title, Artists: j.res.Artists}.Label())
+		}
 		if j.music {
 			label += "  (via YouTube Music)"
 		}

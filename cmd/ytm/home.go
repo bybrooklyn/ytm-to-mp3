@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -42,15 +41,11 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 	for {
 		fmt.Println(header(o))
 		var choice string
-		err := one(ctx, huh.NewSelect[string]().Title("What do you want to do?").Description("Library = your Google Takeout export. Link = a video, playlist or album.").Options(
-			huh.NewOption("Import my YouTube Music library", "library"),
-			huh.NewOption("Download a link", "link"),
-			huh.NewOption("Fix tags in my music folder (MusicBrainz)", "tag"),
-			huh.NewOption("Tidy file names (Artist/Album/01 - Title, no [id])", "tidy"),
-			huh.NewOption("Upgrade to YouTube Premium quality (experimental, slow)", "premium"),
+		err := one(ctx, huh.NewSelect[string]().Title("What do you want to do?").Options(
+			huh.NewOption("Download my YouTube Music library", "library"),
+			huh.NewOption("Download a link (video, playlist or album)", "link"),
 			huh.NewOption("Settings", "settings"),
-			huh.NewOption("Update yt-dlp, ffmpeg and deno", "update"),
-			huh.NewOption("Check that everything works", "doctor"),
+			huh.NewOption("More tools...", "tools"),
 			huh.NewOption("Quit", "quit"),
 		).Value(&choice))
 		if err != nil {
@@ -61,26 +56,13 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 			err = libraryFlow(ctx, u, o)
 		case "link":
 			err = linkFlow(ctx, u, o)
-		case "tag":
-			err = tagFlow(ctx, u, o)
-		case "tidy":
-			err = tidyFlow(ctx, u, o)
-		case "premium":
-			if !config.Load().Premium {
-				if err = premiumSetup(ctx, u); err == nil && config.Load().Premium {
-					err = premiumUpgrade(ctx, u, o)
-				}
-			} else {
-				err = premiumUpgrade(ctx, u, o)
-			}
-		case "update":
-			err = deps.Update(ctx, func(f string, a ...any) { u.Printf(f, a...) })
 		case "settings":
 			if err = runSetup(ctx, u, false); err == nil {
 				o = refreshOpts(o)
 			}
-		case "doctor":
-			err = runDoctor(ctx, u, o)
+			continue // settings are saved as you go; straight back to the menu
+		case "tools":
+			err = toolsMenu(ctx, u, o)
 		default:
 			return nil
 		}
@@ -93,14 +75,44 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 		if choice == "library" || choice == "link" {
 			return nil // a download ran; we're done
 		}
-		if choice == "settings" {
-			continue // settings are saved as you go; straight back to the menu
-		}
 		back := true
 		if one(ctx, huh.NewConfirm().Title("Back to the menu?").Affirmative("Menu").Negative("Quit").Value(&back)) != nil || !back {
 			return nil
 		}
 	}
+}
+
+// toolsMenu holds everything that isn't downloading.
+func toolsMenu(ctx context.Context, u *ui.UI, o opts) error {
+	var choice string
+	if err := one(ctx, huh.NewSelect[string]().Title("More tools").Options(
+		huh.NewOption("Fix tags in my music folder (MusicBrainz)", "tag"),
+		huh.NewOption("Tidy file names (Artist/Album/01 - Title)", "tidy"),
+		huh.NewOption("YouTube Premium upgrade now (experimental, slow)", "premium"),
+		huh.NewOption("Update yt-dlp, ffmpeg and deno", "update"),
+		huh.NewOption("Check that everything works", "doctor"),
+		huh.NewOption("Back", "back"),
+	).Value(&choice)); err != nil {
+		return err
+	}
+	switch choice {
+	case "tag":
+		return tagFlow(ctx, u, o)
+	case "tidy":
+		return tidyFlow(ctx, u, o)
+	case "premium":
+		if !config.Load().Premium {
+			if err := premiumSetup(ctx, u); err != nil || !config.Load().Premium {
+				return err
+			}
+		}
+		return premiumUpgrade(ctx, u, o, false)
+	case "update":
+		return deps.Update(ctx, func(f string, a ...any) { u.Printf(f, a...) })
+	case "doctor":
+		return runDoctor(ctx, u, o)
+	}
+	return errBack
 }
 
 // refreshOpts re-reads saved settings after setup, keeping flags the user passed.
@@ -112,7 +124,33 @@ func refreshOpts(o opts) opts {
 	if cfg.Format != "" {
 		o.format = cfg.Format
 	}
+	o.albums, o.retry, o.tagAfter, o.premiumAfter = !cfg.NoAlbums, !cfg.NoRetry, !cfg.NoTagAfter, !cfg.NoPremiumAfter
 	return o
+}
+
+// extras says, in one line, what a library download does besides downloading.
+func extras(o opts) string {
+	var on []string
+	if o.albums {
+		on = append(on, "complete albums")
+	}
+	if o.retry {
+		on = append(on, "retry unavailable songs")
+	}
+	if o.tagAfter {
+		on = append(on, "fix tags")
+	}
+	if o.premiumAfter {
+		if config.Load().Premium {
+			on = append(on, "Premium upgrade")
+		} else {
+			on = append(on, "Premium upgrade (once you sign in, in settings)")
+		}
+	}
+	if len(on) == 0 {
+		return "just download (extras are off in settings)"
+	}
+	return "also: " + strings.Join(on, ", ") + "  (change in settings)"
 }
 
 func header(o opts) string {
@@ -196,29 +234,15 @@ func libraryFlow(ctx context.Context, u *ui.UI, o opts) error {
 
 	fmt.Printf("\n  \x1b[32m✓\x1b[0m %d tracks (%d with song details) in %s\n    saving to %s as %s\n\n",
 		src.Tracks, src.WithMeta, src.Name(), tilde(o.out), o.format)
+	fmt.Printf("    %s%s%s\n\n", cDim, extras(o), cReset)
 	go_ := true
-	var extras []string
-	if err := huh.NewForm(huh.NewGroup(
-		huh.NewMultiSelect[string]().Title("Options").Description("space to toggle · enter to continue").Options(
-			huh.NewOption("Retry songs that were unavailable last time", "retry"),
-			huh.NewOption("Also get the rest of every album I have a song from", "albums"),
-			huh.NewOption("Fix tags with MusicBrainz afterwards", "tag"),
-		).Value(&extras),
-		huh.NewConfirm().Title("Download them?").Affirmative("Download").Negative("Back").Value(&go_),
-	)).RunWithContext(ctx); err != nil {
+	if err := one(ctx, huh.NewConfirm().Title("Download?").Affirmative("Download").Negative("Back").Value(&go_)); err != nil {
 		return err
 	}
 	if !go_ {
 		return errBack
 	}
-	has := func(k string) bool { return slices.Contains(extras, k) }
-	o.retry = o.retry || has("retry")
-	o.albums = o.albums || has("albums")
-	if err := download(ctx, u, o, src.Paths...); err != nil || !has("tag") {
-		return err
-	}
-	o.apply = true
-	return runTag(ctx, u, o, o.out)
+	return download(ctx, u, o, src.Paths...)
 }
 
 func describeSource(s takeout.Source) string {

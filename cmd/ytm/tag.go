@@ -16,7 +16,8 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
 )
 
-func runTag(ctx context.Context, u *ui.UI, o opts, dir string) error {
+// runTag runs `ytm tag` on dir, or only on files (under dir) when given.
+func runTag(ctx context.Context, u *ui.UI, o opts, dir string, files ...string) error {
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 		return fmt.Errorf("%s is not a folder", dir)
 	}
@@ -37,7 +38,7 @@ func runTag(ctx context.Context, u *ui.UI, o opts, dir string) error {
 	}
 	return tag.Run(ctx, tag.Options{
 		Dir: dir, Apply: o.apply, Rename: o.rename, Undo: o.undo, Offline: o.offline,
-		FFmpeg: ffmpeg, FFprobe: ffprobe, UI: u, OnMove: onMove,
+		FFmpeg: ffmpeg, FFprobe: ffprobe, UI: u, OnMove: onMove, Files: files,
 	})
 }
 

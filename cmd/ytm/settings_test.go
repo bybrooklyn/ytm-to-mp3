@@ -62,12 +62,14 @@ func TestFormatCyclesAndSaves(t *testing.T) {
 
 func TestVPNDisabledWhenSignedOut(t *testing.T) {
 	m, _, n := testModel(false)
-	press(m, "down", "down", "right")
+	m.cur = int(rowVPN)
+	press(m, "right")
 	if *n != 0 || m.err == "" {
 		t.Fatal("toggle should be refused with a hint")
 	}
 	m2, last, _ := testModel(true)
-	press(m2, "down", "down", "right")
+	m2.cur = int(rowVPN)
+	press(m2, "right")
 	if !last.NoVPN {
 		t.Fatal("expected VPN off")
 	}
@@ -79,7 +81,7 @@ func TestVPNDisabledWhenSignedOut(t *testing.T) {
 
 func TestClamping(t *testing.T) {
 	m, last, _ := testModel(true)
-	m.cur = 4
+	m.cur = int(rowConns)
 	for i := 0; i < 20; i++ {
 		press(m, "right")
 	}
@@ -96,7 +98,7 @@ func TestClamping(t *testing.T) {
 	if last.Connections != 1 { // 0 ("unset") is skipped
 		t.Fatalf("conns=%d", last.Connections)
 	}
-	m.cur = 5
+	m.cur = int(rowJobs)
 	press(m, "left")
 	if last.Jobs != 0 {
 		t.Fatalf("jobs=%d", last.Jobs)
@@ -112,9 +114,28 @@ func TestClamping(t *testing.T) {
 	}
 }
 
+// The extras are on until switched off, and each row toggles exactly its own setting.
+func TestExtrasDefaultOnAndToggle(t *testing.T) {
+	m, last, _ := testModel(true)
+	for _, r := range []rowKind{rowAlbums, rowRetry, rowTagAfter, rowPremiumAfter} {
+		if v, _, _ := m.value(r); v != "on" {
+			t.Errorf("%v should start on, is %q", r, v)
+		}
+	}
+	m.cur = int(rowTagAfter)
+	press(m, "right")
+	if !last.NoTagAfter || last.NoAlbums || last.NoRetry || last.NoPremiumAfter {
+		t.Fatalf("wrong setting toggled: %+v", *last)
+	}
+	press(m, "left")
+	if last.NoTagAfter {
+		t.Fatal("toggle back on")
+	}
+}
+
 func TestCountriesCycle(t *testing.T) {
 	m, last, _ := testModel(true)
-	m.cur = 6
+	m.cur = int(rowCountries)
 	press(m, "right")
 	if last.Countries != countryChoices[1] {
 		t.Fatalf("got %q", last.Countries)
@@ -160,13 +181,13 @@ func TestFolderEdit(t *testing.T) {
 
 func TestActionsAndQuit(t *testing.T) {
 	m, _, _ := testModel(false)
-	m.cur = 3
+	m.cur = int(rowAccount)
 	press(m, "enter")
 	if m.action != "signin" {
 		t.Fatalf("action=%q", m.action)
 	}
 	m2, _, _ := testModel(true)
-	m2.cur = 3
+	m2.cur = int(rowAccount)
 	press(m2, "enter")
 	if m2.action != "signout" {
 		t.Fatalf("action=%q", m2.action)

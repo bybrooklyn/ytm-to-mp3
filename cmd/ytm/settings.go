@@ -20,6 +20,10 @@ type rowKind int
 const (
 	rowFolder rowKind = iota
 	rowFormat
+	rowAlbums // the extras of a library download, all on by default
+	rowRetry
+	rowTagAfter
+	rowPremiumAfter
 	rowVPN
 	rowAccount
 	rowConns
@@ -43,6 +47,10 @@ var settingsRows = []struct {
 }{
 	{rowFolder, "Music folder"},
 	{rowFormat, "Format"},
+	{rowAlbums, "Complete albums"},
+	{rowRetry, "Retry unavailable"},
+	{rowTagAfter, "Fix tags after"},
+	{rowPremiumAfter, "Premium upgrade after"},
 	{rowVPN, "VPN"},
 	{rowAccount, "Proton account"},
 	{rowConns, "VPN connections"},
@@ -188,6 +196,14 @@ func (m *settingsModel) change(d int) {
 	switch m.kind() {
 	case rowFormat:
 		m.cfg.Format = cycle(engine.Formats, orDefault(m.cfg.Format, config.DefaultFormat), d)
+	case rowAlbums:
+		m.cfg.NoAlbums = !m.cfg.NoAlbums
+	case rowRetry:
+		m.cfg.NoRetry = !m.cfg.NoRetry
+	case rowTagAfter:
+		m.cfg.NoTagAfter = !m.cfg.NoTagAfter
+	case rowPremiumAfter:
+		m.cfg.NoPremiumAfter = !m.cfg.NoPremiumAfter
 	case rowVPN:
 		if !m.vpnUsable() {
 			m.err = "sign in to Proton first"
@@ -211,6 +227,13 @@ func (m *settingsModel) change(d int) {
 		return
 	}
 	m.persist()
+}
+
+func onOff(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
 }
 
 func cycle(opts []string, cur string, d int) string {
@@ -248,6 +271,18 @@ func (m *settingsModel) value(k rowKind) (val, hint string, dim bool) {
 			return f, "YouTube's own audio, copied untouched (others are re-encoded)", false
 		}
 		return f, "re-encoded from YouTube's audio; opus keeps it untouched", false
+	case rowAlbums:
+		return onOff(!m.cfg.NoAlbums), "a library download also gets the rest of every album you have a song from", false
+	case rowRetry:
+		return onOff(!m.cfg.NoRetry), "songs that were unavailable last time are tried again (incl. on YouTube Music)", false
+	case rowTagAfter:
+		return onOff(!m.cfg.NoTagAfter), "the songs just downloaded get MusicBrainz tags (only when it is certain)", false
+	case rowPremiumAfter:
+		hint := "after downloading, upgrade songs to Premium quality (slow; uses your account)"
+		if !m.cfg.Premium {
+			hint = "needs a YouTube Premium sign-in: set it up in the YouTube Premium row below"
+		}
+		return onOff(!m.cfg.NoPremiumAfter), hint, !m.cfg.Premium
 	case rowVPN:
 		if !m.signedIn {
 			return "off", "sign in to Proton below to use it", true
@@ -348,7 +383,7 @@ func (m *settingsModel) render() string {
 
 func isStepRow(k rowKind) bool {
 	switch k {
-	case rowFormat, rowVPN, rowConns, rowJobs, rowCountries:
+	case rowFormat, rowAlbums, rowRetry, rowTagAfter, rowPremiumAfter, rowVPN, rowConns, rowJobs, rowCountries:
 		return true
 	}
 	return false
@@ -370,7 +405,7 @@ func runSettings(ctx context.Context, u *ui.UI) error {
 	pc := protonClient()
 	cur := 0
 	if !pc.SignedIn() {
-		cur = 3 // first run: land on the sign-in row
+		cur = int(rowAccount) // first run: land on the sign-in row
 	}
 	for {
 		cfg := config.Load()

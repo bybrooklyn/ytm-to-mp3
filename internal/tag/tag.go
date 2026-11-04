@@ -24,7 +24,9 @@ type Options struct {
 	Rename bool // also move files to Artist/Album/NN - Title.ext
 	// OnMove, if set, is told about every file moved (by Rename or by Undo), so the state
 	// database can follow it.
-	OnMove  func(from, to string)
+	OnMove func(from, to string)
+	// Files, if set, limits the run to these files (under Dir) instead of every one there.
+	Files   []string
 	Undo    bool // revert the last applied batch
 	Offline bool // local cleanup only, no MusicBrainz
 	NoClean bool // skip local cleanup
@@ -60,7 +62,19 @@ func Run(ctx context.Context, o Options) error {
 		o.MB = NewClient(filepath.Join(o.Dir, ".ytm", "mb"))
 	}
 	var files []string
+	for _, p := range o.Files {
+		// only real audio files inside the folder: the journal and renames assume that
+		if abs, err := filepath.Abs(p); err == nil && strings.HasPrefix(abs, o.Dir+string(filepath.Separator)) && audioExt[strings.ToLower(filepath.Ext(abs))] {
+			if st, err := os.Lstat(abs); err == nil && st.Mode().IsRegular() {
+				files = append(files, abs)
+			}
+		}
+	}
+	walk := len(o.Files) == 0
 	_ = filepath.WalkDir(o.Dir, func(p string, d fs.DirEntry, err error) error {
+		if !walk {
+			return filepath.SkipAll
+		}
 		if err != nil {
 			return nil
 		}

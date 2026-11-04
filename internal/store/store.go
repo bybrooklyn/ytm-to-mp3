@@ -356,6 +356,23 @@ func (s *Store) SetPremium(id string, v int) error {
 	return err
 }
 
+// DoneSince lists the files of tracks finished at or after t.
+func (s *Store) DoneSince(t time.Time) []string {
+	rows, err := s.db.Query(`SELECT path FROM tracks WHERE status='done' AND path<>'' AND updated>=?`, t.Unix())
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if rows.Scan(&p) == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // Owner is the id of the track whose file is path ("" if none).
 func (s *Store) Owner(path string) string {
 	var id string

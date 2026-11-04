@@ -84,9 +84,14 @@ type opts struct {
 	conns     int  // VPN exits for this run (0 = the saved setting)
 	albums    bool // also download the rest of every album the library has a song from
 	albumsMin int  // only albums with at least this many saved songs
+	// albumsAsked: --albums was given, so links get their albums completed too (otherwise
+	// only library imports do)
+	albumsAsked bool
 	// the YouTube Premium upgrade pass (experimental; see premium.go)
 	premiumUpgrade bool
 	premiumLimit   int
+	// after a download: fix the new songs' tags, and run the Premium upgrade if signed in
+	tagAfter, premiumAfter bool
 }
 
 func parse(name string, args []string) (opts, []string, error) {
@@ -111,6 +116,8 @@ func parse(name string, args []string) (opts, []string, error) {
 	fs.IntVar(&o.albumsMin, "albums-min", 1, "")
 	fs.BoolVar(&o.premiumUpgrade, "premium-upgrade", false, "")
 	fs.IntVar(&o.premiumLimit, "premium-limit", 300, "")
+	fs.BoolVar(&o.tagAfter, "tag-after", false, "")
+	fs.BoolVar(&o.premiumAfter, "premium-after", false, "")
 	// Go's flag package stops at the first positional; keep going so flags may follow it.
 	var pos []string
 	for {
@@ -146,6 +153,23 @@ func parse(name string, args []string) (opts, []string, error) {
 	}
 	if !engine.ValidFormat(o.format) {
 		return o, nil, fmt.Errorf("unknown format %q (use %s)", o.format, strings.Join(engine.Formats, ", "))
+	}
+	// The extras are on unless switched off in settings; a flag (--albums=false, --retry,
+	// ...) decides for this run only.
+	given := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	o.albumsAsked = given["albums"] && o.albums
+	if !given["albums"] {
+		o.albums = !cfg.NoAlbums
+	}
+	if !given["retry"] {
+		o.retry = !cfg.NoRetry
+	}
+	if !given["tag-after"] {
+		o.tagAfter = !cfg.NoTagAfter
+	}
+	if !given["premium-after"] {
+		o.premiumAfter = !cfg.NoPremiumAfter
 	}
 	return o, pos, nil
 }
@@ -225,7 +249,7 @@ func run(args []string) error {
 		return runTag(ctx, u, o, pos[0])
 	}
 	if o.premiumUpgrade {
-		return premiumUpgrade(ctx, u, o)
+		return premiumUpgrade(ctx, u, o, false)
 	}
 
 	switch len(pos) {
@@ -364,6 +388,7 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	}
 
 	var tracks []model.Track
+	fromExport := false // some input was a Takeout export (a library import)
 	seen := map[string]bool{}
 	add := func(ts []model.Track) {
 		for _, t := range ts {
@@ -418,6 +443,7 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 			if err != nil {
 				return err
 			}
+			fromExport = true
 			add(ts)
 		}
 	}
@@ -433,7 +459,9 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		defer s.Close()
 		st = s
 	}
-	if o.albums {
+	// Completing albums is for a library import (a pasted song link shouldn't quietly bring
+	// its whole album), unless --albums was given.
+	if o.albums && (fromExport || o.albumsAsked) {
 		var err error
 		if tools.YtDlp == "" {
 			if tools, err = deps.Ensure(ctx, logf); err != nil {
@@ -472,14 +500,15 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	if n := len(plan.MusicFirst); n > 0 {
 		u.Printf("%d tracks that were unavailable last time will be looked for on YouTube Music", n)
 	}
-	if len(plan.Todo) == 0 {
-		return nil
-	}
 	if o.dryRun {
 		for _, t := range plan.Todo {
 			u.Printf("  %s  %s", t.ID, t.Label())
 		}
 		return nil
+	}
+	began := time.Now()
+	if len(plan.Todo) == 0 {
+		return afterDownload(ctx, u, o, st, began)
 	}
 
 	if tools.YtDlp == "" {
@@ -498,10 +527,10 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	}, plan.Todo)
 
 	u.Printf("\n%d downloaded, %d failed, %s in %s", sum.Done, sum.Failed, engine.HumanBytes(sum.Bytes), sum.Elapsed.Round(time.Second))
-	if sum.Swaps > 0 {
-		u.Printf("%d exit(s) were blocked and replaced with other locations", sum.Swaps)
-	}
-	if len(sum.PerExit) > 1 {
+	if os.Getenv("YTM_DEBUG") != "" { // per-exit detail is for debugging, not everyday output
+		if sum.Swaps > 0 {
+			u.Printf("%d exit(s) were blocked and replaced with other locations", sum.Swaps)
+		}
 		for _, x := range sum.PerExit {
 			u.Printf("  %-24s %4d tracks  %s", x.Name, x.Done, engine.HumanBytes(x.Bytes))
 		}
@@ -536,6 +565,31 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	}
 	if sum.Interrupted {
 		return context.Canceled
+	}
+	return afterDownload(ctx, u, o, st, began)
+}
+
+// afterDownload runs the extras that follow a download (each on unless switched off in
+// settings): MusicBrainz tags for the songs just downloaded (not the whole library, which
+// would take an hour at MusicBrainz's one request a second), then the Premium upgrade if
+// a sign-in is set up.
+func afterDownload(ctx context.Context, u *ui.UI, o opts, st *store.Store, since time.Time) error {
+	if o.tagAfter {
+		if files := st.DoneSince(since); len(files) > 0 {
+			u.Printf("\nFixing the tags of %d new song(s) with MusicBrainz (turn off in settings)...", len(files))
+			t := o
+			t.apply, t.rename, t.undo, t.offline = true, false, false, false
+			if err := runTag(ctx, u, t, o.out, files...); err != nil {
+				if ctx.Err() != nil {
+					return context.Canceled
+				}
+				u.Printf("tags: %v", err)
+			}
+		}
+	}
+	if o.premiumAfter && config.Load().Premium {
+		st.Close() // the upgrade opens the database itself
+		return premiumUpgrade(ctx, u, o, true)
 	}
 	return nil
 }
@@ -631,14 +685,21 @@ func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 	if o.conns > 0 {
 		n = min(o.conns, maxConns)
 	}
-	u.Printf("Connecting %d VPN tunnel(s)...", n)
+	u.Status("Connecting to Proton VPN (%d servers near you)...", n)
+	debug := os.Getenv("YTM_DEBUG") != ""
+	vpnLog := func(f string, a ...any) {
+		// Each server connecting (or failing to) is detail; anything else is worth saying.
+		if s := fmt.Sprintf(f, a...); debug || !(strings.HasPrefix(s, "  ✓ ") || strings.HasPrefix(s, "  ✗ ")) {
+			u.Printf("%s", s)
+		}
+	}
 	var countries []string
 	if c := strings.ToUpper(strings.TrimSpace(cfg.Countries)); c != "" {
 		countries = []string{c}
 	}
 	late := make(chan vpn.Exit, 64)
 	done := make(chan struct{})
-	pool, err := vpn.OpenWith(ctx, pc, n, func(f string, a ...any) { u.Printf(f, a...) }, vpn.Options{
+	pool, err := vpn.OpenWith(ctx, pc, n, vpnLog, vpn.Options{
 		MinReady:  min(n, 2),
 		Countries: countries,
 		OnExit: func(e vpn.Exit) {
@@ -649,9 +710,11 @@ func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 			}
 		},
 	})
+	u.ClearStatus()
 	if err != nil {
 		return none, fmt.Errorf("%w (use --no-vpn to download without it)", err)
 	}
+	u.Printf("Connected through Proton VPN (%d servers so far; more join while it runs)", len(pool.Exits()))
 	var once sync.Once
 	return exitSet{
 		Exits: pool.Exits(), Replace: pool.Replace, Healthy: pool.Healthy,

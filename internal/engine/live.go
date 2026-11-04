@@ -154,18 +154,21 @@ func (e *engine) liveRows(speed float64, began time.Time) []string {
 		perTrack := elapsed / time.Duration(finished)
 		eta = perTrack * time.Duration(e.total-finished)
 	}
-	barW := min(30, max(10, width-60))
-	head := fmt.Sprintf("  %s %s%d/%d%s  %3.0f%%   %s%s/s%s   ETA %s",
-		bar(frac, barW, green), bold, finished, e.total, reset, frac*100,
-		cyan, HumanBytes(int64(speed)), reset, humanETA(eta))
+	barW := min(30, max(10, width-70))
+	left := "working out the time left"
+	if eta > 0 {
+		left = "about " + humanETA(eta) + " left"
+	}
+	head := fmt.Sprintf("  %sDownloading%s %s %s%d of %d%s  %s%s/s%s  %s%s%s",
+		bold, reset, bar(frac, barW, green), bold, finished, e.total, reset,
+		cyan, HumanBytes(int64(speed)), reset, dim, left, reset)
 	if failed > 0 {
-		head += fmt.Sprintf("   %s✗ %d%s", red, failed, reset)
+		head += fmt.Sprintf("  %s%d failed%s", red, failed, reset)
 	}
 	rows := []string{head}
 
-	// exits (only worth a row when there's more than one, or one is struggling)
 	lanes := e.snap()
-	if len(lanes) > 1 {
+	if debugOn() && len(lanes) > 1 { // which exit is doing what: debugging detail
 		var parts []string
 		for _, l := range lanes {
 			name := ui.Sanitize(l.exitName())
@@ -179,13 +182,24 @@ func (e *engine) liveRows(speed float64, began time.Time) []string {
 			}
 		}
 		rows = append(rows, "  "+dim+"exits "+reset+strings.Join(parts, dim+" · "+reset))
-	} else if c := lanes[0].gov.Cooling(); c > 0 {
-		rows = append(rows, fmt.Sprintf("  %srate limited, pausing %ds%s", yel, int(c.Seconds())+1, reset))
+	} else if allResting(lanes) {
+		rows = append(rows, fmt.Sprintf("  %sYouTube is slowing us down; waiting a moment before carrying on%s", yel, reset))
 	}
 
-	// tracks in flight: as many as fit, leaving room for scrolling output above
-	room := min(8, max(0, height-len(rows)-6))
-	shown := snap
+	// Songs being downloaded or converted get a row each; the ones still being looked up or
+	// waiting their turn are just counted, so the screen doesn't churn.
+	var active []*tstate
+	waiting := 0
+	for _, ts := range snap {
+		switch ts.stage.Load() {
+		case stFetch, stEncode, stMusic:
+			active = append(active, ts)
+		default:
+			waiting++
+		}
+	}
+	room := min(6, max(0, height-len(rows)-6))
+	shown := active
 	if len(shown) > room {
 		shown = shown[:room]
 	}
@@ -204,17 +218,34 @@ func (e *engine) liveRows(speed float64, began time.Time) []string {
 			}
 			rows = append(rows, fmt.Sprintf("  %s↓%s %s%s  %s", cyan, reset, label, pad, state))
 		case stEncode:
-			rows = append(rows, fmt.Sprintf("  %s♪%s %s%s  %sconverting%s", yel, reset, label, pad, dim, reset))
-		case stQueued:
-			rows = append(rows, fmt.Sprintf("  %s·%s %s%s  %squeued%s", dim, reset, label, pad, dim, reset))
+			rows = append(rows, fmt.Sprintf("  %s♪%s %s%s  %ssaving%s", yel, reset, label, pad, dim, reset))
 		case stMusic:
-			rows = append(rows, fmt.Sprintf("  %s%s%s %s%s  %strying YouTube Music%s", yel, spin(now), reset, label, pad, dim, reset))
-		default:
-			rows = append(rows, fmt.Sprintf("  %s%s%s %s%s  %slooking up%s", dim, spin(now), reset, label, pad, dim, reset))
+			rows = append(rows, fmt.Sprintf("  %s%s%s %s%s  %slooking on YouTube Music%s", yel, spin(now), reset, label, pad, dim, reset))
 		}
 	}
-	if extra := len(snap) - len(shown); extra > 0 {
-		rows = append(rows, fmt.Sprintf("  %s+ %d more in progress%s", dim, extra, reset))
+	more := len(active) - len(shown)
+	if more > 0 || waiting > 0 {
+		parts := []string{}
+		if more > 0 {
+			parts = append(parts, fmt.Sprintf("%d more downloading", more))
+		}
+		if waiting > 0 {
+			parts = append(parts, fmt.Sprintf("%d being looked up", waiting))
+		}
+		rows = append(rows, fmt.Sprintf("  %s%s %s%s", dim, spin(now), strings.Join(parts, ", "), reset))
 	}
 	return rows
+}
+
+// allResting: every exit is backing off (YouTube is pushing back everywhere).
+func allResting(lanes []*lane) bool {
+	if len(lanes) == 0 {
+		return false
+	}
+	for _, l := range lanes {
+		if l.gov.Cooling() <= 0 && !l.swapping.Load() {
+			return false
+		}
+	}
+	return true
 }

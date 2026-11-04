@@ -132,16 +132,22 @@ func checkCookies(p string) error {
 }
 
 // premiumUpgrade re-downloads already-downloaded songs at YouTube Premium quality, slowly
-// and on one exit (see premiumWarning), replacing each file in place.
-func premiumUpgrade(ctx context.Context, u *ui.UI, o opts) error {
+// and on one exit (see premiumWarning), replacing each file in place. auto: it follows a
+// download (the user turned it on in settings and already saw the warning), so it just
+// says what it's doing.
+func premiumUpgrade(ctx context.Context, u *ui.UI, o opts, auto bool) error {
 	cfg := config.Load()
 	cookies := config.PremiumCookiesPath()
 	if _, err := os.Stat(cookies); err != nil || !cfg.Premium {
 		return errors.New("the YouTube Premium upgrade is off: turn it on in settings (ytm setup) first")
 	}
-	u.Printf("%s\n", premiumWarning)
-	if !o.yes && !u.Confirm("Start?", true) {
-		return nil
+	if auto {
+		u.Printf("\nYouTube Premium upgrade (experimental, slow; turn off in settings, Ctrl-C to stop)...")
+	} else {
+		u.Printf("%s\n", premiumWarning)
+		if !o.yes && !u.Confirm("Start?", true) {
+			return nil
+		}
 	}
 	if _, err := os.Stat(filepath.Join(o.out, ".ytm", "state.db")); err != nil {
 		return fmt.Errorf("nothing downloaded in %s yet", o.out)

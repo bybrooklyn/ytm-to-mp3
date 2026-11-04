@@ -24,7 +24,10 @@ type trackTiming struct {
 	bytes                         int64
 }
 
-func newTimings() *timings { return &timings{on: os.Getenv("YTM_DEBUG") != ""} }
+func newTimings() *timings { return &timings{on: debugOn()} }
+
+// debugOn: YTM_DEBUG is set, so per-exit detail is shown.
+func debugOn() bool { return os.Getenv("YTM_DEBUG") != "" }
 
 // record notes a finished track. bytes is the size of the downloaded source.
 func (t *timings) record(ts *tstate, exit string, bytes int64, end time.Time) {

@@ -20,6 +20,13 @@ type Config struct {
 	// Premium turns on the optional YouTube Premium upgrade pass; its cookies are in
 	// PremiumCookiesPath(). Never used for normal downloads.
 	Premium bool `json:"premium,omitempty"`
+
+	// What a library download also does. All on by default (the zero value), so they're
+	// stored as "No...": off only when switched off in settings.
+	NoAlbums       bool `json:"no_albums,omitempty"`        // complete every album you have a song from
+	NoRetry        bool `json:"no_retry,omitempty"`         // retry songs that were unavailable before
+	NoTagAfter     bool `json:"no_tag_after,omitempty"`     // fix the new songs' tags with MusicBrainz
+	NoPremiumAfter bool `json:"no_premium_after,omitempty"` // run the Premium upgrade (when signed in)
 }
 
 // PremiumCookiesPath is where ytm keeps its copy of the user's YouTube Premium cookies
