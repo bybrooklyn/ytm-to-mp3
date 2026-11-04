@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -111,16 +112,40 @@ func (c *Client) token() (string, error) {
 	return cr.AuthToken, nil
 }
 
-// Verify checks the saved login by fetching the developer token and confirming
-// the catalog API accepts the credentials. It returns a short human message.
+// Verify checks the login is a live session by calling an authenticated
+// endpoint (the account's storefront). It returns a short human-readable error
+// when Apple rejects the credentials, so a stale token is caught before a
+// download reports a confusing "Unavailable".
 func (c *Client) Verify(ctx context.Context) error {
-	if _, err := c.token(); err != nil {
+	cr, err := c.creds()
+	if err != nil {
 		return err
 	}
-	// A storefront lookup needs only the developer token; the real test of the
-	// media-user-token is the first download's web-playback call.
-	return nil
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://amp-api.music.apple.com/v1/me/storefront", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+cr.AuthToken)
+	req.Header.Set("Music-User-Token", cr.MediaUserToken)
+	req.Header.Set("media-user-token", cr.MediaUserToken)
+	req.Header.Set("Origin", "https://music.apple.com")
+	req.Header.Set("User-Agent", browserUA)
+	if cr.Cookie != "" {
+		req.Header.Set("Cookie", cr.Cookie)
+	}
+	resp, err := download.Client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	return fmt.Errorf("Apple rejected the login (%s); sign in again at music.apple.com and re-run ytm apple login", resp.Status)
 }
+
+// browserUA is the user agent the Apple web player sends.
+const browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 
 // Download fetches track t as 256 kbps AAC and writes it to destPath (.m4a).
 func (c *Client) Download(ctx context.Context, t Track, destPath string) error {

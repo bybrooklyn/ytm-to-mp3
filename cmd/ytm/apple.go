@@ -70,24 +70,26 @@ func appleLogin(ctx context.Context, u *ui.UI) error {
 	u.Printf("Apple Music login")
 
 	var token, jar string
-	// Try to read it straight from a browser you're already signed in to. The
-	// whole apple cookie jar is kept, not just the token: the web-playback
-	// endpoint needs the iTunes store-session cookies too.
-	if cs, browser, err := browsercookies.FindAppleMusicCookies(); err == nil {
-		if u.Confirm(fmt.Sprintf("Found an Apple Music login in %s. Use it?", browser), true) {
-			token = browsercookies.AppleUserToken(cs)
-			jar = browsercookies.CookieHeader(cs)
+	// Read it straight from a browser you're already signed in to. Every
+	// installed browser is tried and the session is validated against Apple, so
+	// a live login is chosen over a stale one in another browser. The whole
+	// cookie jar is kept, not just the token: the web-playback endpoint needs
+	// the iTunes store-session cookies too.
+	if tok, j, browser, ok := detectLiveAppleLogin(ctx, u); ok {
+		if u.Confirm(fmt.Sprintf("Found a live Apple Music login in %s. Use it?", browser), true) {
+			token, jar = tok, j
 		}
+	} else {
+		u.Printf("No live Apple Music session found in a browser.")
 	}
 	if token == "" {
-		u.Printf("Sign in at https://music.apple.com in your browser, then from its cookies")
-		u.Printf("copy the value of the cookie named \"media-user-token\" and paste it here.")
-		u.Printf("(DevTools > Application > Cookies > https://music.apple.com)")
-		u.Printf("Tip: signing in via a browser lets ytm read the full session automatically.")
-		token = strings.TrimSpace(u.Ask("media-user-token: ", ""))
+		u.Printf("Sign in at https://music.apple.com in your browser (and play a track so the")
+		u.Printf("session is active), then re-run 'ytm apple login' — or paste the cookie named")
+		u.Printf("\"media-user-token\" here (DevTools > Application > Cookies > music.apple.com).")
+		token = strings.TrimSpace(u.Ask("media-user-token (or Enter to cancel): ", ""))
 	}
 	if token == "" {
-		return errors.New("no token entered")
+		return errors.New("no login")
 	}
 	store := strings.ToLower(strings.TrimSpace(u.Ask("Storefront country code [us]: ", "us")))
 	if store == "" {
@@ -108,7 +110,8 @@ func appleLogin(ctx context.Context, u *ui.UI) error {
 	return nil
 }
 
-// appleStatus reports whether a login is saved and that the catalog is reachable.
+// appleStatus reports whether a saved login still works, checking it against
+// Apple.
 func appleStatus(ctx context.Context, u *ui.UI) error {
 	token := config.AppleToken()
 	if token == "" {
@@ -120,12 +123,47 @@ func appleStatus(ctx context.Context, u *ui.UI) error {
 	if store == "" {
 		store = "us"
 	}
-	u.Printf("Apple Music login saved (storefront %s).", store)
-	if _, err := apple.New(token, config.AppleCookies(), store, cfg.AppleLanguage); err != nil {
+	u.Printf("Apple Music login saved (storefront %s). Checking...", store)
+	_ = apple.SetProxy("")
+	c, err := apple.New(token, config.AppleCookies(), store, cfg.AppleLanguage)
+	if err != nil {
 		return err
 	}
-	u.Printf("Run a download to confirm the token still works.")
+	if err := c.Verify(ctx); err != nil {
+		u.Printf("Login is NOT working: %v", err)
+		return nil
+	}
+	u.Printf("Login works.")
 	return nil
+}
+
+// detectLiveAppleLogin tries each installed browser's Apple Music cookies and
+// returns the first session Apple still accepts (validated directly, no VPN).
+func detectLiveAppleLogin(ctx context.Context, u *ui.UI) (token, jar, browser string, ok bool) {
+	_ = apple.SetProxy("")
+	found := false
+	for _, b := range browsercookies.Detect() {
+		cs, err := b.AppleMusicCookies()
+		if err != nil {
+			continue
+		}
+		tok := browsercookies.AppleUserToken(cs)
+		if tok == "" {
+			continue
+		}
+		found = true
+		j := browsercookies.CookieHeader(cs)
+		c, err := apple.New(tok, j, "us", "")
+		if err != nil {
+			continue
+		}
+		if c.Verify(ctx) == nil {
+			return tok, j, b.Name, true
+		}
+		u.Printf("(%s has an Apple Music login, but it has expired)", b.Name)
+	}
+	_ = found
+	return "", "", "", false
 }
 
 // appleClient builds a logged-in client and routes it through a Proton exit

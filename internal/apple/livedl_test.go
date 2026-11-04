@@ -16,21 +16,36 @@ func TestLiveDownload(t *testing.T) {
 	if os.Getenv("YTM_APPLE_DL") != "1" {
 		t.Skip("set YTM_APPLE_DL=1 to run the live Apple download test")
 	}
-	cookies, browser, err := browsercookies.FindAppleMusicCookies()
-	if err != nil {
-		t.Fatalf("FindAppleMusicCookies: %v", err)
-	}
-	token := browsercookies.AppleUserToken(cookies)
-	jar := browsercookies.CookieHeader(cookies)
-	t.Logf("using Apple login from %s (%d cookies)", browser, len(cookies))
-
 	if err := SetProxy(os.Getenv("YTM_APPLE_PROXY")); err != nil {
 		t.Fatalf("SetProxy: %v", err)
 	}
 	ctx := context.Background()
-	c, err := New(token, jar, "us", "")
-	if err != nil {
-		t.Fatalf("New: %v", err)
+
+	// Pick the first browser whose Apple Music session Apple still accepts.
+	var c *Client
+	for _, b := range browsercookies.Detect() {
+		cs, err := b.AppleMusicCookies()
+		if err != nil {
+			continue
+		}
+		tok := browsercookies.AppleUserToken(cs)
+		if tok == "" {
+			continue
+		}
+		cand, err := New(tok, browsercookies.CookieHeader(cs), "us", "")
+		if err != nil {
+			continue
+		}
+		if err := cand.Verify(ctx); err != nil {
+			t.Logf("%s: login expired (%v)", b.Name, err)
+			continue
+		}
+		t.Logf("using live Apple login from %s", b.Name)
+		c = cand
+		break
+	}
+	if c == nil {
+		t.Skip("no live Apple Music session in any browser; sign in at music.apple.com first")
 	}
 
 	tracks, err := c.ResolveURL(ctx, "https://music.apple.com/us/album/currents/1440838039")
