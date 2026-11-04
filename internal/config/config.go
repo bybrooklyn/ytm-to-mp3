@@ -27,6 +27,98 @@ type Config struct {
 	NoRetry        bool `json:"no_retry,omitempty"`         // retry songs that were unavailable before
 	NoTagAfter     bool `json:"no_tag_after,omitempty"`     // fix the new songs' tags with MusicBrainz
 	NoPremiumAfter bool `json:"no_premium_after,omitempty"` // run the Premium upgrade (when signed in)
+
+	// Apple Music (optional, native AAC path). The media-user-token itself is a secret
+	// and lives in AppleTokenPath(), not here.
+	AppleStorefront string `json:"apple_storefront,omitempty"` // e.g. "us"; "" = us
+	AppleLanguage   string `json:"apple_language,omitempty"`   // e.g. "en-US"; "" = storefront default
+}
+
+// AppleTokenPath is where ytm keeps the user's Apple Music media-user-token
+// (mode 0600): the "login" for the native Apple Music download path.
+func AppleTokenPath() string {
+	d, err := dir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "apple-token")
+}
+
+// AppleCookiesPath is where ytm keeps the full Apple cookie jar (mode 0600),
+// an HTTP Cookie header value; the web-playback endpoint needs more than the
+// media-user-token alone.
+func AppleCookiesPath() string {
+	d, err := dir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "apple-cookies")
+}
+
+// AppleToken reads the saved Apple Music media-user-token, or "" if none.
+func AppleToken() string {
+	p := AppleTokenPath()
+	if p == "" {
+		return ""
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// AppleCookies reads the saved Apple cookie jar (Cookie header), or "".
+func AppleCookies() string {
+	p := AppleCookiesPath()
+	if p == "" {
+		return ""
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// SaveAppleCookies writes the cookie jar (mode 0600), or removes it when empty.
+func SaveAppleCookies(jar string) error {
+	p := AppleCookiesPath()
+	if p == "" {
+		return fmt.Errorf("no config directory")
+	}
+	jar = strings.TrimSpace(jar)
+	if jar == "" {
+		err := os.Remove(p)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(jar+"\n"), 0o600)
+}
+
+// SaveAppleToken writes the media-user-token (mode 0600), or removes it when empty.
+func SaveAppleToken(token string) error {
+	p := AppleTokenPath()
+	if p == "" {
+		return fmt.Errorf("no config directory")
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		err := os.Remove(p)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(token+"\n"), 0o600)
 }
 
 // PremiumCookiesPath is where ytm keeps its copy of the user's YouTube Premium cookies

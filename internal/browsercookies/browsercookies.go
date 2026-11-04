@@ -48,6 +48,12 @@ type db struct {
 // youTubeHosts are the cookie hosts read. Only YouTube's: never Google account cookies.
 var youTubeHosts = []string{".youtube.com", "youtube.com", ".music.youtube.com", "music.youtube.com"}
 
+// appleMusicHosts are the cookie hosts read for the Apple Music login.
+var appleMusicHosts = []string{"music.apple.com", ".music.apple.com", ".apple.com"}
+
+// AppleUserTokenCookie is the cookie that carries the Apple Music login.
+const AppleUserTokenCookie = "media-user-token"
+
 // loginCookies: one of these means the browser is signed in to YouTube.
 var loginCookies = map[string]bool{"SAPISID": true, "__Secure-1PAPISID": true, "__Secure-3PAPISID": true}
 
@@ -114,13 +120,7 @@ func detect(goos string, d dirs) []Browser {
 func (b Browser) Import() ([]Cookie, error) {
 	var last error = errors.New("no cookie database")
 	for _, d := range b.dbs {
-		var cs []Cookie
-		var err error
-		if b.chromium != nil {
-			cs, err = readChromium(d, newKeySource(b.chromium, d.root))
-		} else {
-			cs, err = readFirefox(d.path)
-		}
+		cs, err := b.readHosts(d, youTubeHosts)
 		if err == nil {
 			if err = requireLogin(cs); err == nil {
 				return cs, nil
@@ -129,6 +129,103 @@ func (b Browser) Import() ([]Cookie, error) {
 		last = err
 	}
 	return nil, fmt.Errorf("%s: %w", b.Name, last)
+}
+
+// readHosts reads the cookies for hosts from one of b's cookie databases.
+func (b Browser) readHosts(d db, hosts []string) ([]Cookie, error) {
+	if b.chromium != nil {
+		return readChromium(d, newKeySource(b.chromium, d.root), hosts)
+	}
+	return readFirefox(d.path, hosts)
+}
+
+// AppleMusicToken returns the media-user-token from the newest profile of b
+// that has one, or ErrNoAppleToken when the browser is not signed in to Apple
+// Music. It never requires a YouTube login.
+func (b Browser) AppleMusicToken() (string, error) {
+	var last error = ErrNoAppleToken
+	for _, d := range b.dbs {
+		cs, err := b.readHosts(d, appleMusicHosts)
+		if err != nil {
+			last = err
+			continue
+		}
+		for _, c := range cs {
+			if c.Name == AppleUserTokenCookie && strings.TrimSpace(c.Value) != "" {
+				return strings.TrimSpace(c.Value), nil
+			}
+		}
+	}
+	return "", last
+}
+
+// ErrNoAppleToken means the browser has no Apple Music media-user-token (not
+// signed in to music.apple.com in it).
+var ErrNoAppleToken = errors.New("not signed in to Apple Music in that browser")
+
+// AppleMusicCookies returns all Apple cookies from the newest profile of b
+// that is signed in to Apple Music (has a media-user-token).
+func (b Browser) AppleMusicCookies() ([]Cookie, error) {
+	var last error = ErrNoAppleToken
+	for _, d := range b.dbs {
+		cs, err := b.readHosts(d, appleMusicHosts)
+		if err != nil {
+			last = err
+			continue
+		}
+		for _, c := range cs {
+			if c.Name == AppleUserTokenCookie && strings.TrimSpace(c.Value) != "" {
+				return cs, nil
+			}
+		}
+	}
+	return nil, last
+}
+
+// FindAppleMusicCookies scans installed browsers (newest first) and returns
+// the full Apple cookie jar of the first one signed in to Apple Music.
+func FindAppleMusicCookies() (cookies []Cookie, browser string, err error) {
+	for _, b := range Detect() {
+		if cs, e := b.AppleMusicCookies(); e == nil {
+			return cs, b.Name, nil
+		}
+	}
+	return nil, "", ErrNoAppleToken
+}
+
+// CookieHeader renders cs as an HTTP Cookie header value ("name=value; ...").
+func CookieHeader(cs []Cookie) string {
+	parts := make([]string, 0, len(cs))
+	seen := map[string]bool{}
+	for _, c := range cs {
+		if c.Name == "" || seen[c.Name] {
+			continue
+		}
+		seen[c.Name] = true
+		parts = append(parts, c.Name+"="+c.Value)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// AppleUserToken returns the media-user-token value within cs, or "".
+func AppleUserToken(cs []Cookie) string {
+	for _, c := range cs {
+		if c.Name == AppleUserTokenCookie {
+			return strings.TrimSpace(c.Value)
+		}
+	}
+	return ""
+}
+
+// FindAppleMusicToken scans installed browsers (newest first) and returns the
+// first media-user-token found, with the browser it came from.
+func FindAppleMusicToken() (token, browser string, err error) {
+	for _, b := range Detect() {
+		if t, e := b.AppleMusicToken(); e == nil {
+			return t, b.Name, nil
+		}
+	}
+	return "", "", ErrNoAppleToken
 }
 
 func requireLogin(cs []Cookie) error {
@@ -228,7 +325,7 @@ func copyFile(src, dst string) error {
 	return out.Close()
 }
 
-func hostIn() string { return "('" + strings.Join(youTubeHosts, "','") + "')" }
+func hostIn(hosts []string) string { return "('" + strings.Join(hosts, "','") + "')" }
 
 func mtime(p string) time.Time {
 	st, err := os.Stat(p)

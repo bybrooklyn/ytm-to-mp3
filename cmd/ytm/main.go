@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bybrooklyn/ytm-to-mp3/internal/apple"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
@@ -35,7 +36,8 @@ var version = "dev"
 const usage = `ytm - download YouTube / YouTube Music as tagged audio, through Proton VPN
 
   ytm setup               one-time setup: Proton sign-in, music folder, format
-  ytm <link>...           download videos, playlists or albums
+  ytm <link>...           download videos, playlists or albums (YouTube or Apple Music)
+  ytm apple ...           Apple Music via your subscription (ytm apple help)
   ytm [takeout.zip]       download your YouTube Music library (guides you if you have no export)
   ytm status              show settings and test the VPN exits
   ytm doctor              check tools, network, folders and login; says how to fix problems
@@ -176,7 +178,8 @@ func parse(name string, args []string) (opts, []string, error) {
 
 // commands are the words that act as subcommands when they come first (flags may precede them).
 var commands = map[string]bool{"export": true, "tag": true, "update": true, "version": true, "help": true,
-	"setup": true, "login": true, "logout": true, "status": true, "doctor": true, "completion": true}
+	"setup": true, "login": true, "logout": true, "status": true, "doctor": true, "completion": true,
+	"apple": true}
 
 func run(args []string) error {
 	if len(args) == 1 && (args[0] == "--version" || args[0] == "-v") {
@@ -192,7 +195,7 @@ func run(args []string) error {
 	cmd := ""
 	if len(pos) > 0 && commands[pos[0]] {
 		cmd, pos = pos[0], pos[1:]
-		if len(pos) > 0 && cmd != "tag" && cmd != "export" && cmd != "completion" {
+		if len(pos) > 0 && cmd != "tag" && cmd != "export" && cmd != "completion" && cmd != "apple" {
 			return fmt.Errorf("'ytm %s' takes no arguments (got %q)", cmd, pos[0])
 		}
 	}
@@ -247,6 +250,8 @@ func run(args []string) error {
 			return errors.New("usage: ytm tag <folder> [--apply] [--rename] [--undo] [--offline] [-y]")
 		}
 		return runTag(ctx, u, o, pos[0])
+	case "apple":
+		return runApple(ctx, u, o, pos)
 	}
 	if o.premiumUpgrade {
 		return premiumUpgrade(ctx, u, o, false)
@@ -369,6 +374,25 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	logf := func(f string, a ...any) { u.Printf(f, a...) }
 	var tools deps.Tools
 	removeLegacyCookies()
+
+	// Apple Music links use their own pipeline (native AAC, not the yt-dlp engine).
+	var appleLinks, rest []string
+	for _, in := range inputs {
+		if apple.IsURL(strings.Trim(in, `"' `)) {
+			appleLinks = append(appleLinks, in)
+		} else {
+			rest = append(rest, in)
+		}
+	}
+	if len(appleLinks) > 0 {
+		if err := appleDownloadLinks(ctx, u, o, appleLinks); err != nil {
+			return err
+		}
+		if len(rest) == 0 {
+			return nil
+		}
+		inputs = rest
+	}
 
 	// The VPN is brought up the first time anything needs the network, so even looking up
 	// a pasted playlist goes out through it and not from your own address.
