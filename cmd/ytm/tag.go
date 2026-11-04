@@ -27,7 +27,9 @@ func runTag(ctx context.Context, u *ui.UI, o opts, dir string, files ...string) 
 	}
 	// Renamed files are recorded in the folder's ytm database (if it has one), so they're
 	// still known as downloaded.
+	// The album lookups there also number old files that have no track number.
 	var onMove func(from, to string)
+	var trackNo func(artist, album, title, id string) (int, int)
 	if _, err := os.Stat(filepath.Join(dir, ".ytm", "state.db")); err == nil {
 		st, err := store.Open(filepath.Join(dir, ".ytm"))
 		if err != nil {
@@ -35,10 +37,11 @@ func runTag(ctx context.Context, u *ui.UI, o opts, dir string, files ...string) 
 		}
 		defer st.Close()
 		onMove = func(from, to string) { _ = st.MovePath(from, to) }
+		trackNo = albumNumbers(st)
 	}
 	return tag.Run(ctx, tag.Options{
 		Dir: dir, Apply: o.apply, Rename: o.rename, Undo: o.undo, Offline: o.offline,
-		FFmpeg: ffmpeg, FFprobe: ffprobe, UI: u, OnMove: onMove, Files: files,
+		FFmpeg: ffmpeg, FFprobe: ffprobe, UI: u, OnMove: onMove, Files: files, TrackNumber: trackNo,
 	})
 }
 

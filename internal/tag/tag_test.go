@@ -23,19 +23,41 @@ func album(id, title, date string) mbRelease {
 
 func TestRenameTargetScheme(t *testing.T) {
 	info := Info{Tags: map[string]string{"artist": "C418", "title": "Door", "album": "Volume Alpha", "track": "2/24"}}
-	got := renameTarget("/m", "/m/C418/Volume Alpha/Door [aaaaaaaaaaa].opus", info, nil)
+	got := renameTarget("/m", "/m/C418/Volume Alpha/Door [aaaaaaaaaaa].opus", info, nil, 0, 0)
 	if got != "/m/C418/Volume Alpha/02 - Door.opus" {
 		t.Errorf("got %q", got)
 	}
 	// no album: no number, still no [id]
 	info.Tags["album"] = ""
-	if got := renameTarget("/m", "/m/C418/Door [aaaaaaaaaaa].opus", info, nil); got != "/m/C418/Door.opus" {
+	if got := renameTarget("/m", "/m/C418/Door [aaaaaaaaaaa].opus", info, nil, 0, 0); got != "/m/C418/Door.opus" {
 		t.Errorf("got %q", got)
 	}
 	// already right: nothing to do
 	info.Tags["album"] = "Volume Alpha"
-	if got := renameTarget("/m", "/m/C418/Volume Alpha/02 - Door.opus", info, nil); got != "" {
+	if got := renameTarget("/m", "/m/C418/Volume Alpha/02 - Door.opus", info, nil, 0, 0); got != "" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestRenameTargetAlbumLookup(t *testing.T) {
+	info := Info{Tags: map[string]string{"artist": "C418, Someone", "title": "Door", "album": "Volume Alpha",
+		"comment": "https://music.youtube.com/watch?v=aaaaaaaaaaa"}}
+	var gotArgs []string
+	o := Options{TrackNumber: func(artist, album, title, id string) (int, int) {
+		gotArgs = []string{artist, album, title, id}
+		return 2, 24
+	}}
+	no, total := trackFallback(o, info)
+	if no != 2 || total != 24 || gotArgs[0] != "C418" || gotArgs[3] != "aaaaaaaaaaa" {
+		t.Fatalf("fallback = %d/%d, lookup %q", no, total, gotArgs)
+	}
+	if got := renameTarget("/m", "/m/C418/Volume Alpha/Door.opus", info, nil, no, total); got != "/m/C418/Volume Alpha/02 - Door.opus" {
+		t.Errorf("got %q", got)
+	}
+	// a number in the tags wins: no lookup
+	info.Tags["track"] = "5"
+	if no, _ := trackFallback(o, info); no != 0 {
+		t.Errorf("looked up despite a track tag: %d", no)
 	}
 }
 

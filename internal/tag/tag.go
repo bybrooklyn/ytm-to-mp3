@@ -25,6 +25,10 @@ type Options struct {
 	// OnMove, if set, is told about every file moved (by Rename or by Undo), so the state
 	// database can follow it.
 	OnMove func(from, to string)
+	// TrackNumber, if set, gives a file's place on its album when its tags have no track
+	// number (from the album lookups), so a rename can still name it "NN - Title". id is
+	// the YouTube video id from the comment tag ("" if none). 0 = unknown.
+	TrackNumber func(artist, album, title, id string) (no, total int)
 	// Files, if set, limits the run to these files (under Dir) instead of every one there.
 	Files   []string
 	Undo    bool // revert the last applied batch
@@ -174,7 +178,8 @@ func propose(ctx context.Context, o Options, path string) (*proposal, error) {
 		}
 	}
 	if o.Rename {
-		pr.newPath = renameTarget(o.Dir, path, info, pr.set)
+		no, total := trackFallback(o, info)
+		pr.newPath = renameTarget(o.Dir, path, info, pr.set, no, total)
 	}
 	return pr, nil
 }
@@ -224,7 +229,28 @@ func year(d string) string {
 	return d
 }
 
-func renameTarget(root, path string, info Info, set map[string]string) string {
+// trackFallback is the track number for a file without one, from o.TrackNumber, looked up
+// by the tags as ytm wrote them (before any MusicBrainz corrections).
+func trackFallback(o Options, info Info) (no, total int) {
+	if o.TrackNumber == nil || info.get("track") != "" || info.get("album") == "" {
+		return 0, 0
+	}
+	id := ""
+	if _, v, ok := strings.Cut(info.get("comment"), "watch?v="); ok {
+		id = v
+	}
+	for _, a := range []string{info.get("album_artist"), firstArtist(info.get("artist"))} {
+		if a == "" {
+			continue
+		}
+		if no, total := o.TrackNumber(a, info.get("album"), info.get("title"), id); no > 0 {
+			return no, total
+		}
+	}
+	return 0, 0
+}
+
+func renameTarget(root, path string, info Info, set map[string]string, fallbackNo, fallbackTotal int) string {
 	get := func(k string) string {
 		if v, ok := set[k]; ok {
 			return v
@@ -243,7 +269,11 @@ func renameTarget(root, path string, info Info, set map[string]string) string {
 	prefix := ""
 	if al := get("album"); al != "" {
 		parts = append(parts, names.Part(al, "Unknown Album"))
-		prefix = names.TrackPrefix(names.ParseTrack(get("track")))
+		no, total := names.ParseTrack(get("track"))
+		if no <= 0 {
+			no, total = fallbackNo, fallbackTotal
+		}
+		prefix = names.TrackPrefix(no, total)
 	}
 	parts = append(parts, names.PartBetween(prefix, title, "Unknown", ext))
 	np := filepath.Join(parts...)

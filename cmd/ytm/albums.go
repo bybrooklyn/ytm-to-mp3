@@ -83,13 +83,26 @@ func albumTracks(g albumGroup, a *engine.Album, have map[string]bool) []model.Tr
 // been found on YouTube Music before (the --albums cache), matching by video id or, for a
 // saved music video, by title.
 func numberFromAlbums(st *store.Store, tracks []model.Track) {
-	albums := map[string]*engine.Album{}
+	lookup := albumNumbers(st)
 	for i := range tracks {
 		t := &tracks[i]
-		if t.TrackNo > 0 || t.Album == "" || t.PrimaryArtist() == "" {
+		if t.TrackNo > 0 {
 			continue
 		}
-		k := albumKey(t.PrimaryArtist(), t.Album)
+		t.TrackNo, t.TrackTotal = lookup(t.PrimaryArtist(), t.Album, t.Title, t.ID)
+	}
+}
+
+// albumNumbers returns a lookup of a song's position on its album from the --albums cache
+// in st (each album read once), matching by video id or, for a saved music video, by
+// title. 0 = not known.
+func albumNumbers(st *store.Store) func(artist, album, title, id string) (no, total int) {
+	albums := map[string]*engine.Album{}
+	return func(artist, album, title, id string) (int, int) {
+		if strings.TrimSpace(album) == "" || strings.TrimSpace(artist) == "" {
+			return 0, 0
+		}
+		k := albumKey(artist, album)
 		a, seen := albums[k]
 		if !seen {
 			if data, ok := st.Album(k); ok && data != "" {
@@ -101,14 +114,14 @@ func numberFromAlbums(st *store.Store, tracks []model.Track) {
 			albums[k] = a
 		}
 		if a == nil {
-			continue
+			return 0, 0
 		}
 		for n, at := range a.Tracks {
-			if at.ID == t.ID || engine.SameSong(t.Title, at.Title) {
-				t.TrackNo, t.TrackTotal = n+1, len(a.Tracks)
-				break
+			if (id != "" && at.ID == id) || engine.SameSong(title, at.Title) {
+				return n + 1, len(a.Tracks)
 			}
 		}
+		return 0, 0
 	}
 }
 
