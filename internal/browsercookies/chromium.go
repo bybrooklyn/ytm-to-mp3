@@ -173,21 +173,21 @@ func (k key) open(body []byte) ([]byte, bool) {
 	return out[:len(out)-n], true
 }
 
-func readChromium(d db, ks keySource) ([]Cookie, error) {
-	return withPrivateCopy(d.path, func(conn *sql.DB) ([]Cookie, error) { return chromiumCookies(conn, ks) })
+func readChromium(d db, ks keySource, hosts []string) ([]Cookie, error) {
+	return withPrivateCopy(d.path, func(conn *sql.DB) ([]Cookie, error) { return chromiumCookies(conn, ks, hosts) })
 }
 
 // chromiumEpoch is 1601-01-01 in unix seconds; Chromium stores microseconds since then.
 const chromiumEpoch = 11644473600
 
-func chromiumCookies(conn *sql.DB, ks keySource) ([]Cookie, error) {
+func chromiumCookies(conn *sql.DB, ks keySource, hosts []string) ([]Cookie, error) {
 	version := 0
 	var v string
 	if conn.QueryRow(`SELECT value FROM meta WHERE key='version'`).Scan(&v) == nil {
 		version, _ = strconv.Atoi(v)
 	}
 	rows, err := conn.Query(`SELECT host_key, path, is_secure, expires_utc, name, value, encrypted_value FROM cookies
-		WHERE host_key IN ` + hostIn() + ` ORDER BY host_key DESC`)
+		WHERE host_key IN ` + hostIn(hosts) + ` ORDER BY host_key DESC`)
 	if err != nil {
 		return nil, err
 	}

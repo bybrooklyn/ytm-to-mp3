@@ -51,15 +51,19 @@ type Track struct {
 // Client talks to Apple Music as a signed-in user.
 type Client struct {
 	mediaUserToken string
+	cookie         string // full apple cookie jar (Cookie header), optional
 	storefront     string
 	language       string
 	bearer         string // developer token, auto-fetched and cached
 }
 
 // New builds a client. mediaUserToken is the user's login (the
-// media-user-token cookie from music.apple.com); storefront defaults to "us".
-// The developer bearer token is fetched lazily so SetProxy can run first.
-func New(mediaUserToken, storefront, language string) (*Client, error) {
+// media-user-token cookie from music.apple.com); cookie is the full Apple
+// cookie jar (Cookie header) when available, which the web-playback endpoint
+// needs beyond the token — pass "" if only the token is known. storefront
+// defaults to "us". The developer bearer token is fetched lazily so SetProxy
+// can run first.
+func New(mediaUserToken, cookie, storefront, language string) (*Client, error) {
 	mediaUserToken = strings.TrimSpace(mediaUserToken)
 	if mediaUserToken == "" {
 		return nil, errors.New("no Apple Music media-user-token (run: ytm apple login)")
@@ -67,7 +71,10 @@ func New(mediaUserToken, storefront, language string) (*Client, error) {
 	if storefront == "" {
 		storefront = "us"
 	}
-	return &Client{mediaUserToken: mediaUserToken, storefront: strings.ToLower(storefront), language: language}, nil
+	return &Client{
+		mediaUserToken: mediaUserToken, cookie: strings.TrimSpace(cookie),
+		storefront: strings.ToLower(storefront), language: language,
+	}, nil
 }
 
 // SetProxy routes all Apple Music traffic through proxyURL (e.g. a Proton
@@ -92,7 +99,7 @@ func (c *Client) creds() (widevinerip.Credentials, error) {
 		}
 		c.bearer = tok
 	}
-	return widevinerip.Credentials{AuthToken: c.bearer, MediaUserToken: c.mediaUserToken}, nil
+	return widevinerip.Credentials{AuthToken: c.bearer, MediaUserToken: c.mediaUserToken, Cookie: c.cookie}, nil
 }
 
 // token returns the cached developer bearer token, fetching it if needed.

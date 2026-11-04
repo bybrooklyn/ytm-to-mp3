@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/apple"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/browsercookies"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
@@ -46,6 +47,9 @@ func runApple(ctx context.Context, u *ui.UI, o opts, args []string) error {
 		if err := config.SaveAppleToken(""); err != nil {
 			return err
 		}
+		if err := config.SaveAppleCookies(""); err != nil {
+			return err
+		}
 		u.Printf("Forgot your Apple Music login.")
 		return nil
 	case "status":
@@ -57,16 +61,31 @@ func runApple(ctx context.Context, u *ui.UI, o opts, args []string) error {
 	return appleDownloadLinks(ctx, u, o, args)
 }
 
-// appleLogin prompts for the media-user-token and saves it.
+// appleLogin finds the media-user-token in a browser (or takes it pasted) and
+// saves it.
 func appleLogin(ctx context.Context, u *ui.UI) error {
 	if !u.Interactive() {
 		return errors.New("ytm apple login needs a terminal")
 	}
 	u.Printf("Apple Music login")
-	u.Printf("Sign in at https://music.apple.com in your browser, then from its cookies")
-	u.Printf("copy the value of the cookie named \"media-user-token\" and paste it here.")
-	u.Printf("(DevTools > Application > Cookies > https://music.apple.com)")
-	token := strings.TrimSpace(u.Ask("media-user-token: ", ""))
+
+	var token, jar string
+	// Try to read it straight from a browser you're already signed in to. The
+	// whole apple cookie jar is kept, not just the token: the web-playback
+	// endpoint needs the iTunes store-session cookies too.
+	if cs, browser, err := browsercookies.FindAppleMusicCookies(); err == nil {
+		if u.Confirm(fmt.Sprintf("Found an Apple Music login in %s. Use it?", browser), true) {
+			token = browsercookies.AppleUserToken(cs)
+			jar = browsercookies.CookieHeader(cs)
+		}
+	}
+	if token == "" {
+		u.Printf("Sign in at https://music.apple.com in your browser, then from its cookies")
+		u.Printf("copy the value of the cookie named \"media-user-token\" and paste it here.")
+		u.Printf("(DevTools > Application > Cookies > https://music.apple.com)")
+		u.Printf("Tip: signing in via a browser lets ytm read the full session automatically.")
+		token = strings.TrimSpace(u.Ask("media-user-token: ", ""))
+	}
 	if token == "" {
 		return errors.New("no token entered")
 	}
@@ -75,6 +94,9 @@ func appleLogin(ctx context.Context, u *ui.UI) error {
 		store = "us"
 	}
 	if err := config.SaveAppleToken(token); err != nil {
+		return err
+	}
+	if err := config.SaveAppleCookies(jar); err != nil {
 		return err
 	}
 	cfg := config.Load()
@@ -99,7 +121,7 @@ func appleStatus(ctx context.Context, u *ui.UI) error {
 		store = "us"
 	}
 	u.Printf("Apple Music login saved (storefront %s).", store)
-	if _, err := apple.New(token, store, cfg.AppleLanguage); err != nil {
+	if _, err := apple.New(token, config.AppleCookies(), store, cfg.AppleLanguage); err != nil {
 		return err
 	}
 	u.Printf("Run a download to confirm the token still works.")
@@ -118,7 +140,7 @@ func appleClient(ctx context.Context, u *ui.UI, o opts) (*apple.Client, func(), 
 	if store == "" {
 		store = "us"
 	}
-	c, err := apple.New(token, store, cfg.AppleLanguage)
+	c, err := apple.New(token, config.AppleCookies(), store, cfg.AppleLanguage)
 	if err != nil {
 		return nil, nil, err
 	}

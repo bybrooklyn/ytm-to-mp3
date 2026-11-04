@@ -41,6 +41,10 @@ var ErrUnavailable = errors.New("Unavailable")
 type Credentials struct {
 	AuthToken      string // developer token, sent as "Bearer ..."
 	MediaUserToken string // media-user-token cookie of the signed-in user
+	// Cookie is the full music.apple.com/apple.com cookie jar as an HTTP Cookie
+	// header value. The MZPlay webPlayback/license endpoints need the iTunes
+	// store-session cookies (dssid2, dssf, ...), not just the media-user-token.
+	Cookie string
 }
 
 // mediaHeaders returns the browser-like headers Apple expects for media requests.
@@ -56,19 +60,27 @@ func (c Credentials) mediaHeaders() map[string]string {
 		headers["x-apple-music-user-token"] = c.MediaUserToken
 		headers["Media-User-Token"] = c.MediaUserToken
 	}
+	if c.Cookie != "" {
+		headers["Cookie"] = c.Cookie
+	}
 	return headers
 }
 
 // apiHeaders returns the headers for authenticated Apple API POSTs.
 func (c Credentials) apiHeaders() map[string]string {
-	return map[string]string{
+	h := map[string]string{
 		"Content-Type":             "application/json",
 		"Origin":                   appleOrigin,
 		"Referer":                  appleReferer,
 		"User-Agent":               browserUA,
 		"Authorization":            "Bearer " + c.AuthToken,
 		"x-apple-music-user-token": c.MediaUserToken,
+		"Media-User-Token":         c.MediaUserToken,
 	}
+	if c.Cookie != "" {
+		h["Cookie"] = c.Cookie
+	}
+	return h
 }
 
 type webPlaybackResponse struct {

@@ -61,13 +61,13 @@ func firefoxDBs(root string) []string {
 	return out
 }
 
-func readFirefox(path string) ([]Cookie, error) {
-	return withPrivateCopy(path, firefoxCookies)
+func readFirefox(path string, hosts []string) ([]Cookie, error) {
+	return withPrivateCopy(path, func(conn *sql.DB) ([]Cookie, error) { return firefoxCookies(conn, hosts) })
 }
 
-func firefoxCookies(conn *sql.DB) ([]Cookie, error) {
+func firefoxCookies(conn *sql.DB, hosts []string) ([]Cookie, error) {
 	rows, err := conn.Query(`SELECT host, path, isSecure, expiry, name, value FROM moz_cookies
-		WHERE host IN ` + hostIn() + ` ORDER BY host DESC`)
+		WHERE host IN ` + hostIn(hosts) + ` ORDER BY host DESC`)
 	if err != nil {
 		return nil, err
 	}

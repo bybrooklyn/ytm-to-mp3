@@ -91,7 +91,7 @@ func TestFirefox(t *testing.T) {
 		`INSERT INTO moz_cookies VALUES ('.youtube.com','/',1,1900000000000,'SID','ms-expiry')`,
 		`INSERT INTO moz_cookies VALUES ('.google.com','/',1,0,'SAPISID','google-only')`,
 		`INSERT INTO moz_cookies VALUES ('music.youtube.com','/',0,0,'PREF','p')`)
-	cs, err := readFirefox(p)
+	cs, err := readFirefox(p, youTubeHosts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestChromium(t *testing.T) {
 		`INSERT INTO cookies VALUES ('.youtube.com','/',1,13400000000000000,'__Secure-3PAPISID','',X'`+blob+`')`,
 		`INSERT INTO cookies VALUES ('.youtube.com','/',0,0,'PLAIN','plain',X'')`,
 		`INSERT INTO cookies VALUES ('.google.com','/',1,0,'SID','no',X'')`)
-	cs, err := readChromium(db{path: p}, fixedKeys{k})
+	cs, err := readChromium(db{path: p}, fixedKeys{k}, youTubeHosts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestChromium(t *testing.T) {
 	if e := got["__Secure-3PAPISID"].Expires; e != 13400000000-chromiumEpoch {
 		t.Errorf("expiry %d", e)
 	}
-	if _, err := readChromium(db{path: p}, fixedKeys{cbcKey("wrong", 1)}); err != nil {
+	if _, err := readChromium(db{path: p}, fixedKeys{cbcKey("wrong", 1)}, youTubeHosts); err != nil {
 		t.Errorf("one undecryptable cookie must not fail the rest: %v", err)
 	}
 }

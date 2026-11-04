@@ -36,6 +36,17 @@ func AppleTokenPath() string {
 	return filepath.Join(d, "apple-token")
 }
 
+// AppleCookiesPath is where ytm keeps the full Apple cookie jar (mode 0600),
+// an HTTP Cookie header value; the web-playback endpoint needs more than the
+// media-user-token alone.
+func AppleCookiesPath() string {
+	d, err := dir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "apple-cookies")
+}
+
 // AppleToken reads the saved Apple Music media-user-token, or "" if none.
 func AppleToken() string {
 	p := AppleTokenPath()
@@ -47,6 +58,39 @@ func AppleToken() string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+// AppleCookies reads the saved Apple cookie jar (Cookie header), or "".
+func AppleCookies() string {
+	p := AppleCookiesPath()
+	if p == "" {
+		return ""
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// SaveAppleCookies writes the cookie jar (mode 0600), or removes it when empty.
+func SaveAppleCookies(jar string) error {
+	p := AppleCookiesPath()
+	if p == "" {
+		return fmt.Errorf("no config directory")
+	}
+	jar = strings.TrimSpace(jar)
+	if jar == "" {
+		err := os.Remove(p)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(jar+"\n"), 0o600)
 }
 
 // SaveAppleToken writes the media-user-token (mode 0600), or removes it when empty.
