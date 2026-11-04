@@ -4,6 +4,9 @@ import (
 	"context"
 	"regexp"
 	"strings"
+	"unicode"
+
+	textnorm "golang.org/x/text/unicode/norm"
 
 	ampapi "github.com/bybrooklyn/ytm-to-mp3/internal/apple/amp-api"
 )
@@ -78,13 +81,27 @@ func score(cand ampapi.SongRespData, wantTitle, wantArtist, wantAlbum string, wa
 
 var nonAlnum = regexp.MustCompile(`[^a-z0-9 ]+`)
 
-// norm lowercases, strips bracketed noise and punctuation, and collapses
-// whitespace, so "Song (feat. X) [Remastered]" ~ "song feat x remastered".
+// norm lowercases, folds accents (é -> e, so accented titles still match),
+// strips bracketed noise and punctuation, and collapses whitespace, so
+// "Beyoncé (feat. X) [Remastered]" ~ "beyonce feat x remastered".
 func norm(s string) string {
-	s = strings.ToLower(s)
+	s = strings.ToLower(foldAccents(s))
 	s = strings.NewReplacer("(", " ", ")", " ", "[", " ", "]", " ", "&", " and ").Replace(s)
 	s = nonAlnum.ReplaceAllString(s, " ")
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// foldAccents strips combining marks via NFD decomposition, mapping accented
+// Latin letters to their base letter (é -> e, ö -> o).
+func foldAccents(s string) string {
+	out := make([]rune, 0, len(s))
+	for _, r := range textnorm.NFD.String(s) {
+		if unicode.Is(unicode.Mn, r) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return string(out)
 }
 
 // tokenOverlap is the fraction of want's tokens present in have (0..1).
