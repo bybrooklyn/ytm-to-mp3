@@ -26,7 +26,8 @@ func ValidFormat(f string) bool {
 
 // encodeArgs builds the ffmpeg command line that converts/remuxes src into dst
 // with tags and (optionally) square cover art. Streams are copied untouched
-// when the source codec already matches the target format.
+// when the source codec already matches the target format. For opus, cover is not an
+// image but an ffmetadata file from names.WriteOggMeta (Ogg carries art as a comment).
 func encodeArgs(src, cover, dst, format, srcCodec string, meta map[string]string) []string {
 	// Inputs are untrusted media: only local files / pipes may be opened (no network, no
 	// concat/subfile tricks through the playlist protocols), and paths are always given as
@@ -36,19 +37,19 @@ func encodeArgs(src, cover, dst, format, srcCodec string, meta map[string]string
 	// Cover art comes from the network: decode it only if it really is a jpeg/png/webp,
 	// with the demuxer and decoder forced so ffmpeg never probes it as something else.
 	dec := ""
-	if cover != "" && format != "opus" { // ffmpeg can't embed pictures in Ogg Opus
+	if cover != "" && format != "opus" {
 		dec = names.ImageDecoder(cover)
 	}
 	withCover := dec != ""
-	if withCover {
+	switch {
+	case withCover:
 		a = append(a, "-protocol_whitelist", "file,pipe", "-f", "image2", "-pattern_type", "none",
-			"-c:v", dec, "-i", names.FFPath(cover))
+			"-c:v", dec, "-i", names.FFPath(cover), "-map", "0:a:0", "-map", "1:v:0", "-map_metadata", "-1")
+	case format == "opus" && cover != "":
+		a = append(a, names.OggMetaArgs(cover)...) // the cover comment; YouTube's tags dropped
+	default:
+		a = append(a, "-map", "0:a:0", "-map_metadata", "-1") // drop YouTube's own tags
 	}
-	a = append(a, "-map", "0:a:0")
-	if withCover {
-		a = append(a, "-map", "1:v:0")
-	}
-	a = append(a, "-map_metadata", "-1") // drop YouTube's own tags
 
 	switch format {
 	case "mp3":

@@ -17,8 +17,10 @@ import (
 // What a track is doing right now, for the live display.
 const (
 	stResolve int32 = iota // asking YouTube for the stream
+	stQueued               // resolved, waiting for a download worker
 	stFetch                // downloading it
 	stEncode               // converting and tagging
+	stMusic                // the normal route failed; trying through YouTube Music
 )
 
 // tstate is one in-flight track as the live display sees it.
@@ -28,7 +30,12 @@ type tstate struct {
 	stage   atomic.Int32
 	got     atomic.Int64
 	total   atomic.Int64 // 0 = unknown (yt-dlp is downloading it)
-	exit    atomic.Value // string: which exit it's using
+
+	// Stage timestamps for the YTM_DEBUG timing report. Each is written by the one stage
+	// that owns the track at that moment; channel hand-offs order them.
+	resolvedAt, fetchStart, encodeStart time.Time
+	via                                 string // "direct", "yt-dlp", or with " (YT Music)"
+	lookup                              string // "go" when the native player API resolved it
 }
 
 // liveSet is the registry of in-flight tracks.
@@ -54,7 +61,9 @@ func (s *liveSet) remove(id string) {
 	s.mu.Unlock()
 }
 
-// snapshot returns the in-flight tracks, downloading ones first, then oldest first.
+// snapshot returns the in-flight tracks: ones being worked on (downloading, converting)
+// first, then ones waiting, each oldest first. Moving from downloading to converting keeps a
+// row in place, so rows don't jump around between frames.
 func (s *liveSet) snapshot() []*tstate {
 	s.mu.Lock()
 	out := make([]*tstate, 0, len(s.m))
@@ -64,12 +73,10 @@ func (s *liveSet) snapshot() []*tstate {
 	s.mu.Unlock()
 	rank := func(t *tstate) int {
 		switch t.stage.Load() {
-		case stFetch:
+		case stFetch, stEncode, stMusic:
 			return 0
-		case stEncode:
-			return 1
 		}
-		return 2
+		return 1
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if ri, rj := rank(out[i]), rank(out[j]); ri != rj {
@@ -127,10 +134,20 @@ func (e *engine) liveRows(speed float64, began time.Time) []string {
 	done, failed := int(e.done.Load()), int(e.failed.Load())
 	finished := done + failed
 
-	// overall
+	// overall: finished tracks plus the downloaded share of the ones downloading now, so the
+	// bar creeps forward between completions instead of jumping
+	snap := e.live.snapshot()
 	frac := 0.0
 	if e.total > 0 {
-		frac = float64(finished) / float64(e.total)
+		part := 0.0
+		for _, ts := range snap {
+			if ts.stage.Load() == stEncode {
+				part += 1
+			} else if got, total := ts.got.Load(), ts.total.Load(); total > 0 {
+				part += min(1, float64(got)/float64(total))
+			}
+		}
+		frac = min(1, (float64(finished)+part*0.9)/float64(e.total))
 	}
 	eta := time.Duration(0)
 	if elapsed := now.Sub(began); finished >= 3 && elapsed > 5*time.Second {
@@ -168,7 +185,6 @@ func (e *engine) liveRows(speed float64, began time.Time) []string {
 
 	// tracks in flight: as many as fit, leaving room for scrolling output above
 	room := min(8, max(0, height-len(rows)-6))
-	snap := e.live.snapshot()
 	shown := snap
 	if len(shown) > room {
 		shown = shown[:room]
@@ -189,6 +205,10 @@ func (e *engine) liveRows(speed float64, began time.Time) []string {
 			rows = append(rows, fmt.Sprintf("  %s↓%s %s%s  %s", cyan, reset, label, pad, state))
 		case stEncode:
 			rows = append(rows, fmt.Sprintf("  %s♪%s %s%s  %sconverting%s", yel, reset, label, pad, dim, reset))
+		case stQueued:
+			rows = append(rows, fmt.Sprintf("  %s·%s %s%s  %squeued%s", dim, reset, label, pad, dim, reset))
+		case stMusic:
+			rows = append(rows, fmt.Sprintf("  %s%s%s %s%s  %strying YouTube Music%s", yel, spin(now), reset, label, pad, dim, reset))
 		default:
 			rows = append(rows, fmt.Sprintf("  %s%s%s %s%s  %slooking up%s", dim, spin(now), reset, label, pad, dim, reset))
 		}

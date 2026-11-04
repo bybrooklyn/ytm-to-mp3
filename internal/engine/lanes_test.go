@@ -45,19 +45,21 @@ func TestSourSwapsAfterRepeatedTrouble(t *testing.T) {
 	l := e.lanes[0]
 	ep := l.epoch.Load()
 	for i := 0; i < 3; i++ {
-		e.sour(context.Background(), l, ep)
+		e.sour(context.Background(), l, ep, "kept failing", 1)
 	}
 	if calls != 0 {
 		t.Fatal("swapped too early")
 	}
-	e.sour(context.Background(), l, ep)
+	e.sour(context.Background(), l, ep, "kept failing", 1)
+	e.bg.Wait() // the swap runs in the background
 	if calls != 1 || l.exitName() != "new" || l.ytdlp().proxy != "socks5h://x:y@127.0.0.1:2" {
 		t.Fatalf("calls=%d exit=%s", calls, l.exitName())
 	}
 	// failures from the exit we already replaced must not burn the new one
 	for i := 0; i < 8; i++ {
-		e.sour(context.Background(), l, ep)
+		e.sour(context.Background(), l, ep, "kept failing", 1)
 	}
+	e.bg.Wait()
 	if calls != 1 {
 		t.Fatalf("stale-epoch failures caused another swap (calls=%d)", calls)
 	}
@@ -65,8 +67,9 @@ func TestSourSwapsAfterRepeatedTrouble(t *testing.T) {
 	e.Replace = func(context.Context, vpn.Exit) (vpn.Exit, error) { return vpn.Exit{}, errors.New("none") }
 	ep = l.epoch.Load()
 	for i := 0; i < 4; i++ {
-		e.sour(context.Background(), l, ep)
+		e.sour(context.Background(), l, ep, "kept failing", 1)
 	}
+	e.bg.Wait()
 	if l.exitName() != "new" {
 		t.Fatal("lane changed despite failed replace")
 	}

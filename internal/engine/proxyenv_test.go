@@ -15,7 +15,7 @@ import (
 
 func TestEnvCarriesProxyNotArgv(t *testing.T) {
 	y := ytdlp{proxy: "socks5h://ytm:secret@127.0.0.1:9"}
-	for _, a := range y.baseArgs(0) {
+	for _, a := range y.baseArgs() {
 		if strings.Contains(a, "secret") {
 			t.Fatalf("proxy password leaked into argv: %q", a)
 		}
@@ -58,7 +58,7 @@ func TestYtDlpUsesEnvProxy(t *testing.T) {
 	y := ytdlp{tools: deps.Tools{YtDlp: bin}, proxy: "socks5h://ytm:secret@" + l.Addr().String()}
 	rctx, rc := context.WithTimeout(ctx, 40*time.Second)
 	defer rc()
-	_, _ = y.Resolve(rctx, "dQw4w9WgXcQ", 0)
+	_, _ = y.Resolve(rctx, "dQw4w9WgXcQ")
 	if hits.Load() == 0 {
 		t.Fatal("yt-dlp did not use the proxy from the environment")
 	}

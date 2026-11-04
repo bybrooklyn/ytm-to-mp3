@@ -48,16 +48,16 @@ func TestOutputTemplateSafe(t *testing.T) {
 
 func TestYtdlpRejectsInvalidID(t *testing.T) {
 	y := ytdlp{tools: deps.Tools{YtDlp: "/nonexistent/yt-dlp"}}
-	if _, err := y.Resolve(context.Background(), "../../x", 0); err == nil || kindOf(err) != kindPermanent {
+	if _, err := y.Resolve(context.Background(), "../../x"); err == nil || kindOf(err) != kindPermanent {
 		t.Errorf("Resolve accepted a bad id: %v", err)
 	}
-	if _, err := y.Download(context.Background(), "a/b", t.TempDir(), 0); err == nil || kindOf(err) != kindPermanent {
+	if _, err := y.Download(context.Background(), "a/b", t.TempDir(), nil); err == nil || kindOf(err) != kindPermanent {
 		t.Errorf("Download accepted a bad id: %v", err)
 	}
 }
 
 func TestBaseArgsDisablePlugins(t *testing.T) {
-	args := strings.Join(ytdlp{}.baseArgs(0), " ")
+	args := strings.Join(ytdlp{}.baseArgs(), " ")
 	if !strings.Contains(args, "--ignore-config --no-plugin-dirs") {
 		t.Errorf("baseArgs = %s", args)
 	}
@@ -91,8 +91,44 @@ func TestOutputPathByteLimit(t *testing.T) {
 			t.Errorf("component of %d bytes", len(c))
 		}
 	}
-	if !strings.HasSuffix(p, " [dQw4w9WgXcQ].flac") {
-		t.Errorf("id suffix lost: %q", p)
+	if !strings.HasSuffix(p, ".flac") {
+		t.Errorf("extension lost: %q", p)
+	}
+	tr.Album, tr.TrackNo, tr.TrackTotal = strings.Repeat("Ü", 200), 7, 12
+	p, _ = outputPath("/out", tr, &Resolved{}, "flac")
+	for _, c := range strings.Split(filepath.ToSlash(p), "/") {
+		if len(c) > 255 {
+			t.Errorf("component of %d bytes", len(c))
+		}
+	}
+	if !strings.HasPrefix(filepath.Base(p), "07 - ") {
+		t.Errorf("track number lost: %q", p)
+	}
+}
+
+func TestOutputPathNamesAndTrackTag(t *testing.T) {
+	cases := []struct {
+		tr    model.Track
+		r     Resolved
+		want  string
+		track string
+	}{
+		{model.Track{ID: "aaaaaaaaaaa", Title: "Door", Album: "Volume Alpha", Artists: []string{"C418"}, TrackNo: 2, TrackTotal: 24},
+			Resolved{}, "/m/C418/Volume Alpha/02 - Door.opus", "2/24"},
+		{model.Track{ID: "aaaaaaaaaaa", Title: "Door", Album: "Big Box", Artists: []string{"X"}, TrackNo: 7, TrackTotal: 120},
+			Resolved{}, "/m/X/Big Box/007 - Door.opus", "7/120"},
+		{model.Track{ID: "aaaaaaaaaaa", Title: "Door", Album: "Volume Alpha", Artists: []string{"C418"}},
+			Resolved{Track: 5}, "/m/C418/Volume Alpha/05 - Door.opus", "5"},
+		{model.Track{ID: "aaaaaaaaaaa", Title: "Door", Artists: []string{"C418"}},
+			Resolved{Track: 5}, "/m/C418/Door.opus", "5"}, // no album: no number in the name
+		{model.Track{ID: "aaaaaaaaaaa", Title: "Door", Album: "Volume Alpha", Artists: []string{"C418"}},
+			Resolved{}, "/m/C418/Volume Alpha/Door.opus", ""},
+	}
+	for _, c := range cases {
+		p, meta := outputPath("/m", c.tr, &c.r, "opus")
+		if filepath.ToSlash(p) != c.want || meta["track"] != c.track {
+			t.Errorf("got %q track %q, want %q track %q", p, meta["track"], c.want, c.track)
+		}
 	}
 }
 

@@ -56,6 +56,11 @@ type Options struct {
 	// BatchSize is how many videos one yt-dlp process resolves at a time
 	// (0 = automatic, 1 = no batching).
 	BatchSize int
+	// MusicFirst are tracks already known to be unavailable under their own id: they skip
+	// the normal lookup and go straight to the YouTube Music search.
+	MusicFirst map[string]bool
+	// Replacements are YouTube Music matches found by an earlier run (dead id -> video).
+	Replacements map[string]string
 }
 
 // Summary is the result of a run.
@@ -79,14 +84,32 @@ type ExitStat struct {
 }
 
 type job struct {
-	tr     model.Track
-	res    *Resolved
-	src    string // downloaded source file
-	cover  string // cover art, fetched alongside the audio ("" = none)
-	client int
-	lane   *lane // the exit this track was resolved on; stream URLs are tied to its IP
-	epoch  int64 // lane.epoch when resolved; if it changed, the stream URL is for an old IP
-	ts     *tstate
+	tr    model.Track
+	res   *Resolved
+	src   string // downloaded source file
+	cover string // cover art, fetched alongside the audio ("" = none)
+	lane  *lane  // the exit this track was resolved on; stream URLs are tied to its IP
+	epoch int64  // lane.epoch when resolved; if it changed, the stream URL is for an old IP
+	ts    *tstate
+	owner *lane  // the exit charged for this track in lane.owned until its download ends
+	music bool   // found by searching YouTube Music (the original video id was dead)
+	video string // the video to download when it differs from tr.ID (a YouTube Music match)
+}
+
+// vid is the YouTube video this job downloads: normally the track's own id, or the
+// replacement a YouTube Music search found for it.
+func (j *job) vid() string {
+	if j.video != "" {
+		return j.video
+	}
+	return j.tr.ID
+}
+
+func viaName(path string, music bool) string {
+	if music {
+		return path + " (YT Music)"
+	}
+	return path
 }
 
 // lane is one exit with its own governor, HTTP client and yt-dlp settings.
@@ -101,10 +124,12 @@ type lane struct {
 	blocked  atomic.Int64
 	swaps    atomic.Int64
 	fetching atomic.Int32 // direct fetches in flight (so an idle lane doesn't look slow)
+	owned    atomic.Int32 // tracks resolved on this exit and not yet downloaded (queued or fetching)
 	bad      atomic.Int32 // consecutive throttles / failures
 	swapping atomic.Bool
 	epoch    atomic.Int64 // bumps on every exit swap; stream URLs are valid for one epoch only
 	good     atomic.Bool  // OnGood has been told about this exit
+	visitor  atomic.Value // string: YouTube visitor id for native lookups on this exit
 
 	rmu   sync.Mutex
 	rate  float64 // recent bytes/sec while busy
@@ -147,28 +172,34 @@ func (l *lane) speed() float64 { l.rmu.Lock(); defer l.rmu.Unlock(); return l.ra
 
 func (l *lane) setSpeed(v float64) { l.rmu.Lock(); l.rate = v; l.rmu.Unlock() }
 
-// sour records a bad outcome; after several in a row the exit is swapped for a fresh
-// server (a different IP usually clears a rate limit).
-func (e *engine) sour(ctx context.Context, l *lane, epoch int64) {
-	e.sourWhy(ctx, l, epoch, "kept failing", 1)
-}
-
-// sourWhy is sour with a reason for the VPN layer and a weight (a bot check counts double).
-func (e *engine) sourWhy(ctx context.Context, l *lane, epoch int64, reason string, weight int32) {
+// sour records a bad outcome on l (weight 2 for a bot check); after several in a row the
+// exit is swapped for a fresh server (a different IP usually clears a rate limit).
+func (e *engine) sour(ctx context.Context, l *lane, epoch int64, reason string, weight int32) {
 	if l.epoch.Load() != epoch {
 		return // that failure belongs to an exit we've already replaced
 	}
-	if l.bad.Add(weight) < 4 {
-		return
+	if l.bad.Add(weight) >= 4 {
+		e.swap(ctx, l, reason)
 	}
-	e.swap(ctx, l, reason)
 }
 
+// swap replaces l's exit in the background (unless that is already happening): finding a
+// replacement can take a VPN handshake or several, and the worker that noticed shouldn't
+// sit idle meanwhile. pick steers new work away from a lane while it is swapping.
 func (e *engine) swap(ctx context.Context, l *lane, why string) {
 	if !l.swapping.CompareAndSwap(false, true) {
 		return
 	}
-	defer l.swapping.Store(false)
+	e.bg.Add(1)
+	go func() {
+		defer e.bg.Done()
+		defer l.swapping.Store(false)
+		e.swapNow(ctx, l, why)
+	}()
+}
+
+// swapNow replaces l's exit; the caller has set l.swapping.
+func (e *engine) swapNow(ctx context.Context, l *lane, why string) {
 	l.bad.Store(0)
 	l.mu.Lock()
 	old := l.exit
@@ -201,6 +232,7 @@ func (e *engine) swap(ctx context.Context, l *lane, why string) {
 	l.swaps.Add(1)
 	e.nSwaps.Add(1)
 	l.good.Store(false)
+	l.visitor.Store("") // the visitor id belonged to the old IP
 	l.setSpeed(0)
 	l.gov.Reset(e.startLimit) // a fresh IP starts with a clean slate
 	oldClient.CloseIdleConnections()
@@ -229,7 +261,10 @@ func (e *engine) pick(avoid ...*lane) *lane {
 	var best *lane
 	var bestScore float64
 	for _, l := range lanes {
-		score := l.gov.Load()
+		// Lookups in progress plus tracks already waiting on this exit: Google limits how
+		// much one IP gets, so work has to spread over every exit, including ones that
+		// joined after the run started.
+		score := l.gov.Load() + float64(l.owned.Load())/float64(max(1, e.laneMax))
 		if r := l.speed(); r > 0 && maxRate > 0 {
 			score += 0.5 * (1 - r/maxRate)
 		}
@@ -256,18 +291,20 @@ func (e *engine) pick(avoid ...*lane) *lane {
 
 type engine struct {
 	Options
-	lmu        sync.RWMutex
-	lanes      []*lane
-	tmp        string
-	bytes      atomic.Int64
-	done       atomic.Int64
-	failed     atomic.Int64
-	active     atomic.Int64
-	nBlocked   atomic.Int64
-	nSwaps     atomic.Int64
-	total      int
-	live       liveSet      // in-flight tracks, for the live display
-	goodClient atomic.Int32 // the player client that last gave a fetchable URL
+	lmu      sync.RWMutex
+	lanes    []*lane
+	tmp      string
+	bytes    atomic.Int64
+	done     atomic.Int64
+	failed   atomic.Int64
+	active   atomic.Int64
+	nBlocked atomic.Int64
+	nSwaps   atomic.Int64
+	total    int
+	live     liveSet    // in-flight tracks, for the live display
+	tm       *timings   // per-stage durations for the YTM_DEBUG report
+	searches sync.Map   // track id -> *search started ahead of time (YouTube Music)
+	pathMu   sync.Mutex // choosing and claiming an output file name
 
 	startLimit int            // initial per-exit concurrency, restored when an exit is swapped
 	laneMax    int            // per-exit concurrency ceiling
@@ -292,9 +329,8 @@ type engine struct {
 var laneGap = 600 * time.Millisecond
 
 const (
-	maxTransient = 3
-	maxThrottled = 8
-	maxBatch     = 6
+	maxTries = 6 // lookups per track, each on the least-loaded exit not yet tried
+	maxBatch = 6
 )
 
 // Run downloads every track in todo and records results in the store.
@@ -316,12 +352,12 @@ func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 	if len(todo) == 0 {
 		return Summary{}
 	}
-	e := &engine{Options: o, total: len(todo), pctx: ctx}
+	e := &engine{Options: o, total: len(todo), pctx: ctx, tm: newTimings()}
 	exits := o.Exits
 	if len(exits) == 0 && o.NewExits == nil {
 		exits = []vpn.Exit{vpn.Direct}
 	}
-	start, laneMax := 3, 8
+	start, laneMax := 4, 8
 	if o.Jobs > 0 {
 		laneMax = max(1, (o.Jobs+max(1, len(exits))-1)/max(1, len(exits)))
 		start = min(start, laneMax)
@@ -469,6 +505,9 @@ feed:
 	<-statusDone
 	e.bg.Wait() // health probes / swaps must not outlive Run (the tunnels are closed after it)
 	o.UI.ClearStatus()
+	for _, l := range e.tm.report() {
+		o.UI.Printf("%s", l)
+	}
 	lanes := e.snap()
 	for _, l := range lanes {
 		l.http().CloseIdleConnections()
@@ -495,7 +534,7 @@ func (e *engine) newLane(x vpn.Exit) (*lane, error) {
 	}
 	l := &lane{
 		exit: x, gov: NewGovernor(e.startLimit, e.laneMax, laneGap), client: cl,
-		yt: ytdlp{tools: e.Tools, cache: e.CacheDir, proxy: x.Proxy},
+		yt: ytdlp{tools: e.Tools, cache: e.CacheDir, proxy: x.Proxy, format: e.Format},
 	}
 	e.lmu.Lock()
 	e.lanes = append(e.lanes, l)
@@ -672,30 +711,92 @@ func (e *engine) resolveBatch(ctx context.Context, batch []model.Track, out chan
 	for i, t := range batch {
 		sts[i] = state{t, e.live.add(t)}
 	}
-	emit := func(s state, res *Resolved, client int, ln *lane, epoch int64) {
-		s.ts.stage.Store(stFetch)
-		if canFetch(res) {
-			s.ts.total.Store(contentLength(res))
+	emitJob := func(j *job) {
+		j.ts.stage.Store(stQueued) // downloading only once a fetch worker picks it up
+		j.ts.resolvedAt = time.Now()
+		if canFetch(j.res) {
+			j.ts.total.Store(contentLength(j.res))
 		}
 		e.active.Add(1)
+		j.owner = j.lane
+		j.owner.owned.Add(1)
 		select {
-		case out <- &job{tr: s.t, res: res, client: client, lane: ln, epoch: epoch, ts: s.ts}:
+		case out <- j:
 		case <-ctx.Done():
-			e.live.remove(s.t.ID)
+			e.live.remove(j.tr.ID)
 			e.active.Add(-1)
+			j.owner.owned.Add(-1)
 		}
+	}
+	emit := func(s state, res *Resolved, ln *lane, epoch int64) {
+		emitJob(&job{tr: s.t, res: res, lane: ln, epoch: epoch, ts: s.ts})
 	}
 	single := func(s state, first *attempt) {
-		res, client, ln, epoch, err := e.resolveWithRetry(ctx, s.t, first)
+		res, ln, epoch, err := e.resolveWithRetry(ctx, s.t, first)
 		if err != nil {
-			e.fail(s.t, err)
+			if ctxErr(err) || ctx.Err() != nil {
+				e.fail(s.t, err)
+				return
+			}
+			// Last try: the song may live on under a new video id on YouTube Music.
+			j, rerr := e.rescue(ctx, s.t, s.ts, err)
+			if rerr != nil {
+				e.fail(s.t, rerr)
+				return
+			}
+			emitJob(j)
 			return
 		}
-		emit(s, res, client, ln, epoch)
+		emit(s, res, ln, epoch)
 	}
-	if len(batch) == 1 {
+	// Don't pile more onto exits that already have a full backlog: wait for room, so exits
+	// still connecting get their share instead of the first two getting everything.
+	e.waitForRoom(ctx)
+
+	// Known-dead ids: straight to the YouTube Music search.
+	keep := sts[:0]
+	for _, s := range sts {
+		if !e.MusicFirst[s.t.ID] {
+			keep = append(keep, s)
+			continue
+		}
+		j, err := e.rescue(ctx, s.t, s.ts, &Error{kindPermanent, "Video unavailable"})
+		if err != nil {
+			e.fail(s.t, err)
+			continue
+		}
+		emitJob(j)
+	}
+	sts = keep
+	if goLookup() {
+		// One API request per track; only what it can't handle goes on to yt-dlp below.
+		keep = sts[:0]
+		for _, s := range sts {
+			res, ln, epoch, err := e.resolveGo(ctx, s.t)
+			switch {
+			case err == nil:
+				s.ts.lookup = "go"
+				emit(s, res, ln, epoch)
+			case ctx.Err() != nil:
+				e.live.remove(s.t.ID)
+			default:
+				keep = append(keep, s)
+			}
+		}
+		if sts = keep; ctx.Err() != nil {
+			return
+		}
+	}
+	switch len(sts) {
+	case 0:
+		return
+	case 1:
 		single(sts[0], nil)
 		return
+	}
+	batch = batch[:0]
+	for _, s := range sts {
+		batch = append(batch, s.t)
 	}
 
 	ln := e.pick()
@@ -706,12 +807,28 @@ func (e *engine) resolveBatch(ctx context.Context, batch []model.Track, out chan
 		return
 	}
 	epoch := ln.epoch.Load()
-	idx := int(e.goodClient.Load())
 	ids := make([]string, len(batch))
 	for i, t := range batch {
 		ids[i] = t.ID
 	}
-	results, berr := ln.ytdlp().ResolveBatch(ctx, ids, idx)
+	// Each video's download starts the moment yt-dlp prints it, not when the whole batch
+	// (resolved one after another) is done.
+	byID := make(map[string]state, len(sts))
+	for _, s := range sts {
+		byID[s.t.ID] = s
+	}
+	var emu sync.Mutex
+	emitted := map[string]bool{}
+	results, berr := ln.ytdlp().ResolveBatch(ctx, ids, func(id string, r *Resolved) {
+		s, ok := byID[id]
+		if !ok || ctx.Err() != nil {
+			return
+		}
+		emu.Lock()
+		emitted[id] = true
+		emu.Unlock()
+		emit(s, r, ln, epoch)
+	})
 	if berr != nil || ctx.Err() != nil {
 		ln.gov.Release(Neutral)
 		if ctx.Err() != nil {
@@ -721,25 +838,32 @@ func (e *engine) resolveBatch(ctx context.Context, batch []model.Track, out chan
 			return
 		}
 		for _, s := range sts {
-			single(s, nil)
+			if !emitted[s.t.ID] {
+				single(s, nil)
+			}
 		}
 		return
 	}
 	// One governor verdict for the whole process.
 	okN, throttled := 0, 0
-	bot := false
+	var blockErr error
 	for _, r := range results {
 		switch {
 		case r.err == nil:
 			okN++
 		case kindOf(r.err) == kindThrottled:
 			throttled++
-			bot = bot || strings.Contains(strings.ToLower(r.err.Error()), "not a bot")
+			blockErr = r.err
 		}
 	}
 	switch {
 	case okN > 0:
+		// Every video resolved counts as a success, so the exit's limit grows as fast with
+		// batches as it would one track at a time.
 		ln.gov.Release(OK)
+		for i := 1; i < okN; i++ {
+			ln.gov.Observe(OK)
+		}
 		ln.bad.Store(0)
 	case throttled > 0:
 		ln.gov.Release(Throttled)
@@ -747,7 +871,8 @@ func (e *engine) resolveBatch(ctx context.Context, batch []model.Track, out chan
 		ln.gov.Release(Neutral)
 	}
 	if throttled > 0 && okN == 0 {
-		e.sourWhy(ctx, ln, epoch, throttleReason(bot), throttleWeight(bot))
+		reason, weight := blockReason(blockErr)
+		e.sour(ctx, ln, epoch, reason, weight)
 	}
 	var retry []state
 	var retryA []*attempt
@@ -758,7 +883,9 @@ func (e *engine) resolveBatch(ctx context.Context, batch []model.Track, out chan
 			retry = append(retry, s) // no recognisable output: resolve it alone
 			retryA = append(retryA, nil)
 		case r.err == nil:
-			emit(s, r.res, idx, ln, epoch)
+			if !emitted[s.t.ID] { // streamed ones are already downloading
+				emit(s, r.res, ln, epoch)
+			}
 		default:
 			retry = append(retry, s)
 			retryA = append(retryA, &attempt{ln, epoch, r.err})
@@ -769,18 +896,39 @@ func (e *engine) resolveBatch(ctx context.Context, batch []model.Track, out chan
 	}
 }
 
-func throttleReason(bot bool) string {
-	if bot {
-		return "bot check"
+// waitForRoom returns once some exit has fewer than laneMax tracks waiting or downloading
+// (or the run is ending). Downloads finishing make room, as do exits joining the run.
+func (e *engine) waitForRoom(ctx context.Context) {
+	for ctx.Err() == nil {
+		for _, l := range e.snap() {
+			if int(l.owned.Load()) < max(1, e.laneMax) && !l.swapping.Load() {
+				return
+			}
+		}
+		select {
+		case <-time.After(150 * time.Millisecond):
+		case <-ctx.Done():
+		}
 	}
-	return "rate limited"
 }
 
-func throttleWeight(bot bool) int32 {
-	if bot {
-		return 2
+// blockReason names a throttling error for the VPN layer and weighs it (a bot check counts
+// double towards swapping the exit).
+func blockReason(err error) (string, int32) {
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "not a bot") {
+		return "bot check", 2
 	}
-	return 1
+	return "rate limited", 1
+}
+
+func outcome(err error) Outcome {
+	switch {
+	case err == nil:
+		return OK
+	case kindOf(err) == kindThrottled:
+		return Throttled
+	}
+	return Neutral
 }
 
 type suspect struct {
@@ -788,120 +936,109 @@ type suspect struct {
 	epoch int64
 }
 
-// resolveWithRetry resolves one track, moving it between exits as they fail. first, if
-// non-nil, is an outcome the caller already obtained and accounted for (a batch member).
-// A block (throttle / bot check / "unavailable") on an exit sends the track to a different
-// exit at once without spending its retry budget; the budget only counts once every exit
-// has had its turn.
-func (e *engine) resolveWithRetry(ctx context.Context, t model.Track, first *attempt) (*Resolved, int, *lane, int64, error) {
+// resolveWithRetry resolves one track, trying a different exit after each failure (the
+// least-loaded one not tried yet). first, if non-nil, is an outcome the caller already
+// obtained and accounted for (a batch member). "Unavailable" is often just one exit's
+// country or IP, so it is only believed once three exits agree (or there is only one).
+func (e *engine) resolveWithRetry(ctx context.Context, t model.Track, first *attempt) (*Resolved, *lane, int64, error) {
 	var err error
 	var avoid []*lane
-	tried := map[*lane]bool{}
-	transient, throttled, netFails, permanent := 0, 0, 0, 0
 	var suspects []suspect // exits that said "unavailable" for this track
-	for client := 0; ; client++ {
+	for try := 0; try < maxTries; try++ {
 		var ln *lane
 		var epoch int64
 		var res *Resolved
-		idx := int(e.goodClient.Load()) + client
-		pre := first != nil // outcome already booked by the batch (governor, souring)
-		if pre {
+		booked := first != nil // outcome already booked by the batch (governor, souring)
+		if booked {
 			ln, epoch, err = first.ln, first.epoch, first.err
 			first = nil
 		} else {
 			ln = e.pick(avoid...)
 			if err = ln.gov.Acquire(ctx); err != nil {
-				return nil, 0, nil, 0, err
+				return nil, nil, 0, err
 			}
 			epoch = ln.epoch.Load()
-			res, err = ln.ytdlp().Resolve(ctx, t.ID, idx)
+			res, err = ln.ytdlp().Resolve(ctx, t.ID)
+			ln.gov.Release(outcome(err))
 		}
-		release := func(o Outcome) {
-			if !pre {
-				ln.gov.Release(o)
-			}
-		}
-		// A lane is "fresh" for this track if it hasn't blocked it yet; moving to a fresh
-		// lane is free, only a repeat visit spends budget.
-		fresh := len(e.snap()) > 1 && !tried[ln]
-		tried[ln] = true
+		avoid = append(avoid, ln)
 		switch {
 		case err == nil:
-			release(OK)
 			ln.bad.Store(0)
 			// Another exit played what these refused: they're being blocked, not the video
 			// being gone. Two strikes each and they're replaced with a fresh server.
 			for _, sp := range suspects {
 				if sp.l != ln {
-					e.sourWhy(ctx, sp.l, sp.epoch, "unavailable", 2)
+					e.sour(ctx, sp.l, sp.epoch, "unavailable", 2)
 				}
 			}
-			return res, idx, ln, epoch, nil
+			return res, ln, epoch, nil
 		case ctx.Err() != nil:
-			release(Neutral)
-			return nil, 0, nil, 0, ctx.Err()
+			return nil, nil, 0, ctx.Err()
 		case kindOf(err) == kindPermanent:
-			release(Neutral)
-			// "Unavailable" is often just this exit's country or IP. Only believe it once
-			// other exits (other countries) agree, so a track isn't written off for good
-			// on one server's say-so.
-			if len(e.snap()) > 1 && permanent < 2 {
-				permanent++
-				suspects = append(suspects, suspect{ln, epoch})
-				avoid = append(avoid, ln)
-				client-- // same player client on the next exit: this isn't a client problem
-				continue
+			// Probably a dead id: start looking for it on YouTube Music now, while other
+			// exits are asked whether it's really gone.
+			e.searchAhead(ctx, t)
+			if suspects = append(suspects, suspect{ln, epoch}); len(suspects) >= 3 || len(e.snap()) < 2 {
+				return nil, nil, 0, err
 			}
-			return nil, 0, nil, 0, err
 		case kindOf(err) == kindThrottled:
-			bot := strings.Contains(strings.ToLower(err.Error()), "not a bot")
-			if !pre {
-				ln.gov.Release(Throttled)
-				e.sourWhy(ctx, ln, epoch, throttleReason(bot), throttleWeight(bot))
-			}
-			avoid = append(avoid, ln) // try another exit next, right away
-			if fresh {
-				client--
-				continue
-			}
-			if throttled++; throttled >= maxThrottled {
-				return nil, 0, nil, 0, err
+			if !booked {
+				reason, weight := blockReason(err)
+				e.sour(ctx, ln, epoch, reason, weight)
 			}
 		case looksLikeNetwork(err):
-			// A dead tunnel is the exit's fault, not the track's: charge the exit, not the
-			// track's retry budget, and try another exit (bounded, so we still give up).
-			release(Neutral)
-			if !pre {
-				e.sour(ctx, ln, epoch)
+			if !booked { // a dead tunnel is the exit's fault, not the track's
+				e.sour(ctx, ln, epoch, "kept failing", 1)
 			}
-			avoid = append(avoid, ln)
-			if netFails++; netFails >= 3*maxTransient {
-				return nil, 0, nil, 0, err
-			}
-			sleep(ctx, 2*time.Second)
+			sleep(ctx, time.Second)
 		default:
-			release(Neutral)
-			avoid = append(avoid, ln)
-			if transient++; transient >= maxTransient {
-				return nil, 0, nil, 0, err
-			}
-			sleep(ctx, time.Duration(transient)*2*time.Second)
+			sleep(ctx, 2*time.Second)
 		}
 	}
+	return nil, nil, 0, err
 }
 
 func (e *engine) fetchWorker(ctx context.Context, in <-chan *job, out chan<- *job) {
 	for j := range in {
+		owner := j.owner
+		j.ts.stage.Store(stFetch)
+		j.ts.fetchStart = time.Now()
 		// Cover art comes down alongside the audio, not after it.
 		coverDone := e.startCover(ctx, j)
 		err := e.fetchJob(ctx, j)
 		if coverDone != nil {
 			<-coverDone
 		}
+		if err != nil && !j.music && ctx.Err() == nil && kindOf(err) == kindPermanent {
+			// It resolved but won't download ("unavailable" on the stream): one try with
+			// the song's current upload on YouTube Music.
+			if j.cover != "" {
+				_ = os.Remove(j.cover)
+				j.cover = ""
+			}
+			if nj, rerr := e.rescue(ctx, j.tr, j.ts, err); rerr != nil {
+				err = rerr
+			} else {
+				j = nj
+				j.ts.stage.Store(stFetch)
+				coverDone = e.startCover(ctx, j)
+				err = e.fetchJob(ctx, j)
+				if coverDone != nil {
+					<-coverDone
+				}
+			}
+		}
+		if owner != nil {
+			owner.owned.Add(-1) // downloaded (or given up): the exit has room again
+		}
 		if err != nil {
 			e.active.Add(-1)
 			if j.cover != "" {
 				_ = os.Remove(j.cover)
+			}
+			if j.music && ctx.Err() == nil {
+				_ = e.Store.MarkMusicTried(j.tr.ID, "") // that match didn't work out: forget it
 			}
 			e.fail(j.tr, err)
 			continue
@@ -953,7 +1090,11 @@ func (e *engine) fetchJob(ctx context.Context, j *job) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if !errors.Is(err, errStalled) || hop >= 2 || !e.moveToAnotherExit(ctx, j) {
+			// Stalled or refused (403): this exit's IP is the problem, not the track. Another
+			// exit's lookup plus a direct download takes seconds; yt-dlp on the same flagged
+			// IP is just as slow (tens of seconds a track).
+			movable := errors.Is(err, errStalled) || errors.Is(err, errUnfetchable)
+			if !movable || hop >= 2 || !e.moveToAnotherExit(ctx, j) {
 				break
 			}
 		}
@@ -962,7 +1103,7 @@ func (e *engine) fetchJob(ctx context.Context, j *job) error {
 	j.ts.total.Store(0) // size unknown while yt-dlp does the download
 	j.ts.got.Store(0)
 	var err error
-	for attempt := 0; attempt < maxTransient; attempt++ {
+	for attempt := 0; attempt < 3; attempt++ {
 		// yt-dlp resolves from scratch, so any healthy exit will do; don't sit in the
 		// queue of a resting one while other exits are idle.
 		ln := j.lane
@@ -974,13 +1115,28 @@ func (e *engine) fetchJob(ctx context.Context, j *job) error {
 			return err
 		}
 		var p string
-		p, err = ln.ytdlp().Download(ctx, j.tr.ID, e.tmp, j.client+attempt)
-		if err == nil {
-			ln.gov.Release(OK)
-			if st, serr := os.Stat(p); serr == nil {
-				e.bytes.Add(st.Size())
-				ln.bytes.Add(st.Size())
+		var counted int64 // bytes already added to the totals from progress lines
+		progress := func(got, total int64) {
+			if total > 0 {
+				j.ts.total.Store(total)
 			}
+			if d := got - counted; d > 0 {
+				counted = got
+				e.bytes.Add(d)
+				ln.bytes.Add(d)
+				j.ts.got.Store(got)
+			}
+		}
+		ln.fetching.Add(1)
+		p, err = ln.ytdlp().Download(ctx, j.vid(), e.tmp, progress)
+		ln.fetching.Add(-1)
+		ln.gov.Release(outcome(err))
+		if err == nil {
+			if st, serr := os.Stat(p); serr == nil && st.Size() > counted {
+				e.bytes.Add(st.Size() - counted)
+				ln.bytes.Add(st.Size() - counted)
+			}
+			j.ts.via = viaName("yt-dlp", j.music)
 			j.src = p
 			// yt-dlp chose its own format, which may differ from the one resolved earlier;
 			// the encoder must copy only what the file really holds.
@@ -989,73 +1145,41 @@ func (e *engine) fetchJob(ctx context.Context, j *job) error {
 			j.res = &r
 			return nil
 		}
-		switch kindOf(err) {
-		case kindPermanent:
-			ln.gov.Release(Neutral)
+		if kindOf(err) == kindPermanent {
 			return err
-		case kindThrottled:
-			ln.gov.Release(Throttled)
-		default:
-			ln.gov.Release(Neutral)
+		}
+		if kindOf(err) != kindThrottled {
 			sleep(ctx, 2*time.Second)
 		}
 	}
 	return err
 }
 
-// altClients is how many other YouTube player clients to try when Google refuses to serve
-// a stream URL to a plain HTTP client (which clients hand out fetchable URLs changes with
-// yt-dlp versions, so ytm learns it instead of hard-coding it).
-const altClients = 2
-
-// tryDirect downloads j.res itself. On a refusal (403/404) it re-resolves with the next
-// player client and tries again, remembering which client worked for the following tracks.
+// tryDirect downloads j.res itself through j's exit. A refusal (403) is not a reason to
+// swap the exit: refusals come and go on every IP, and each swap is a strike against the
+// exit's country (enough of them exclude it), which in testing pushed whole runs onto
+// servers in Europe. The caller moves the track to another exit instead.
 func (e *engine) tryDirect(ctx context.Context, j *job) error {
 	dst := filepath.Join(e.tmp, j.tr.ID+".src")
-	res, cur := j.res, j.client // j itself keeps its original client for the yt-dlp fallback
-	var err error
-	for k := 0; k <= altClients; k++ {
-		if k > 0 {
-			ln := j.lane
-			if aerr := ln.gov.Acquire(ctx); aerr != nil {
-				return aerr
-			}
-			cur++
-			r2, rerr := ln.ytdlp().Resolve(ctx, j.tr.ID, cur)
-			ln.gov.Release(Neutral)
-			if rerr != nil || !canFetch(r2) || ln.epoch.Load() != j.epoch {
-				continue // this client can't serve it; try the next
-			}
-			res = r2
-			j.ts.total.Store(contentLength(res))
-		}
-		j.ts.got.Store(0)
-		ln := j.lane
-		ln.fetching.Add(1)
-		err = fetch(ctx, ln.http(), res, dst, func(n int64) { e.bytes.Add(n); ln.bytes.Add(n); j.ts.got.Add(n) }, func() { ln.gov.Observe(Throttled) })
-		ln.fetching.Add(-1)
-		if err == nil {
-			j.src, j.res = dst, res // the encoder needs the codec of the stream actually fetched
-			ln.gov.Observe(OK)
-			e.goodClient.Store(int32(cur))
-			return nil
-		}
-		_ = os.Remove(dst)
-		if os.Getenv("YTM_DEBUG") != "" {
-			e.UI.Printf("debug: direct fetch of %s with client %d failed: %v", j.tr.ID, cur, err)
-		}
-		if errors.Is(err, errStalled) {
-			// This exit isn't delivering data from Google's CDN. Count it hard against the
-			// exit (two of these swap it) and let the caller move the track elsewhere.
-			e.sourWhy(ctx, ln, j.epoch, "stalled", 2)
-			return err
-		}
-		if !errors.Is(err, errUnfetchable) || ctx.Err() != nil {
-			return err // only a refusal is worth another client
-		}
-	}
+	ln := j.lane
+	j.ts.got.Store(0)
+	ln.fetching.Add(1)
+	err := fetch(ctx, ln.http(), j.res, dst, func(n int64) { e.bytes.Add(n); ln.bytes.Add(n); j.ts.got.Add(n) }, func() { ln.gov.Observe(Throttled) })
+	ln.fetching.Add(-1)
 	if err == nil {
-		err = errUnfetchable // every alternate client failed to resolve
+		j.src = dst
+		j.ts.via = viaName("direct", j.music)
+		ln.gov.Observe(OK)
+		return nil
+	}
+	_ = os.Remove(dst)
+	if os.Getenv("YTM_DEBUG") != "" {
+		e.UI.Printf("debug: direct fetch of %s on %s failed: %v", j.tr.ID, ln.exitName(), err)
+	}
+	if errors.Is(err, errStalled) {
+		// This exit isn't delivering data from Google's CDN: count it hard against the
+		// exit (two of these swap it).
+		e.sour(ctx, ln, j.epoch, "stalled", 2)
 	}
 	return err
 }
@@ -1072,17 +1196,12 @@ func (e *engine) moveToAnotherExit(ctx context.Context, j *job) bool {
 		return false
 	}
 	epoch := ln.epoch.Load()
-	idx := int(e.goodClient.Load())
-	res, err := ln.ytdlp().Resolve(ctx, j.tr.ID, idx)
-	if err != nil {
-		ln.gov.Release(Neutral)
+	res, err := ln.ytdlp().Resolve(ctx, j.vid())
+	ln.gov.Release(outcome(err))
+	if err != nil || !canFetch(res) {
 		return false
 	}
-	ln.gov.Release(OK)
-	if !canFetch(res) {
-		return false
-	}
-	j.lane, j.res, j.epoch, j.client = ln, res, epoch, idx
+	j.lane, j.res, j.epoch = ln, res, epoch
 	j.ts.total.Store(contentLength(res))
 	return true
 }
@@ -1090,9 +1209,14 @@ func (e *engine) moveToAnotherExit(ctx context.Context, j *job) bool {
 func (e *engine) encodeWorker(ctx context.Context, in <-chan *job) {
 	for j := range in {
 		j.ts.stage.Store(stEncode)
+		j.ts.encodeStart = time.Now()
 		path, err := e.encodeJob(ctx, j)
 		e.live.remove(j.tr.ID)
 		e.active.Add(-1)
+		var srcSize int64
+		if st, serr := os.Stat(j.src); serr == nil {
+			srcSize = st.Size()
+		}
 		_ = os.Remove(j.src)
 		if err != nil {
 			e.fail(j.tr, err)
@@ -1103,7 +1227,12 @@ func (e *engine) encodeWorker(ctx context.Context, in <-chan *job) {
 		}
 		e.done.Add(1)
 		j.lane.done.Add(1)
-		e.UI.Line(green+"✓"+reset, j.tr.Label())
+		e.tm.record(j.ts, j.lane.exitName(), srcSize, time.Now())
+		label := j.tr.Label()
+		if j.music {
+			label += "  (via YouTube Music)"
+		}
+		e.UI.Line(green+"✓"+reset, label)
 		if e.OnGood != nil && j.lane.good.CompareAndSwap(false, true) {
 			rate := j.lane.speed()
 			if rate == 0 {
@@ -1116,7 +1245,9 @@ func (e *engine) encodeWorker(ctx context.Context, in <-chan *job) {
 	}
 }
 
-// outputPath places a track at Artist/Album/Title [id].ext (Album omitted when unknown).
+// outputPath places a track at Artist/Album/NN - Title.ext: the track number (when known)
+// keeps an album in order in any file browser; Album is omitted when unknown. The video
+// id is not in the name; it is in the comment tag and the state database.
 func outputPath(root string, t model.Track, r *Resolved, format string) (path string, meta map[string]string) {
 	title := firstNonEmpty(t.Title, r.Title, t.ID)
 	artists := t.Artists
@@ -1124,11 +1255,19 @@ func outputPath(root string, t model.Track, r *Resolved, format string) (path st
 		artists = r.Artists
 	}
 	album := firstNonEmpty(t.Album, r.Album)
+	no, total := t.TrackNo, t.TrackTotal
+	if no <= 0 {
+		no, total = r.Track, 0
+	}
 	parts := []string{root, names.Part(firstString(artists), "Unknown Artist")}
 	if album != "" {
 		parts = append(parts, names.Part(album, "Unknown Album"))
 	}
-	parts = append(parts, names.PartWithSuffix(title, t.ID, " ["+t.ID+"]."+format))
+	prefix := ""
+	if album != "" { // a number only means something inside an album folder
+		prefix = names.TrackPrefix(no, total)
+	}
+	parts = append(parts, names.PartBetween(prefix, title, t.ID, "."+format))
 	meta = map[string]string{
 		"title":        names.StripControl(title),
 		"artist":       names.StripControl(joinArtists(artists)),
@@ -1139,10 +1278,32 @@ func outputPath(root string, t model.Track, r *Resolved, format string) (path st
 	// Keep everything YouTube knows; empty values are dropped by encodeArgs.
 	meta["date"] = firstNonEmpty(r.Date, yearString(r.Year))
 	meta["genre"] = names.StripControl(r.Genre)
-	if r.Track > 0 {
-		meta["track"] = strconv.Itoa(r.Track)
+	if no > 0 {
+		meta["track"] = strconv.Itoa(no)
+		if total >= no {
+			meta["track"] += "/" + strconv.Itoa(total)
+		}
 	}
 	return filepath.Join(parts...), meta
+}
+
+// freePath returns path, or "path (2).ext", "(3)"... if the name already belongs to a
+// different song (or to a file ytm didn't write): two songs called "Intro" on one album
+// must not overwrite each other. A re-download of the same song keeps its name.
+func (e *engine) freePath(path, id string) string {
+	ext := filepath.Ext(path)
+	base := strings.TrimSuffix(path, ext)
+	p := path
+	for i := 2; i < 1000; i++ {
+		if _, err := os.Lstat(p); err != nil {
+			return p // free
+		}
+		if owner := e.Store.Owner(p); owner == id {
+			return p // ours already
+		}
+		p = fmt.Sprintf("%s (%d)%s", base, i, ext)
+	}
+	return p
 }
 
 func yearString(y int) string {
@@ -1175,9 +1336,18 @@ func (e *engine) encodeJob(ctx context.Context, j *job) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
 		return "", err
 	}
+	e.pathMu.Lock() // pick the name and claim it in one step: two songs can share a title
+	final = e.freePath(final, j.tr.ID)
+	if serr := e.Store.SetPath(j.tr.ID, final); serr != nil {
+		e.UI.Printf("warning: couldn't record %s: %v", j.tr.ID, serr)
+	}
+	e.pathMu.Unlock()
 	cover := j.cover // fetched while the audio downloaded
 	if cover != "" {
 		defer os.Remove(cover)
+		if e.Format == "opus" {
+			cover = e.oggCover(ctx, j.tr.ID, cover)
+		}
 	}
 	tmpOut := filepath.Join(e.tmp, j.tr.ID+".out."+e.Format)
 	defer os.Remove(tmpOut)
@@ -1194,6 +1364,25 @@ func (e *engine) encodeJob(ctx context.Context, j *job) (string, error) {
 	return final, nil
 }
 
+// oggCover turns a downloaded cover into the ffmetadata file that carries it in an Ogg
+// Opus file (a square JPEG of at most 600 px, as a METADATA_BLOCK_PICTURE comment). ""
+// if the image is unusable: the song is still written, without art.
+func (e *engine) oggCover(ctx context.Context, id, cover string) string {
+	sq := filepath.Join(e.tmp, id+".sq.jpg")
+	meta := filepath.Join(e.tmp, id+".meta.txt")
+	args := names.SquareCoverArgs(cover, sq, 600)
+	if args == nil || runFFmpeg(ctx, e.Tools.FFmpeg, args) != nil {
+		_ = os.Remove(sq)
+		return ""
+	}
+	defer os.Remove(sq)
+	if names.WriteOggMeta(meta, nil, sq) != nil {
+		_ = os.Remove(meta)
+		return ""
+	}
+	return meta // removed with the temp directory at the end of the run
+}
+
 func (l *lane) exitName() string { l.mu.Lock(); defer l.mu.Unlock(); return l.exit.Name }
 
 // probeAsync checks a lane's tunnel off the status goroutine and swaps it if it died.
@@ -1203,7 +1392,7 @@ func (e *engine) probeAsync(ctx context.Context, l *lane) {
 	go func() {
 		defer e.bg.Done()
 		if ctx.Err() == nil && !e.Healthy(l.exitCopy()) {
-			e.swap(ctx, l, "stopped responding")
+			e.swap(ctx, l, "stopped responding") // e.bg is still held here, so Add is safe
 		}
 	}()
 }

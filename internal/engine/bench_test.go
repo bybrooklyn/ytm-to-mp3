@@ -46,12 +46,12 @@ func TestBenchResolve(t *testing.T) {
 				defer wg.Done()
 				defer func() { <-sem }()
 				if len(g) == 1 {
-					if _, err := y.Resolve(ctx, g[0], 0); err != nil {
+					if _, err := y.Resolve(ctx, g[0]); err != nil {
 						t.Logf("single %s: %v", g[0], err)
 					}
 					return
 				}
-				m, err := y.ResolveBatch(ctx, g, 0)
+				m, err := y.ResolveBatch(ctx, g, nil)
 				if err != nil || len(m) != len(g) {
 					t.Logf("batch: %v, %d/%d", err, len(m), len(g))
 				}

@@ -13,6 +13,7 @@ func TestClassify(t *testing.T) {
 		{"ERROR: unable to download video data: HTTP Error 429: Too Many Requests", kindThrottled, "unable to download video data: HTTP Error 429: Too Many Requests"},
 		{"ERROR: [youtube] abc: Private video. Sign in if you've been granted access", kindPermanent, "Private video. Sign in if you've been granted access"},
 		{"ERROR: [youtube] abc: Connection reset by peer", kindTransient, "Connection reset by peer"},
+		{"ERROR: [youtube] abc: Requested format is not available. Use --list-formats for a list of available formats", kindThrottled, "Requested format is not available. Use --list-formats for a list of available formats"},
 		{"", kindTransient, "yt-dlp failed"},
 	}
 	for _, c := range cases {

@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"charm.land/huh/v2"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/export"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/takeout"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
@@ -43,7 +45,11 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 		err := one(ctx, huh.NewSelect[string]().Title("What do you want to do?").Description("Library = your Google Takeout export. Link = a video, playlist or album.").Options(
 			huh.NewOption("Import my YouTube Music library", "library"),
 			huh.NewOption("Download a link", "link"),
+			huh.NewOption("Fix tags in my music folder (MusicBrainz)", "tag"),
+			huh.NewOption("Tidy file names (Artist/Album/01 - Title, no [id])", "tidy"),
+			huh.NewOption("Upgrade to YouTube Premium quality (experimental, slow)", "premium"),
 			huh.NewOption("Settings", "settings"),
+			huh.NewOption("Update yt-dlp, ffmpeg and deno", "update"),
 			huh.NewOption("Check that everything works", "doctor"),
 			huh.NewOption("Quit", "quit"),
 		).Value(&choice))
@@ -55,6 +61,20 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 			err = libraryFlow(ctx, u, o)
 		case "link":
 			err = linkFlow(ctx, u, o)
+		case "tag":
+			err = tagFlow(ctx, u, o)
+		case "tidy":
+			err = tidyFlow(ctx, u, o)
+		case "premium":
+			if !config.Load().Premium {
+				if err = premiumSetup(ctx, u); err == nil && config.Load().Premium {
+					err = premiumUpgrade(ctx, u, o)
+				}
+			} else {
+				err = premiumUpgrade(ctx, u, o)
+			}
+		case "update":
+			err = deps.Update(ctx, func(f string, a ...any) { u.Printf(f, a...) })
 		case "settings":
 			if err = runSetup(ctx, u, false); err == nil {
 				o = refreshOpts(o)
@@ -100,7 +120,7 @@ func header(o opts) string {
 	cfg := config.Load()
 	vpn := "VPN off"
 	if pc.SignedIn() && !cfg.NoVPN {
-		vpn = fmt.Sprintf("Proton VPN, %d connections", orInt(cfg.Connections, 3))
+		vpn = "Proton VPN, " + connectionsLabel(cfg, pc) + " connections"
 	}
 	return fmt.Sprintf("\n  \x1b[1mytm\x1b[0m  \x1b[2m%s  ·  %s  ·  %s\x1b[0m\n", tilde(o.out), o.format, vpn)
 }
@@ -177,13 +197,28 @@ func libraryFlow(ctx context.Context, u *ui.UI, o opts) error {
 	fmt.Printf("\n  \x1b[32m✓\x1b[0m %d tracks (%d with song details) in %s\n    saving to %s as %s\n\n",
 		src.Tracks, src.WithMeta, src.Name(), tilde(o.out), o.format)
 	go_ := true
-	if err := one(ctx, huh.NewConfirm().Title("Download them?").Affirmative("Download").Negative("Back").Value(&go_)); err != nil {
+	var extras []string
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewMultiSelect[string]().Title("Options").Description("space to toggle · enter to continue").Options(
+			huh.NewOption("Retry songs that were unavailable last time", "retry"),
+			huh.NewOption("Also get the rest of every album I have a song from", "albums"),
+			huh.NewOption("Fix tags with MusicBrainz afterwards", "tag"),
+		).Value(&extras),
+		huh.NewConfirm().Title("Download them?").Affirmative("Download").Negative("Back").Value(&go_),
+	)).RunWithContext(ctx); err != nil {
 		return err
 	}
 	if !go_ {
 		return errBack
 	}
-	return download(ctx, u, o, src.Paths...)
+	has := func(k string) bool { return slices.Contains(extras, k) }
+	o.retry = o.retry || has("retry")
+	o.albums = o.albums || has("albums")
+	if err := download(ctx, u, o, src.Paths...); err != nil || !has("tag") {
+		return err
+	}
+	o.apply = true
+	return runTag(ctx, u, o, o.out)
 }
 
 func describeSource(s takeout.Source) string {

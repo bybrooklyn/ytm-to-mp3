@@ -94,3 +94,22 @@ func TestRedact(t *testing.T) {
 		t.Errorf("leak: %q", got)
 	}
 }
+
+func TestTrackPrefixAndParse(t *testing.T) {
+	for _, c := range []struct {
+		no, total int
+		want      string
+	}{{0, 0, ""}, {3, 0, "03 - "}, {3, 12, "03 - "}, {12, 12, "12 - "}, {7, 120, "007 - "}, {101, 0, "101 - "}} {
+		if got := TrackPrefix(c.no, c.total); got != c.want {
+			t.Errorf("TrackPrefix(%d,%d) = %q, want %q", c.no, c.total, got, c.want)
+		}
+	}
+	for in, want := range map[string][2]int{"7": {7, 0}, "7/12": {7, 12}, " 3 / 9 ": {3, 9}, "": {0, 0}, "x/y": {0, 0}, "-2": {0, 0}} {
+		if no, total := ParseTrack(in); no != want[0] || total != want[1] {
+			t.Errorf("ParseTrack(%q) = %d,%d", in, no, total)
+		}
+	}
+	if got := PartBetween("01 - ", strings.Repeat("é", 300), "x", ".opus"); len(got) > 255 || !strings.HasPrefix(got, "01 - ") || !strings.HasSuffix(got, ".opus") {
+		t.Errorf("PartBetween over limit or lost its ends: %d bytes", len(got))
+	}
+}

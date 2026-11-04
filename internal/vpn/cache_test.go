@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -244,6 +245,82 @@ func TestSnapshotAndShuffleStayInTopThree(t *testing.T) {
 		if first.Score > 2 {
 			t.Fatalf("shuffle left the top three: %v", first)
 		}
+	}
+}
+
+// at places a test server; its city is the name before '#' ("US-NY#2" -> "US-NY").
+func at(s proton.Server, lat, long float64) proton.Server {
+	s.Lat, s.Long = lat, long
+	s.City, _, _ = strings.Cut(s.Name, "#")
+	return s
+}
+
+// From New Jersey, six exits come from North America and Europe, never Hong Kong, Singapore
+// or Perth (which the country spread alone used to pick), even with better Proton scores.
+func TestRankPrefersNearbyServers(t *testing.T) {
+	c := LoadCache("", "")
+	home := &proton.Location{Lat: 40.87, Long: -74.66, Country: "US"}
+	all := []proton.Server{
+		at(srv("HK#1", "HK", 0.9, 5), 22.3, 114.2), at(srv("SG#1", "SG", 0.9, 5), 1.35, 103.8),
+		at(srv("AU#1", "AU", 0.9, 5), -31.95, 115.86),
+		at(srv("US-NY#1", "US", 1.2, 30), 40.71, -74.0), at(srv("US-NY#2", "US", 1.3, 30), 40.71, -74.0),
+		at(srv("US-IL#1", "US", 1.3, 30), 41.88, -87.63), at(srv("US-TX#1", "US", 1.2, 30), 32.78, -96.8),
+		at(srv("CA#1", "CA", 1.3, 30), 43.65, -79.38), at(srv("CA#2", "CA", 1.4, 30), 45.5, -73.57),
+		at(srv("GB#1", "GB", 1.2, 30), 51.5, -0.12), at(srv("DE#1", "DE", 1.2, 30), 50.11, 8.68),
+	}
+	got := names(c.Rank(all, RankOpts{NoShuffle: true, Home: home}, time.Now()))
+	for _, n := range got[:6] {
+		if n[:2] == "HK" || n[:2] == "SG" || n[:2] == "AU" {
+			t.Fatalf("a far server made the first six: %v", got)
+		}
+	}
+	if got[0] != "US-NY#1" {
+		t.Fatalf("the closest good server should lead: %v", got)
+	}
+	// the first few come from different cities, not all from New York
+	cities := map[string]bool{}
+	for _, n := range got[:4] {
+		for _, s := range all {
+			if s.Name == n {
+				cities[cityKey(s)] = true
+			}
+		}
+	}
+	if len(cities) < 3 {
+		t.Fatalf("first four should span at least 3 cities: %v", got[:4])
+	}
+	// four exits already in the US: the next one is still in North America, not Europe
+	used := map[string]int{"US": 4}
+	usedCities := map[string]int{"US/US-NY": 2, "US/US-IL": 1, "US/US-TX": 1}
+	avoid4 := map[string]bool{"US-NY#1": true, "US-NY#2": true, "US-IL#1": true, "US-TX#1": true}
+	next := c.Rank(all, RankOpts{NoShuffle: true, Home: home, UsedCountries: used, UsedCities: usedCities, Avoid: avoid4}, time.Now())
+	if cc := next[0].Country; cc != "CA" && cc != "US" {
+		t.Fatalf("with four US exits the next should stay nearby, got %s (%v)", next[0].Name, names(next))
+	}
+
+	// every nearby server excluded: the far ones are still offered
+	avoid := map[string]bool{}
+	for _, s := range all {
+		if s.Country == "US" || s.Country == "CA" || s.Country == "GB" || s.Country == "DE" {
+			avoid[s.Name] = true
+		}
+	}
+	if got := c.Rank(all, RankOpts{NoShuffle: true, Home: home, Avoid: avoid}, time.Now()); len(got) != 3 {
+		t.Fatalf("far servers should remain available: %v", names(got))
+	}
+}
+
+func TestDistanceKm(t *testing.T) {
+	home := &proton.Location{Lat: 40.71, Long: -74.0} // New York
+	d, ok := distanceKm(home, at(srv("GB#1", "GB", 1, 1), 51.5, -0.12))
+	if !ok || d < 5500 || d > 5650 {
+		t.Fatalf("NY-London should be ~5570 km, got %v %v", d, ok)
+	}
+	if _, ok := distanceKm(home, srv("XX#1", "XX", 1, 1)); ok {
+		t.Fatal("a server without a location has no distance")
+	}
+	if _, ok := distanceKm(nil, at(srv("GB#1", "GB", 1, 1), 51.5, -0.12)); ok {
+		t.Fatal("no home, no distance")
 	}
 }
 

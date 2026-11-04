@@ -101,10 +101,20 @@ type Session struct {
 	AccessToken  string   `json:"access_token"`
 	RefreshToken string   `json:"refresh_token"`
 	Scopes       []string `json:"scopes"`
-	// Key is the base64 Ed25519 seed that backs our WireGuard identity.
+	// Key is the base64 Ed25519 seed that backs our WireGuard identity (slot 0).
 	Key       string    `json:"key,omitempty"`
 	CertUntil time.Time `json:"cert_refresh,omitzero"`
+	// ExtraKeys are the identities for slots 1, 2, ...: one per simultaneous tunnel.
+	// Proton routes a key's traffic only through its most recent connection, so tunnels
+	// sharing a key knock each other out.
+	ExtraKeys []SlotKey `json:"extra_keys,omitempty"`
 	AppIdx    int       `json:"app_idx,omitempty"` // which appIDs() entry Proton accepted
+}
+
+// SlotKey is one extra WireGuard identity and when its certificate needs refreshing.
+type SlotKey struct {
+	Key       string    `json:"key"`
+	CertUntil time.Time `json:"cert_refresh,omitzero"`
 }
 
 // Client is an API client bound to a session file.

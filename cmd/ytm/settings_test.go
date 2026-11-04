@@ -51,11 +51,11 @@ func testModel(signedIn bool) (*settingsModel, *config.Config, *int) {
 func TestFormatCyclesAndSaves(t *testing.T) {
 	m, last, n := testModel(false)
 	press(m, "down", "right")
-	if last.Format != "m4a" || *n != 1 || !m.saved {
+	if last.Format != "flac" || *n != 1 || !m.saved { // default opus, one step right
 		t.Fatalf("format=%q saves=%d saved=%v", last.Format, *n, m.saved)
 	}
-	press(m, "left", "left")
-	if last.Format != "flac" {
+	press(m, "right")
+	if last.Format != "mp3" {
 		t.Fatalf("wrap: %q", last.Format)
 	}
 }
@@ -89,7 +89,11 @@ func TestClamping(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		press(m, "left")
 	}
-	if last.Connections != 1 {
+	if last.Connections != -1 { // -1 = auto (plan limit minus a spare), below 1
+		t.Fatalf("conns=%d", last.Connections)
+	}
+	press(m, "right")
+	if last.Connections != 1 { // 0 ("unset") is skipped
 		t.Fatalf("conns=%d", last.Connections)
 	}
 	m.cur = 5
@@ -168,10 +172,16 @@ func TestActionsAndQuit(t *testing.T) {
 		t.Fatalf("action=%q", m2.action)
 	}
 	m3, _, _ := testModel(false)
-	m3.cur = 7
+	m3.cur = int(rowTest)
 	press(m3, "enter")
 	if m3.action != "" || m3.err == "" {
 		t.Fatal("test row must refuse when signed out")
+	}
+	m5, _, _ := testModel(false)
+	m5.cur = int(rowPremium)
+	press(m5, "enter")
+	if m5.action != "premium" {
+		t.Fatalf("premium row: action=%q", m5.action)
 	}
 	m4, _, _ := testModel(true)
 	press(m4, "esc")

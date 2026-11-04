@@ -32,42 +32,67 @@ func X25519FromSeed(seed []byte) [32]byte {
 	return k
 }
 
-// key returns our identity, creating it on first use. The caller holds c.mu.
-func (c *Client) key() (*WGKey, error) {
+// MaxSlots bounds how many identities ytm keeps (Proton plans allow at most 10 or so
+// devices at once).
+const MaxSlots = 16
+
+// slotFields returns where slot's key and certificate time live in the session, creating
+// the slot if needed. The caller holds c.mu.
+func (c *Client) slotFields(slot int) (key *string, until *time.Time) {
 	s := c.Session
-	if s.Key == "" {
+	if slot == 0 {
+		return &s.Key, &s.CertUntil
+	}
+	for len(s.ExtraKeys) < slot {
+		s.ExtraKeys = append(s.ExtraKeys, SlotKey{})
+	}
+	e := &s.ExtraKeys[slot-1]
+	return &e.Key, &e.CertUntil
+}
+
+// key returns slot's identity, creating it on first use. The caller holds c.mu.
+func (c *Client) key(slot int) (*WGKey, *time.Time, error) {
+	keyStr, until := c.slotFields(slot)
+	if *keyStr == "" {
 		_, priv, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		s.Key = b64(priv.Seed())
-		s.CertUntil = time.Time{}
+		*keyStr = b64(priv.Seed())
+		*until = time.Time{}
 	}
-	seed, err := base64.StdEncoding.DecodeString(s.Key)
+	seed, err := base64.StdEncoding.DecodeString(*keyStr)
 	if err != nil || len(seed) != ed25519.SeedSize {
-		return nil, errors.New("the saved Proton key is damaged; run: ytm logout, then ytm setup")
+		return nil, nil, errors.New("the saved Proton key is damaged; run: ytm logout, then ytm setup")
 	}
 	pub := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
 	der, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	return &WGKey{
 		Private: X25519FromSeed(seed),
 		PEM:     string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})),
-	}, nil
+	}, until, nil
 }
 
-// Identity returns our WireGuard key, registering it with Proton when needed (and
-// again when Proton asks us to refresh it).
-func (c *Client) Identity(ctx context.Context) (*WGKey, error) {
+// Identity returns our first WireGuard key; see IdentityAt.
+func (c *Client) Identity(ctx context.Context) (*WGKey, error) { return c.IdentityAt(ctx, 0) }
+
+// IdentityAt returns the WireGuard key for slot (one slot per simultaneous tunnel),
+// creating it and registering it with Proton when needed, and again when Proton asks us
+// to refresh it.
+func (c *Client) IdentityAt(ctx context.Context, slot int) (*WGKey, error) {
+	if slot < 0 || slot >= MaxSlots {
+		return nil, errors.New("no such key slot")
+	}
 	c.mu.Lock()
 	if c.Session == nil {
 		c.mu.Unlock()
 		return nil, errors.New("not signed in: run ytm setup")
 	}
-	k, err := c.key()
-	fresh := err == nil && time.Now().Before(c.Session.CertUntil)
+	k, until, err := c.key(slot)
+	fresh := err == nil && time.Now().Before(*until)
 	c.mu.Unlock()
 	if err != nil {
 		return nil, err
@@ -89,12 +114,15 @@ func (c *Client) Identity(ctx context.Context) (*WGKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	until := time.Now().Add(3 * 24 * time.Hour)
+	next := time.Now().Add(3 * 24 * time.Hour)
 	if r.RefreshTime > 0 {
-		until = time.Unix(r.RefreshTime, 0)
+		next = time.Unix(r.RefreshTime, 0)
 	}
 	c.mu.Lock()
-	c.Session.CertUntil = until
+	if c.Session != nil { // signed out meanwhile: nothing to record
+		_, u := c.slotFields(slot)
+		*u = next
+	}
 	c.mu.Unlock()
 	c.save()
 	return k, nil

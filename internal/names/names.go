@@ -3,7 +3,9 @@
 package names
 
 import (
+	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -66,8 +68,30 @@ func Part(s, fallback string) string { return PartWithSuffix(s, fallback, "") }
 // PartWithSuffix is Part(s, fallback)+suffix where the whole component, suffix included,
 // fits in 255 bytes: the title part is cut on a rune boundary, never the suffix.
 func PartWithSuffix(s, fallback, suffix string) string {
-	p := part(s, fallback, maxComponent-len(suffix))
-	return p + suffix
+	return PartBetween("", s, fallback, suffix)
+}
+
+// TrackPrefix is the "NN - " that puts album songs in order in a file name: two digits,
+// three for albums of 100+ songs. "" when the number is unknown.
+func TrackPrefix(no, total int) string {
+	if no <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%0*d - ", max(2, len(strconv.Itoa(max(no, total)))), no)
+}
+
+// ParseTrack reads a track tag ("7" or "7/12").
+func ParseTrack(s string) (no, total int) {
+	a, b, _ := strings.Cut(strings.TrimSpace(s), "/")
+	no, _ = strconv.Atoi(strings.TrimSpace(a))
+	total, _ = strconv.Atoi(strings.TrimSpace(b))
+	return max(no, 0), max(total, 0)
+}
+
+// PartBetween is prefix+Part(s, fallback)+suffix, all of it within 255 bytes (only the
+// middle is ever cut). prefix and suffix are the caller's own safe text ("01 - ", ".opus").
+func PartBetween(prefix, s, fallback, suffix string) string {
+	return prefix + part(s, fallback, maxComponent-len(prefix)-len(suffix)) + suffix
 }
 
 func part(s, fallback string, maxBytes int) string {

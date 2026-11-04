@@ -21,6 +21,24 @@ func album(id, title, date string) mbRelease {
 	return r
 }
 
+func TestRenameTargetScheme(t *testing.T) {
+	info := Info{Tags: map[string]string{"artist": "C418", "title": "Door", "album": "Volume Alpha", "track": "2/24"}}
+	got := renameTarget("/m", "/m/C418/Volume Alpha/Door [aaaaaaaaaaa].opus", info, nil)
+	if got != "/m/C418/Volume Alpha/02 - Door.opus" {
+		t.Errorf("got %q", got)
+	}
+	// no album: no number, still no [id]
+	info.Tags["album"] = ""
+	if got := renameTarget("/m", "/m/C418/Door [aaaaaaaaaaa].opus", info, nil); got != "/m/C418/Door.opus" {
+		t.Errorf("got %q", got)
+	}
+	// already right: nothing to do
+	info.Tags["album"] = "Volume Alpha"
+	if got := renameTarget("/m", "/m/C418/Volume Alpha/02 - Door.opus", info, nil); got != "" {
+		t.Errorf("got %q", got)
+	}
+}
+
 func TestCleanTitle(t *testing.T) {
 	cases := [][3]string{
 		{"Rick Astley - Never Gonna Give You Up (Official Video)", "Rick Astley", "Never Gonna Give You Up"},

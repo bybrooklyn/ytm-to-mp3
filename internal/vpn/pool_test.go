@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -35,7 +36,8 @@ func newFakeAPI(t *testing.T, maxDevice int, countries ...string) *fakeAPI {
 			f.list = append(f.list, map[string]any{
 				"Name": fmt.Sprintf("%s#%d", cc, i), "ExitCountry": cc, "City": cc + "-city", "Tier": 0, "Features": 0,
 				"Status": 1, "Score": float64(i), "Load": 10 * i,
-				"Servers": []map[string]any{{"EntryIP": "192.0.2.1", "Status": 1, "X25519PublicKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}},
+				"Location": map[string]any{"Lat": 50.0 + float64(len(f.list)), "Long": 10.0},
+				"Servers":  []map[string]any{{"EntryIP": "192.0.2.1", "Status": 1, "X25519PublicKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}},
 			})
 		}
 	}
@@ -82,11 +84,16 @@ type fakeDial struct {
 	failed map[string]bool
 	delay  map[string]time.Duration
 	live   atomic.Int32
+	keys   map[string][32]byte // server -> WireGuard private key it was dialled with
 }
 
-func (d *fakeDial) dial(ctx context.Context, _ *proton.WGKey, s proton.Server) (*Tunnel, error) {
+func (d *fakeDial) dial(ctx context.Context, key *proton.WGKey, s proton.Server) (*Tunnel, error) {
 	d.mu.Lock()
 	d.dialed = append(d.dialed, s.Name)
+	if d.keys == nil {
+		d.keys = map[string][32]byte{}
+	}
+	d.keys[s.Name] = key.Private
 	fail, delay := d.failed[s.Name] || d.failed[s.Country], d.delay[s.Name]
 	d.mu.Unlock()
 	if delay > 0 {
@@ -142,36 +149,65 @@ func countries(p *Pool) map[string]int {
 func TestOpenColdThenCachedMakesNoAPICalls(t *testing.T) {
 	api := newFakeAPI(t, 6, "US", "NL", "DE", "SE")
 	path := filepath.Join(t.TempDir(), "servers.json")
+	pc := api.client(true) // slot 0's certificate is fresh; slots 1 and 2 are new
 	fd := &fakeDial{}
-	p := openFake(t, api, fd, 3, Options{CachePath: path, Spares: -1})
+	p := openFakeClient(t, pc, fd, 3, Options{CachePath: path, Spares: -1})
 	if api.logicals.Load() != 1 || api.v2.Load() != 1 {
 		t.Fatalf("cold run: v2=%d logicals=%d", api.v2.Load(), api.logicals.Load())
 	}
-	if api.cert.Load() != 0 {
-		t.Fatal("a fresh certificate must not be re-registered")
+	if api.cert.Load() != 2 {
+		t.Fatalf("only the two new keys should be registered, got %d", api.cert.Load())
 	}
 	if len(p.Exits()) != 3 || len(countries(p)) != 3 {
 		t.Fatalf("want 3 exits in 3 countries, got %v", countries(p))
 	}
 	p.Close()
 
-	// second run: list is fresh, no API calls at all
+	// second run: list and every certificate are fresh, no API calls at all
 	fd2 := &fakeDial{}
-	p2 := openFake(t, api, fd2, 3, Options{CachePath: path, Spares: -1})
-	if api.logicals.Load() != 1 || api.v2.Load() != 1 {
-		t.Fatalf("cached run hit the API: v2=%d logicals=%d", api.v2.Load(), api.logicals.Load())
+	p2 := openFakeClient(t, pc, fd2, 3, Options{CachePath: path, Spares: -1})
+	if api.logicals.Load() != 1 || api.v2.Load() != 1 || api.cert.Load() != 2 {
+		t.Fatalf("cached run hit the API: v2=%d logicals=%d cert=%d", api.v2.Load(), api.logicals.Load(), api.cert.Load())
 	}
 	if len(p2.Exits()) != 3 {
 		t.Fatal("cached run connected nothing")
 	}
 }
 
-func TestExpiredCertificateIsRegisteredOnce(t *testing.T) {
+// Each tunnel has its own key: Proton routes a key only through its latest connection, so
+// a shared key makes tunnels knock each other out.
+func TestEveryTunnelHasItsOwnKey(t *testing.T) {
+	api := newFakeAPI(t, 8, "US", "NL", "DE", "SE")
+	fd := &fakeDial{}
+	p := openFake(t, api, fd, 4, Options{CachePath: filepath.Join(t.TempDir(), "s.json"), Spares: -1})
+	seen := map[[32]byte]string{}
+	for _, e := range p.Exits() {
+		name := e.Name[:strings.IndexByte(e.Name, ' ')]
+		fd.mu.Lock()
+		k := fd.keys[name]
+		fd.mu.Unlock()
+		if other, dup := seen[k]; dup {
+			t.Fatalf("%s and %s share a WireGuard key", other, name)
+		}
+		seen[k] = name
+	}
+	if len(seen) != 4 {
+		t.Fatalf("want 4 distinct keys, got %d", len(seen))
+	}
+}
+
+func TestExpiredCertificateIsRegisteredOncePerKey(t *testing.T) {
 	api := newFakeAPI(t, 6, "US", "NL")
 	pc := api.client(false)
-	openFakeClient(t, pc, &fakeDial{}, 2, Options{CachePath: filepath.Join(t.TempDir(), "s.json"), Spares: -1})
-	if api.cert.Load() != 1 {
-		t.Fatalf("cert registrations: %d", api.cert.Load())
+	path := filepath.Join(t.TempDir(), "s.json")
+	p := openFakeClient(t, pc, &fakeDial{}, 2, Options{CachePath: path, Spares: -1})
+	if api.cert.Load() != 2 {
+		t.Fatalf("cert registrations: %d (want one per tunnel key)", api.cert.Load())
+	}
+	p.Close()
+	openFakeClient(t, pc, &fakeDial{}, 2, Options{CachePath: path, Spares: -1})
+	if api.cert.Load() != 2 {
+		t.Fatalf("fresh certificates were registered again: %d", api.cert.Load())
 	}
 }
 
@@ -179,7 +215,7 @@ func TestStaleCacheStartsImmediatelyAndRefreshesInBackground(t *testing.T) {
 	api := newFakeAPI(t, 6, "US", "NL", "DE")
 	path := filepath.Join(t.TempDir(), "servers.json")
 	c := LoadCache(path, AccountID("me"))
-	old := []proton.Server{srv("OLD#1", "US", 1, 1), srv("OLD#2", "NL", 1, 1), srv("OLD#3", "DE", 1, 1)}
+	old := []proton.Server{at(srv("OLD#1", "US", 1, 1), 40, -74), at(srv("OLD#2", "NL", 1, 1), 52, 5), at(srv("OLD#3", "DE", 1, 1), 50, 8)}
 	c.SetServers(old, 6, time.Now().Add(-2*time.Hour)) // stale, but usable
 	c.Save()
 
@@ -192,6 +228,13 @@ func TestStaleCacheStartsImmediatelyAndRefreshesInBackground(t *testing.T) {
 	defer slow.Close()
 	pc := api.client(true)
 	pc.Base = slow.URL
+	// keys registered by earlier runs, still fresh: only a brand-new key needs the API
+	for i := 0; i < 4; i++ {
+		seed := make([]byte, 32)
+		rand.Read(seed)
+		pc.Session.ExtraKeys = append(pc.Session.ExtraKeys, proton.SlotKey{
+			Key: base64.StdEncoding.EncodeToString(seed), CertUntil: time.Now().Add(48 * time.Hour)})
+	}
 	start := time.Now()
 	p := openFakeClient(t, pc, &fakeDial{}, 2, Options{CachePath: path, Spares: -1})
 	if time.Since(start) > 3*time.Second {

@@ -251,7 +251,7 @@ func TestBlockedTrackMovesWithoutSpendingBudget(t *testing.T) {
 	}
 	start := time.Now()
 	for i := 0; i < 10; i++ {
-		_, _, ln, _, err := e.resolveWithRetry(context.Background(), model.Track{ID: tid(i)}, nil)
+		_, ln, _, err := e.resolveWithRetry(context.Background(), model.Track{ID: tid(i)}, nil)
 		if err != nil {
 			t.Fatalf("track %d: %v", i, err)
 		}

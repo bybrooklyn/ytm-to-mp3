@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -22,13 +24,47 @@ func resolvedFor(url string, size int) *Resolved {
 func TestFetchAccepts200WithExactRange(t *testing.T) {
 	body := bytes.Repeat([]byte("a"), 3<<20)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-		w.Write(body) // 200, never 206
+		part := slice(body, r.Header.Get("Range"))
+		w.Header().Set("Content-Length", strconv.Itoa(len(part)))
+		w.Write(part) // 200, never 206, but exactly the range asked for
 	}))
 	defer srv.Close()
 	dst := filepath.Join(t.TempDir(), "x.src")
 	if err := fetch(context.Background(), srv.Client(), resolvedFor(srv.URL, len(body)), dst, func(int64) {}, func() {}); err != nil {
 		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(dst); !bytes.Equal(got, body) {
+		t.Fatal("content mismatch")
+	}
+}
+
+// slice returns the part of body a "bytes=a-b" Range header asks for (all of it if none).
+func slice(body []byte, rng string) []byte {
+	var a, b int
+	if _, err := fmt.Sscanf(rng, "bytes=%d-%d", &a, &b); err != nil {
+		return body
+	}
+	return body[a : b+1]
+}
+
+// A typical song is split over the parallel connections, not fetched as one piece.
+func TestFetchSplitsSongOverConnections(t *testing.T) {
+	body := bytes.Repeat([]byte("c"), 4<<20)
+	var reqs atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqs.Add(1)
+		part := slice(body, r.Header.Get("Range"))
+		w.Header().Set("Content-Length", strconv.Itoa(len(part)))
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write(part)
+	}))
+	defer srv.Close()
+	dst := filepath.Join(t.TempDir(), "x.src")
+	if err := fetch(context.Background(), srv.Client(), resolvedFor(srv.URL, len(body)), dst, func(int64) {}, func() {}); err != nil {
+		t.Fatal(err)
+	}
+	if n := reqs.Load(); n != fetchConn {
+		t.Fatalf("want %d range requests, got %d", fetchConn, n)
 	}
 	if got, _ := os.ReadFile(dst); !bytes.Equal(got, body) {
 		t.Fatal("content mismatch")

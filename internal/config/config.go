@@ -17,6 +17,19 @@ type Config struct {
 	NoVPN       bool   `json:"no_vpn,omitempty"`      // sign-in is kept but VPN is off
 	Jobs        int    `json:"jobs,omitempty"`        // parallel downloads; 0 = auto
 	Countries   string `json:"countries,omitempty"`   // preferred exit country code; "" = auto/best
+	// Premium turns on the optional YouTube Premium upgrade pass; its cookies are in
+	// PremiumCookiesPath(). Never used for normal downloads.
+	Premium bool `json:"premium,omitempty"`
+}
+
+// PremiumCookiesPath is where ytm keeps its copy of the user's YouTube Premium cookies
+// (mode 0600). Only the upgrade pass reads it.
+func PremiumCookiesPath() string {
+	d, err := dir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "premium-cookies.txt")
 }
 
 func dir() (string, error) {
@@ -119,6 +132,10 @@ func ExpandPath(p string) string {
 	}
 	return p
 }
+
+// DefaultFormat is the format when none is chosen: Opus, YouTube's own best audio, copied
+// into the file untouched (every other format is a re-encode).
+const DefaultFormat = "opus"
 
 // DefaultOut is ~/Music, so libraries don't scatter across whatever folder you ran ytm from.
 func DefaultOut() string {

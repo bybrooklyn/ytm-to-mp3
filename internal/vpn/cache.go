@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -102,6 +103,7 @@ type cacheFile struct {
 	FetchedAt  time.Time          `json:"fetched_at,omitzero"`
 	MaxConnect int                `json:"max_connect,omitempty"`
 	Servers    []proton.Server    `json:"servers,omitempty"`
+	Home       *proton.Location   `json:"home,omitempty"` // where the user was last seen
 	Health     map[string]*Health `json:"health,omitempty"`
 	Countries  map[string]*Health `json:"countries,omitempty"`
 }
@@ -237,6 +239,24 @@ func (c *Cache) Servers() ([]proton.Server, int) {
 	return append([]proton.Server(nil), c.f.Servers...), c.f.MaxConnect
 }
 
+// Home is the user's location as last reported by Proton (nil = never fetched).
+func (c *Cache) Home() *proton.Location {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.f.Home == nil {
+		return nil
+	}
+	h := *c.f.Home
+	return &h
+}
+
+// SetHome remembers the user's location, so the next start can rank servers at once.
+func (c *Cache) SetHome(l proton.Location) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.f.Home = &l
+}
+
 // SetServers replaces the stored list with a freshly fetched one.
 func (c *Cache) SetServers(list []proton.Server, maxConnect int, now time.Time) {
 	c.mu.Lock()
@@ -323,14 +343,20 @@ func (c *Cache) blockedLocked(s proton.Server, now time.Time) bool {
 
 // cost is the server's badness: lower is better. Proton's own score and load come
 // first; our own record of the server and its country adjusts them.
-func (c *Cache) costLocked(s proton.Server, now time.Time) float64 {
+func (c *Cache) costLocked(s proton.Server, now time.Time, home *proton.Location) float64 {
 	cost := s.Score + float64(s.Load)/25
+	// Distance matters more than anything Proton's score captures: every lookup is several
+	// round trips through the tunnel, and a TCP connection's speed falls as the round trip
+	// grows. One point per 1500 km makes a server on another continent clearly worse.
+	if km, ok := distanceKm(home, s); ok {
+		cost += km / 1500
+	}
 	if h := c.f.Health[s.Name]; h != nil {
 		cost += 0.8 * float64(h.strikes(now))
 		if h.Successes > 0 && h.strikes(now) == 0 {
 			cost -= 0.5
 		}
-		cost += h.HandshakeMs / 4000 // 4s handshake costs one point
+		cost += h.HandshakeMs / 1000 // a slow handshake means a long or lossy path
 		if h.BytesPerSec > 0 {
 			cost -= min(h.BytesPerSec/(2<<20), 1) * 0.5 // up to half a point for >=2 MB/s
 		}
@@ -351,6 +377,45 @@ type RankOpts struct {
 	AvoidCountry  string          // country to move away from (e.g. where a block happened)
 	Countries     []string        // if set, only these country codes (case-insensitive)
 	NoShuffle     bool            // deterministic order (tests); otherwise the best few vary
+	// Home is where the user is. When set, distance is part of a server's cost and a
+	// second server in a nearby country can beat the first one on another continent.
+	Home *proton.Location
+	// UsedCities counts exits already in each city ("CC/City"). Servers in one city often
+	// share an address range, and YouTube rate-limits ranges, so nearby-first ranking still
+	// spreads exits over several cities.
+	UsedCities map[string]int
+}
+
+// cityKey identifies a server's city for UsedCities.
+func cityKey(s proton.Server) string { return s.Country + "/" + s.City }
+
+// sameCityCost is the extra cost per exit already in a server's city: about 1000 km, so a
+// second New York server loses to Montreal or Chicago but still beats Europe.
+const sameCityCost = 0.7
+
+// sameCountryCost is the nearby-first cost per exit already in a server's country.
+const sameCountryCost = 0.5
+
+// distanceKm is the great-circle distance from home to s (false when either is unknown).
+func distanceKm(home *proton.Location, s proton.Server) (float64, bool) {
+	if home == nil || (home.Lat == 0 && home.Long == 0) || (s.Lat == 0 && s.Long == 0) {
+		return 0, false
+	}
+	const r = 6371.0
+	rad := func(d float64) float64 { return d * math.Pi / 180 }
+	dLat, dLon := rad(s.Lat-home.Lat), rad(s.Long-home.Long)
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(rad(home.Lat))*math.Cos(rad(s.Lat))*math.Sin(dLon/2)*math.Sin(dLon/2)
+	return 2 * r * math.Asin(math.Min(1, math.Sqrt(a))), true
+}
+
+// Located reports whether a server list carries locations (older caches don't).
+func Located(list []proton.Server) bool {
+	for _, s := range list {
+		if s.Lat != 0 || s.Long != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Rank orders candidates best first: low load and score, good record, and spread over
@@ -368,11 +433,17 @@ func (c *Cache) Rank(all []proton.Server, o RankOpts, now time.Time) []proton.Se
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// Spreading over countries is weighed against distance when we know where the user is
+	// (about 750 km per exit already in a country: four US exits mustn't push the next one
+	// to Europe). Without a location it simply comes first, one exit per country.
+	countryCost := sameCountryCost
+	if o.Home == nil || (o.Home.Lat == 0 && o.Home.Long == 0) {
+		countryCost = 100
+	}
 	type item struct {
 		s     proton.Server
-		cost  float64
-		prio  float64 // rank within country + penalties
-		group float64 // cost of the country's best server
+		cost  float64 // the server's own badness (Proton score, load, record, distance)
+		score float64 // cost plus the spread penalties: lower ranks first
 	}
 	byCountry := map[string][]item{}
 	var blocked []proton.Server
@@ -384,7 +455,7 @@ func (c *Cache) Rank(all []proton.Server, o RankOpts, now time.Time) []proton.Se
 			blocked = append(blocked, s)
 			continue
 		}
-		byCountry[s.Country] = append(byCountry[s.Country], item{s: s, cost: c.costLocked(s, now)})
+		byCountry[s.Country] = append(byCountry[s.Country], item{s: s, cost: c.costLocked(s, now, o.Home)})
 	}
 	var items []item
 	for cc, list := range byCountry {
@@ -404,23 +475,38 @@ func (c *Cache) Rank(all []proton.Server, o RankOpts, now time.Time) []proton.Se
 			pen += 2
 		}
 		for i := range list {
-			list[i].prio = float64(i) + pen
-			list[i].group = list[0].cost + countryPrior(cc)
+			list[i].score = list[i].cost + countryPrior(cc) + countryCost*pen +
+				sameCityCost*float64(o.UsedCities[cityKey(list[i].s)])
 		}
 		items = append(items, list...)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
-		a, b := items[i], items[j]
-		switch {
-		case a.prio != b.prio:
-			return a.prio < b.prio
-		case a.group != b.group:
-			return a.group < b.group
-		case a.cost != b.cost:
-			return a.cost < b.cost
+		if items[i].score != items[j].score {
+			return items[i].score < items[j].score
 		}
-		return a.s.Name < b.s.Name
+		return items[i].s.Name < items[j].s.Name
 	})
+	// A caller taking several servers from one ranking (the first connect) should get the
+	// same spread as taking them one at a time: pick greedily, charging each pick to its
+	// city and country. Only the head matters, so only the head is reordered.
+	for i := 0; i < min(len(items), 32); i++ {
+		best := i
+		for j := i + 1; j < len(items) && j < i+256; j++ {
+			if items[j].score < items[best].score {
+				best = j
+			}
+		}
+		items[i], items[best] = items[best], items[i]
+		p := items[i].s
+		for j := i + 1; j < len(items); j++ {
+			switch {
+			case cityKey(items[j].s) == cityKey(p):
+				items[j].score += countryCost + sameCityCost
+			case items[j].s.Country == p.Country:
+				items[j].score += countryCost
+			}
+		}
+	}
 	out := make([]proton.Server, 0, len(items)+len(blocked))
 	for _, it := range items {
 		out = append(out, it.s)

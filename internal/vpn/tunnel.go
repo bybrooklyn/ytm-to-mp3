@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.zx2c4.com/wireguard/conn"
@@ -30,6 +31,9 @@ type Tunnel struct {
 	seq    int // order the pool installed it in
 	// Connect is how long the first handshake plus a test connection took.
 	Connect time.Duration
+
+	closeOnce sync.Once
+	onClose   func() // returns the tunnel's key slot to the pool
 }
 
 // handshakeTimeout bounds one attempt to bring a tunnel up. WireGuard re-sends its
@@ -135,4 +139,9 @@ func (t *Tunnel) Close() {
 	if t.dev != nil {
 		t.dev.Close()
 	}
+	t.closeOnce.Do(func() {
+		if t.onClose != nil {
+			t.onClose()
+		}
+	})
 }

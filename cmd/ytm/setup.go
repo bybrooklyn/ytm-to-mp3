@@ -169,8 +169,8 @@ func runStatus(ctx context.Context, u *ui.UI) error {
 	pc := protonClient()
 	u.Printf("Settings (%s):", config.Path())
 	u.Printf("  music folder: %s", config.ExpandPath(orDefault(cfg.Out, config.DefaultOut())))
-	u.Printf("  format:       %s", orDefault(cfg.Format, "mp3"))
-	u.Printf("  VPN exits:    %d", orInt(cfg.Connections, 3))
+	u.Printf("  format:       %s", orDefault(cfg.Format, config.DefaultFormat))
+	u.Printf("  VPN exits:    %s", connectionsLabel(cfg, pc))
 	if !pc.SignedIn() {
 		u.Printf("VPN: not signed in (run: ytm setup)")
 		return nil
@@ -180,7 +180,7 @@ func runStatus(ctx context.Context, u *ui.UI) error {
 		return nil
 	}
 	u.Printf("VPN: signed in as %s; connecting...", pc.Session.Username)
-	pool, err := vpn.Open(ctx, pc, orInt(cfg.Connections, 3), func(f string, a ...any) { u.Printf(f, a...) })
+	pool, err := vpn.Open(ctx, pc, connections(cfg, pc), func(f string, a ...any) { u.Printf(f, a...) })
 	if err != nil {
 		return err
 	}

@@ -3,8 +3,6 @@ package proton
 import (
 	"context"
 	"errors"
-	"math/rand"
-	"sort"
 )
 
 // Server is one usable WireGuard endpoint.
@@ -19,6 +17,21 @@ type Server struct {
 	Tier      int     `json:"tier"`
 	Features  int     `json:"features"`
 	Status    int     `json:"status"`
+	Lat       float64 `json:"lat,omitempty"` // where the server is (0,0 = unknown, e.g. an older cache)
+	Long      float64 `json:"long,omitempty"`
+}
+
+// Location is where Proton places this connection (the user's own IP).
+type Location struct {
+	Lat, Long float64
+	Country   string
+}
+
+// Location asks Proton where the current connection is, for ranking servers by distance.
+func (c *Client) Location(ctx context.Context) (Location, error) {
+	var l Location
+	err := c.do(ctx, "GET", "/vpn/v1/location", true, nil, &l)
+	return l, err
 }
 
 // ServerList is what the API reports about the account and its servers.
@@ -37,6 +50,7 @@ type logical struct {
 	Status      int
 	Score       float64
 	Load        int
+	Location    struct{ Lat, Long float64 }
 	Servers     []struct {
 		EntryIP         string
 		Status          int
@@ -92,35 +106,11 @@ func filterServers(ls []logical, maxTier int) []Server {
 			if s.Status == 1 && s.X25519PublicKey != "" && s.EntryIP != "" {
 				out = append(out, Server{Name: l.Name, Country: l.ExitCountry, City: l.City,
 					IP: s.EntryIP, PublicKey: s.X25519PublicKey, Score: l.Score, Load: l.Load,
-					Tier: l.Tier, Features: l.Features, Status: l.Status})
+					Tier: l.Tier, Features: l.Features, Status: l.Status,
+					Lat: l.Location.Lat, Long: l.Location.Long})
 				break
 			}
 		}
 	}
 	return out
-}
-
-// Pick chooses n servers from different countries where possible, favouring low score,
-// skipping any in avoid. Which of the good ones is random so runs spread over servers.
-func Pick(all []Server, n int, avoid map[string]bool) ([]Server, error) {
-	byCountry := map[string][]Server{}
-	for _, s := range all {
-		if !avoid[s.Name] {
-			byCountry[s.Country] = append(byCountry[s.Country], s)
-		}
-	}
-	if len(byCountry) == 0 {
-		return nil, errors.New("no usable Proton servers for this account")
-	}
-	var best []Server
-	for _, list := range byCountry {
-		sort.Slice(list, func(i, j int) bool { return list[i].Score < list[j].Score })
-		top := list[:min(len(list), 3)]
-		best = append(best, top[rand.Intn(len(top))])
-	}
-	sort.Slice(best, func(i, j int) bool { return best[i].Score < best[j].Score })
-	// take from the best half of countries, shuffled, to vary exits between runs
-	pool := best[:min(len(best), max(n, (len(best)+1)/2))]
-	rand.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
-	return pool[:min(n, len(pool))], nil
 }

@@ -25,6 +25,7 @@ const (
 	rowConns
 	rowJobs
 	rowCountries
+	rowPremium
 	rowTest
 )
 
@@ -47,6 +48,7 @@ var settingsRows = []struct {
 	{rowConns, "VPN connections"},
 	{rowJobs, "Parallel downloads"},
 	{rowCountries, "Exit countries"},
+	{rowPremium, "YouTube Premium"},
 	{rowTest, "Test VPN"},
 }
 
@@ -174,6 +176,9 @@ func (m *settingsModel) activate() tea.Cmd {
 		}
 		m.action = "test"
 		return tea.Quit
+	case rowPremium:
+		m.action = "premium"
+		return tea.Quit
 	}
 	return nil
 }
@@ -182,7 +187,7 @@ func (m *settingsModel) activate() tea.Cmd {
 func (m *settingsModel) change(d int) {
 	switch m.kind() {
 	case rowFormat:
-		m.cfg.Format = cycle(engine.Formats, orDefault(m.cfg.Format, "mp3"), d)
+		m.cfg.Format = cycle(engine.Formats, orDefault(m.cfg.Format, config.DefaultFormat), d)
 	case rowVPN:
 		if !m.vpnUsable() {
 			m.err = "sign in to Proton first"
@@ -190,7 +195,14 @@ func (m *settingsModel) change(d int) {
 		}
 		m.cfg.NoVPN = !m.cfg.NoVPN
 	case rowConns:
-		m.cfg.Connections = clamp(orInt(m.cfg.Connections, 3)+d, 1, maxConns)
+		n := m.cfg.Connections
+		if n == 0 {
+			n = 3 // unset
+		}
+		if n = clamp(n+d, -1, maxConns); n == 0 {
+			n += d // 0 means "unset": step over it, to 1 or to Auto (-1)
+		}
+		m.cfg.Connections = clamp(n, -1, maxConns)
 	case rowJobs:
 		m.cfg.Jobs = clamp(m.cfg.Jobs+d, 0, maxJobs)
 	case rowCountries:
@@ -231,7 +243,11 @@ func (m *settingsModel) value(k rowKind) (val, hint string, dim bool) {
 	case rowFolder:
 		return tilde(config.ExpandPath(orDefault(m.cfg.Out, config.DefaultOut()))), "enter to type a new folder", false
 	case rowFormat:
-		return orDefault(m.cfg.Format, "mp3"), "", false
+		f := orDefault(m.cfg.Format, config.DefaultFormat)
+		if f == "opus" {
+			return f, "YouTube's own audio, copied untouched (others are re-encoded)", false
+		}
+		return f, "re-encoded from YouTube's audio; opus keeps it untouched", false
 	case rowVPN:
 		if !m.signedIn {
 			return "off", "sign in to Proton below to use it", true
@@ -246,7 +262,10 @@ func (m *settingsModel) value(k rowKind) (val, hint string, dim bool) {
 		}
 		return "not signed in", "enter to sign in", false
 	case rowConns:
-		return fmt.Sprint(orInt(m.cfg.Connections, 3)), "exits used at once; your Proton plan may limit this", !m.signedIn || m.cfg.NoVPN
+		if m.cfg.Connections < 0 {
+			return "Auto", "your Proton plan's device limit, minus one kept as a spare", !m.signedIn || m.cfg.NoVPN
+		}
+		return fmt.Sprint(orInt(m.cfg.Connections, 3)), "exits used at once; below 1 is Auto (all your plan allows)", !m.signedIn || m.cfg.NoVPN
 	case rowJobs:
 		if m.cfg.Jobs == 0 {
 			return "Auto", "", false
@@ -257,6 +276,11 @@ func (m *settingsModel) value(k rowKind) (val, hint string, dim bool) {
 			return "Auto", "best available servers", !m.signedIn || m.cfg.NoVPN
 		}
 		return m.cfg.Countries, "", !m.signedIn || m.cfg.NoVPN
+	case rowPremium:
+		if m.cfg.Premium {
+			return "on (upgrade pass only)", "enter to turn off", false
+		}
+		return "off", "experimental: enter to read the warning and turn on", false
 	case rowTest:
 		if !m.signedIn {
 			return "", "sign in first", true
@@ -379,6 +403,10 @@ func runSettings(ctx context.Context, u *ui.UI) error {
 			}
 			if err := c.Save(); err != nil {
 				return err
+			}
+		case "premium":
+			if err := premiumSetup(ctx, u); err != nil {
+				fmt.Println("  ✗", err)
 			}
 		case "test":
 			if err := runStatus(ctx, u); err != nil {

@@ -172,11 +172,14 @@ func undo(ctx context.Context, o Options) error {
 		if e.NewPath != "" {
 			if err := os.MkdirAll(filepath.Dir(e.Path), 0o755); err == nil && os.Rename(e.NewPath, e.Path) == nil {
 				cur = e.Path
+				if o.OnMove != nil {
+					o.OnMove(e.NewPath, e.Path)
+				}
 			} else {
 				cur = e.NewPath
 			}
 		}
-		if err := Write(ctx, o.FFmpeg, cur, e.Old, e.CoverBackup); err != nil {
+		if err := Write(ctx, o.FFmpeg, o.FFprobe, cur, e.Old, e.CoverBackup); err != nil {
 			o.UI.Printf("✗ %s  (%v)", cur, err)
 			continue
 		}

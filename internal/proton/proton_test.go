@@ -29,7 +29,7 @@ func TestX25519FromSeed(t *testing.T) {
 	}
 }
 
-func TestFilterAndPick(t *testing.T) {
+func TestFilterServers(t *testing.T) {
 	mk := func(name, cc string, tier, feat int, score float64) logical {
 		l := logical{Name: name, ExitCountry: cc, Tier: tier, Features: feat, Status: 1, Score: score}
 		l.Servers = []struct {
@@ -40,15 +40,8 @@ func TestFilterAndPick(t *testing.T) {
 		return l
 	}
 	all := filterServers([]logical{mk("A#1", "US", 2, 0, 1), mk("B#1", "NL", 2, 1, 1), mk("C#1", "DE", 3, 0, 1), mk("D#1", "CH", 2, 4, 2)}, 2)
-	if len(all) != 2 { // secure-core and too-high tier dropped
+	if len(all) != 2 || all[0].Name != "A#1" || all[1].Name != "D#1" { // secure-core and too-high tier dropped
 		t.Fatalf("%+v", all)
-	}
-	got, err := Pick(all, 5, nil)
-	if err != nil || len(got) != 2 {
-		t.Fatalf("%v %v", got, err)
-	}
-	if got, _ := Pick(all, 2, map[string]bool{"A#1": true}); len(got) != 1 || got[0].Name != "D#1" {
-		t.Fatalf("avoid ignored: %+v", got)
 	}
 }
 

@@ -38,7 +38,7 @@ type Options struct {
 // Pool is a set of tunnels built from one Proton account, with spare servers to swap in.
 type Pool struct {
 	mu         sync.Mutex
-	key        *proton.WGKey
+	keys       *keyRing // one WireGuard identity per tunnel
 	cache      *Cache
 	servers    []proton.Server
 	tunnels    map[string]*Tunnel // active, by exit name
@@ -55,6 +55,7 @@ type Pool struct {
 	maxConnect int
 	spares     int
 	countries  []string
+	home       *proton.Location // where the user is, for nearby-first ranking (nil = unknown)
 	onExit     func(Exit)
 	logf       func(string, ...any)
 	ctx        context.Context
@@ -66,6 +67,24 @@ type Pool struct {
 }
 
 var errNoSpare = errors.New("no spare servers")
+
+// keySlots is how many WireGuard identities the pool may use: one per tunnel that can be
+// up or connecting at once (the plan's device limit when known), plus room for the extra
+// candidate dialled while racing two servers.
+func keySlots(maxConnect, n, spares int) int {
+	if maxConnect > 0 {
+		return maxConnect + 1
+	}
+	return n + spares + 2
+}
+
+// quickAPI bounds the Proton calls that only improve server choice (where the user is, a
+// list with locations): startup never waits on them for long.
+var quickAPI = 2 * time.Second
+
+// migrateAPI bounds the one-time fetch of a server list with locations, replacing a list
+// saved by an older version (the full list is a few MB).
+var migrateAPI = 15 * time.Second
 
 // Open connects n tunnels to different countries and returns once all are up. Servers
 // that fail are replaced from the candidate list; it errors only if none work. It uses
@@ -103,10 +122,47 @@ func OpenWith(ctx context.Context, pc *proton.Client, n int, logf func(string, .
 		k, err := pc.Identity(ctx)
 		kc <- keyRes{k, err}
 	}()
+	// Where the user is, so nearby servers are preferred. Best effort and quick: without
+	// it, ranking falls back to Proton's score and our own measurements.
+	// The last known one is used at once when there is one (and refreshed afterwards).
+	hc := make(chan *proton.Location, 1)
+	cachedHome := cache.Home()
+	fetchHome := func(ctx context.Context) *proton.Location {
+		if l, err := pc.Location(ctx); err == nil && (l.Lat != 0 || l.Long != 0) {
+			cache.SetHome(l)
+			return &l
+		}
+		return nil
+	}
+	if cachedHome != nil {
+		hc <- cachedHome
+	} else {
+		go func() {
+			lctx, cancel := context.WithTimeout(ctx, quickAPI)
+			defer cancel()
+			hc <- fetchHome(lctx)
+		}()
+	}
 	now := time.Now()
 	list, maxConnect := cache.Servers()
 	age := cache.Age(now)
 	refresh := false
+	if len(list) > 0 && !Located(list) && age < MaxStale {
+		// Saved by an older version, without server locations. Fetch a fresh list (once:
+		// it's saved with locations) so this run already gets nearby servers; if Proton is
+		// slow or down, use the saved one and refresh it in the background as usual.
+		lctx, cancel := context.WithTimeout(ctx, migrateAPI)
+		sl, err := pc.ServersInfo(lctx)
+		cancel()
+		if err == nil && len(sl.Servers) > 0 {
+			list, maxConnect = sl.Servers, sl.MaxConnect
+			cache.SetServers(list, maxConnect, time.Now())
+			_ = cache.Save()
+			age = 0
+		} else {
+			age = max(age, FreshTTL) // take the "stale but usable" path below
+		}
+	}
 	switch {
 	case len(list) > 0 && age < FreshTTL:
 	case len(list) > 0 && age < MaxStale:
@@ -126,6 +182,7 @@ func OpenWith(ctx context.Context, pc *proton.Client, n int, logf func(string, .
 		}
 	}
 	kr := <-kc
+	home := <-hc
 	if kr.err != nil {
 		return nil, kr.err
 	}
@@ -159,15 +216,28 @@ func OpenWith(ctx context.Context, pc *proton.Client, n int, logf func(string, .
 
 	pctx, cancel := context.WithCancel(ctx)
 	p := &Pool{
-		key: kr.k, cache: cache, servers: list,
+		keys: newKeyRing(keySlots(maxConnect, n, spares), pc.IdentityAt), cache: cache, servers: list,
 		tunnels: map[string]*Tunnel{}, connecting: map[string]bool{}, tried: map[string]bool{}, failedCC: map[string]int{},
 		known: map[string]proton.Server{}, reasons: map[string]string{},
-		maxConnect: maxConnect, spares: spares, countries: countries, onExit: o.OnExit, logf: logf,
+		maxConnect: maxConnect, spares: spares, countries: countries, home: home, onExit: o.OnExit, logf: logf,
 		ctx: pctx, cancel: cancel,
 		dial: OpenTunnel,
 	}
 	if o.dial != nil {
 		p.dial = o.dial
+	}
+	p.keys.seed(0, kr.k)
+	if cachedHome != nil {
+		p.spawn(func() { // the user may have moved since: update for later swaps and runs
+			if h := fetchHome(pctx); h != nil {
+				_ = cache.Save()
+				p.mu.Lock()
+				p.home = h
+				p.mu.Unlock()
+			}
+		})
+	} else if home != nil {
+		_ = cache.Save()
 	}
 	if refresh {
 		p.spawn(func() {
@@ -295,26 +365,29 @@ func (p *Pool) claim(width int, avoidCountry string) []proton.Server {
 	}
 	avoid := map[string]bool{}
 	used := map[string]int{}
+	cities := map[string]int{}
 	for name := range p.tried {
 		avoid[name] = true
 	}
 	for cc, n := range p.failedCC { // countries where dials keep failing sink behind untried ones
 		used[cc] += n
 	}
+	inUse := func(s proton.Server) {
+		avoid[s.Name] = true
+		used[s.Country]++
+		cities[cityKey(s)]++
+	}
 	for name := range p.connecting {
-		avoid[name] = true
-		used[p.known[name].Country]++
+		inUse(p.known[name])
 	}
 	for _, t := range p.tunnels {
-		avoid[t.Server.Name] = true
-		used[t.Server.Country]++
+		inUse(t.Server)
 	}
 	for _, t := range p.warm {
-		avoid[t.Server.Name] = true
-		used[t.Server.Country]++
+		inUse(t.Server)
 	}
-	ranked := p.cache.Rank(p.servers, RankOpts{Avoid: avoid, UsedCountries: used,
-		AvoidCountry: avoidCountry, Countries: p.countries}, time.Now())
+	ranked := p.cache.Rank(p.servers, RankOpts{Avoid: avoid, UsedCountries: used, UsedCities: cities,
+		AvoidCountry: avoidCountry, Countries: p.countries, Home: p.home}, time.Now())
 	width = max(1, min(width, p.freeSlotsLocked()))
 	out := ranked[:min(width, len(ranked))]
 	for _, s := range out {
@@ -347,7 +420,19 @@ func (p *Pool) connectOne(ctx context.Context, width int, avoidCountry string) (
 	ch := make(chan res, len(cands))
 	for _, s := range cands {
 		go func() {
-			t, err := p.dial(cctx, p.key, s)
+			// each candidate on its own key: the loser's handshake must not steal the
+			// winner's routing at Proton
+			key, release, err := p.keys.acquire(cctx)
+			if err != nil {
+				ch <- res{nil, s, err}
+				return
+			}
+			t, err := p.dial(cctx, key, s)
+			if err != nil {
+				release()
+			} else {
+				t.onClose = release
+			}
 			ch <- res{t, s, err}
 		}()
 	}
@@ -364,6 +449,8 @@ func (p *Pool) connectOne(ctx context.Context, width int, avoidCountry string) (
 			cancel() // the rest no longer matter
 		case r.err == nil:
 			r.t.Close()
+		case errors.Is(r.err, errNoKeySlot):
+			last = r.err // not the server's fault
 		case winner == nil && ctx.Err() == nil:
 			p.mu.Lock()
 			p.tried[r.s.Name] = true

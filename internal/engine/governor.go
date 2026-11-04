@@ -16,6 +16,10 @@ const (
 	Neutral           // failed for an unrelated reason: say nothing
 )
 
+// rampEvery is how many successes in a row raise the concurrency limit by one. At 20 an
+// exit took hundreds of tracks to reach its ceiling; a throttle still halves it at once.
+const rampEvery = 10
+
 // Governor adapts how hard we hit YouTube. It is AIMD: concurrency creeps up
 // while requests succeed and halves on throttling, with a jittered cooldown
 // that doubles on repeated throttling and decays after sustained success.
@@ -112,7 +116,7 @@ func (g *Governor) observeLocked(o Outcome) {
 	switch o {
 	case OK:
 		g.streak++
-		if g.streak%20 == 0 {
+		if g.streak%rampEvery == 0 {
 			if g.limit < g.max {
 				g.limit++
 			}

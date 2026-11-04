@@ -25,6 +25,9 @@ type Track struct {
 	Title   string
 	Album   string
 	Artists []string
+	// Position on its album when known (from the YouTube Music album), for the file name
+	// "NN - Title" and the track tag. 0 = unknown.
+	TrackNo, TrackTotal int
 }
 
 // PrimaryArtist returns the first listed artist, or "".

@@ -16,13 +16,25 @@ import (
 )
 
 type UI struct {
-	mu    sync.Mutex
-	out   io.Writer
-	tty   bool
-	block []string // the live block pinned under the scrolling output (redrawn in place)
-	drawn int      // how many terminal rows the block currently occupies
-	in    *bufio.Reader
+	mu     sync.Mutex
+	out    io.Writer
+	tty    bool
+	block  []string // the live block pinned under the scrolling output (redrawn in place)
+	widths []int    // visible width of each block row as last drawn (for resize maths)
+	last   string   // the last frame written, to skip identical redraws
+	hidden bool     // the cursor is hidden while the block is up
+	in     *bufio.Reader
 }
+
+// Terminal control sequences used to draw the live block.
+const (
+	syncBegin  = "\x1b[?2026h" // synchronized update: terminals that know it show the frame at once
+	syncEnd    = "\x1b[?2026l"
+	hideCursor = "\x1b[?25l"
+	showCursor = "\x1b[?25h"
+	eraseLine  = "\x1b[K" // to the end of the line
+	eraseBelow = "\x1b[J" // to the end of the screen
+)
 
 // Width is the terminal width in columns (80 when unknown).
 func (u *UI) Width() int {
@@ -56,43 +68,73 @@ func (u *UI) Interactive() bool {
 	return u.tty && err == nil && st.Mode()&os.ModeCharDevice != 0
 }
 
-// clear erases the live block: back to its first row, then wipe to the end of the screen.
-func (u *UI) clear() {
-	if !u.tty || u.drawn == 0 {
-		return
+// drawnRows is how many terminal rows the block occupies now, at width w. Rows were cut
+// to fit when drawn, but a terminal that has since got narrower re-wraps them.
+func (u *UI) drawnRows(w int) int {
+	n := 0
+	for _, rw := range u.widths {
+		n += max(1, (rw+w-1)/max(1, w))
 	}
-	if u.drawn > 1 {
-		fmt.Fprintf(u.out, "\033[%dA", u.drawn-1)
-	}
-	fmt.Fprint(u.out, "\r\033[J")
-	u.drawn = 0
+	return n
 }
 
-// redraw prints the live block, each row cut to the terminal width so it never wraps
-// (a wrapped row would break the cursor arithmetic in clear).
-func (u *UI) redraw() {
-	if !u.tty || len(u.block) == 0 {
+// frame writes, as one write, everything needed to: go back to the top of the block, print
+// the scrolling lines (if any) over it, then the block itself, wiping only what's left over.
+// Nothing is erased ahead of being overwritten, so the terminal never shows a blank block.
+func (u *UI) frame(lines []string) {
+	if !u.tty {
+		for _, l := range lines {
+			fmt.Fprintln(u.out, l)
+		}
 		return
 	}
 	w := u.Width()
-	rows := make([]string, len(u.block))
-	for i, l := range u.block {
-		rows[i] = ansi.Truncate(l, w-1, "…")
+	var b strings.Builder
+	b.WriteString(syncBegin)
+	if len(u.block) > 0 {
+		b.WriteString(hideCursor)
+		u.hidden = true
 	}
-	fmt.Fprint(u.out, strings.Join(rows, "\n"))
-	u.drawn = len(rows)
+	b.WriteString("\r")
+	if n := u.drawnRows(w); n > 1 {
+		fmt.Fprintf(&b, "\x1b[%dA", n-1)
+	}
+	for _, l := range lines {
+		b.WriteString(l)
+		b.WriteString(eraseLine)
+		b.WriteString("\n")
+	}
+	u.widths = u.widths[:0]
+	for i, l := range u.block {
+		row := ansi.Truncate(l, w-1, "…") // never wrap: wrapping breaks the arithmetic above
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(row)
+		b.WriteString(eraseLine)
+		u.widths = append(u.widths, ansi.StringWidth(row))
+	}
+	b.WriteString(eraseBelow) // rows left over from a taller block
+	if len(u.block) == 0 && u.hidden {
+		b.WriteString(showCursor)
+		u.hidden = false
+	}
+	b.WriteString(syncEnd)
+	s := b.String()
+	if len(lines) == 0 && s == u.last {
+		return // nothing moved
+	}
+	u.last = s
+	io.WriteString(u.out, s)
 }
 
 // Printf prints a line above the status line.
 func (u *UI) Printf(format string, a ...any) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.clear()
-	fmt.Fprint(u.out, Sanitize(fmt.Sprintf(format, a...)))
-	if !strings.HasSuffix(format, "\n") {
-		fmt.Fprintln(u.out)
-	}
-	u.redraw()
+	msg := Sanitize(fmt.Sprintf(format, a...))
+	msg = strings.TrimSuffix(msg, "\n")
+	u.frame(strings.Split(msg, "\n"))
 }
 
 // Line prints "prefix text" above the live block. The prefix is the caller's own (it may
@@ -100,13 +142,15 @@ func (u *UI) Printf(format string, a ...any) {
 func (u *UI) Line(prefix, text string) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.clear()
 	if !u.tty {
 		prefix = ansi.Strip(prefix)
 	}
-	fmt.Fprintln(u.out, prefix+" "+Sanitize(text))
-	u.redraw()
+	u.frame([]string{prefix + " " + strings.ReplaceAll(Sanitize(text), "\n", " ")})
 }
+
+// Notice prints a message above the live block; safe to call from any goroutine (e.g. a
+// signal handler), unlike writing to the terminal directly.
+func (u *UI) Notice(msg string) { u.Printf("%s", msg) }
 
 // Sanitize strips escape sequences and control / bidi characters (except newline and
 // tab) so untrusted text (titles, tags, tool output) can't drive the terminal.
@@ -119,9 +163,8 @@ func (u *UI) Status(format string, a ...any) {
 	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.clear()
 	u.block = []string{strings.NewReplacer("\n", " ", "\t", " ").Replace(Sanitize(fmt.Sprintf(format, a...)))}
-	u.redraw()
+	u.frame(nil)
 }
 
 // Block replaces the live block with several rows. Rows may carry the caller's own
@@ -133,23 +176,47 @@ func (u *UI) Block(rows []string) {
 	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.clear()
 	u.block = rows
-	u.redraw()
+	u.frame(nil)
+}
+
+// erase wipes the block from the screen (it stays remembered) and shows the cursor again.
+// The caller holds u.mu.
+func (u *UI) erase() {
+	if !u.tty || (len(u.widths) == 0 && !u.hidden) {
+		return
+	}
+	var b strings.Builder
+	b.WriteString("\r")
+	if n := u.drawnRows(u.Width()); n > 1 {
+		fmt.Fprintf(&b, "\x1b[%dA", n-1)
+	}
+	b.WriteString(eraseBelow)
+	b.WriteString(showCursor)
+	io.WriteString(u.out, b.String())
+	u.widths, u.last, u.hidden = nil, "", false
+}
+
+// RestoreCursor shows the cursor again without taking the lock, for a hard exit that may
+// happen while another goroutine is mid-draw.
+func (u *UI) RestoreCursor() {
+	if u.tty {
+		io.WriteString(u.out, "\n"+showCursor)
+	}
 }
 
 // ClearStatus removes the live block for good.
 func (u *UI) ClearStatus() {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.clear()
+	u.erase()
 	u.block = nil
 }
 
 // Ask prompts for a line of input; empty input returns def.
 func (u *UI) Ask(prompt, def string) string {
 	u.mu.Lock()
-	u.clear()
+	u.erase()
 	fmt.Fprint(u.out, Sanitize(prompt))
 	u.mu.Unlock()
 	line, _ := u.in.ReadString('\n')

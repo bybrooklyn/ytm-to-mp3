@@ -1,16 +1,21 @@
 package engine
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
@@ -47,6 +52,12 @@ var (
 		"http error 429", "too many requests", "not a bot", "rate-limited", "rate limited",
 		"try again later", "http error 403", "this content isn't available",
 	}
+	// Checked before permanentMarks (whose "is not available" would match them too).
+	exitMarks = []string{
+		// YouTube gives a flagged IP a stripped-down answer with no audio formats; the
+		// same track resolves fine from another exit
+		"requested format is not available",
+	}
 	permanentMarks = []string{
 		"video unavailable", "is unavailable", "private video", "has been removed", "is not available",
 		"not available in your country", "blocked it", "copyright", "account associated",
@@ -77,6 +88,11 @@ func classify(stderr string) *Error {
 		msg = "yt-dlp failed"
 	}
 	low := strings.ToLower(msg)
+	for _, m := range exitMarks {
+		if strings.Contains(low, m) {
+			return &Error{kindThrottled, msg}
+		}
+	}
 	for _, m := range permanentMarks {
 		if strings.Contains(low, m) {
 			return &Error{kindPermanent, msg}
@@ -140,16 +156,40 @@ type ytInfo struct {
 	} `json:"thumbnails"`
 }
 
-// playerClients are tried in turn on retries; a different client often gets past a block.
-var playerClients = []string{"", "tv_simply", "tv", "web_safari", "mweb"}
-
 type ytdlp struct {
-	tools deps.Tools
-	cache string
-	proxy string // SOCKS/HTTP proxy for this exit, or ""
+	tools  deps.Tools
+	cache  string
+	proxy  string // SOCKS/HTTP proxy for this exit, or ""
+	format string // target format, to pick the stream that copies straight into it
+	// cookies, if set, is a YouTube Premium cookie file: only the upgrade pass uses one,
+	// with the web_music client (the only one that still offers the Premium formats).
+	cookies string
+	// only, if set, replaces the format choice with no fallback (the Premium pass asks
+	// for "774/141" and nothing else, so it can never quietly re-download 128k audio).
+	only string
 }
 
-func (y ytdlp) baseArgs(clientIdx int) []string {
+// selector is the yt-dlp format choice: the best stream of the target's own codec first,
+// so the file is a remux (identical audio) rather than a re-encode. 774 (Opus ~256k) and
+// 141 (AAC 256k) only exist for YouTube Premium; without it they are simply skipped.
+func (y ytdlp) selector() string {
+	if y.only != "" {
+		return y.only
+	}
+	switch y.format {
+	case "opus":
+		return "774/251/bestaudio[acodec=opus]/bestaudio/best"
+	case "m4a":
+		return "141/140/bestaudio[acodec^=mp4a]/bestaudio/best"
+	}
+	return "bestaudio/best" // re-encoded anyway: take the best of anything
+}
+
+// baseArgs are the options every lookup and download shares. yt-dlp's default player
+// clients are used: in testing (2026-11) every alternative either returned no usable stream
+// or one Google refused. The proxy (which carries a password) goes through the
+// environment, not argv, where other local users could read it with ps. See env().
+func (y ytdlp) baseArgs() []string {
 	a := []string{"--ignore-config", "--no-plugin-dirs", "--no-warnings", "--no-playlist", "--socket-timeout", "20"}
 	for _, r := range y.tools.JSRuntimes {
 		a = append(a, "--js-runtimes", r)
@@ -157,10 +197,8 @@ func (y ytdlp) baseArgs(clientIdx int) []string {
 	if y.cache != "" {
 		a = append(a, "--cache-dir", y.cache)
 	}
-	// The proxy (which carries a password) goes through the environment, not argv, where
-	// other local users could read it with ps. See env().
-	if c := playerClients[clientIdx%len(playerClients)]; c != "" {
-		a = append(a, "--extractor-args", "youtube:player_client="+c)
+	if y.cookies != "" {
+		a = append(a, "--cookies", y.cookies, "--extractor-args", "youtube:player_client=web_music,default")
 	}
 	return a
 }
@@ -186,34 +224,94 @@ func (y ytdlp) env() []string {
 	return append(out, "no_proxy=", "NO_PROXY=")
 }
 
-// runRaw runs yt-dlp and returns its stdout and stderr even when it exits non-zero (err is
-// then the exit error); callers that tolerate partial failure use this.
-func (y ytdlp) runRaw(ctx context.Context, args ...string) ([]byte, string, error) {
-	cmd := exec.CommandContext(ctx, y.tools.YtDlp, args...)
-	cmd.Env = y.env()
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	err := cmd.Run()
-	return out.Bytes(), errb.String(), err
+// maxLine bounds one line of yt-dlp output (a -j info line can run to a few MB).
+const maxLine = 32 << 20
+
+// splitLines is bufio.ScanLines that also breaks on '\r' (progress updates).
+func splitLines(data []byte, atEOF bool) (int, []byte, error) {
+	if i := bytes.IndexAny(data, "\r\n"); i >= 0 {
+		return i + 1, data[:i], nil
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
 }
 
+// runLines runs yt-dlp and hands each output line to onLine as it is printed (stdout lines
+// with err=false, stderr lines with err=true), so callers can act before the process ends.
+// It returns the tail of stderr for classify, and the exit error.
+func (y ytdlp) runLines(ctx context.Context, onLine func(line []byte, stderr bool), args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, y.tools.YtDlp, args...)
+	cmd.Env = y.env()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return "", err
+	}
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	var (
+		wg   sync.WaitGroup
+		emu  sync.Mutex
+		tail []string // last stderr lines, for the error message
+	)
+	read := func(r io.Reader, isErr bool) {
+		defer wg.Done()
+		sc := bufio.NewScanner(r)
+		sc.Buffer(make([]byte, 64<<10), maxLine)
+		sc.Split(splitLines)
+		for sc.Scan() {
+			line := sc.Bytes()
+			if isErr && !bytes.HasPrefix(line, []byte(progPrefix)) {
+				emu.Lock()
+				if tail = append(tail, string(line)); len(tail) > 50 {
+					tail = tail[len(tail)-50:]
+				}
+				emu.Unlock()
+			}
+			if onLine != nil {
+				onLine(line, isErr)
+			}
+		}
+		io.Copy(io.Discard, r) // an over-long line: keep the pipe drained so yt-dlp can't block
+	}
+	wg.Add(2)
+	go read(stdout, false)
+	go read(stderr, true)
+	wg.Wait() // all output read before Wait closes the pipes
+	err = cmd.Wait()
+	return strings.Join(tail, "\n"), err
+}
+
+// run runs yt-dlp and returns its stdout; a failure is classified from its stderr.
 func (y ytdlp) run(ctx context.Context, args ...string) ([]byte, error) {
-	out, stderr, err := y.runRaw(ctx, args...)
+	var out bytes.Buffer // only the stdout reader writes it
+	stderr, err := y.runLines(ctx, func(line []byte, isErr bool) {
+		if !isErr {
+			out.Write(line)
+			out.WriteByte('\n')
+		}
+	}, args...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 		return nil, classify(stderr)
 	}
-	return out, nil
+	return out.Bytes(), nil
 }
 
 // Resolve asks yt-dlp for the best audio stream and metadata of one video.
-func (y ytdlp) Resolve(ctx context.Context, id string, clientIdx int) (*Resolved, error) {
+func (y ytdlp) Resolve(ctx context.Context, id string) (*Resolved, error) {
 	if !model.ValidID(id) {
 		return nil, &Error{kindPermanent, "invalid video id"}
 	}
-	args := append(y.baseArgs(clientIdx), "-J", "-f", "bestaudio/best", "https://www.youtube.com/watch?v="+id)
+	args := append(y.baseArgs(), "-J", "-f", y.selector(), "https://www.youtube.com/watch?v="+id)
 	b, err := y.run(ctx, args...)
 	if err != nil {
 		return nil, err
@@ -259,22 +357,63 @@ type batchResult struct {
 // one JS-runtime warm-up for all of them). The result has an entry per id it could attribute;
 // ids missing from it had no recognisable output and should be resolved on their own.
 // A non-nil error means the whole batch failed (cancelled, or yt-dlp could not run).
-func (y ytdlp) ResolveBatch(ctx context.Context, ids []string, clientIdx int) (map[string]batchResult, error) {
-	args := append(y.baseArgs(clientIdx), "--ignore-errors", "-j", "-f", "bestaudio/best")
+// onOK, if set, is called for each video the moment yt-dlp prints it, so its download can
+// start while the rest of the batch (resolved one after another) is still going; the
+// returned map includes those too.
+func (y ytdlp) ResolveBatch(ctx context.Context, ids []string, onOK func(id string, r *Resolved)) (map[string]batchResult, error) {
+	args := append(y.baseArgs(), "--ignore-errors", "-j", "-f", y.selector())
+	want := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		if !model.ValidID(id) {
 			return nil, &Error{kindPermanent, "invalid video id"}
 		}
+		want[id] = true
 		args = append(args, "https://www.youtube.com/watch?v="+id)
 	}
-	out, stderr, err := y.runRaw(ctx, args...)
+	var mu sync.Mutex
+	got := map[string]*Resolved{}
+	sawOutput := false
+	stderr, err := y.runLines(ctx, func(line []byte, isErr bool) {
+		if isErr {
+			return
+		}
+		id, r := parseInfoLine(line, want)
+		if r == nil {
+			return
+		}
+		mu.Lock()
+		sawOutput = true
+		_, dup := got[id]
+		got[id] = r
+		mu.Unlock()
+		if !dup && onOK != nil {
+			onOK(id, r)
+		}
+	}, args...)
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	if err != nil && len(out) == 0 && strings.TrimSpace(stderr) == "" {
+	if err != nil && !sawOutput && strings.TrimSpace(stderr) == "" {
 		return nil, classify("") // could not even run
 	}
-	return parseBatch(ids, out, stderr), nil
+	res := parseBatch(ids, nil, stderr)
+	for id, r := range got {
+		res[id] = batchResult{res: r}
+	}
+	return res, nil
+}
+
+// parseInfoLine reads one `-j` line; nil unless it is an info object for a wanted id.
+func parseInfoLine(line []byte, want map[string]bool) (string, *Resolved) {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 || line[0] != '{' {
+		return "", nil
+	}
+	var in ytInfo
+	if json.Unmarshal(line, &in) != nil || !want[in.ID] {
+		return "", nil
+	}
+	return in.ID, resolvedFrom(in)
 }
 
 var errLineID = regexp.MustCompile(`^ERROR:\s*\[[^\]]+\]\s*([\w-]{11}):`)
@@ -288,15 +427,9 @@ func parseBatch(ids []string, stdout []byte, stderr string) map[string]batchResu
 	}
 	res := make(map[string]batchResult, len(ids))
 	for _, line := range bytes.Split(stdout, []byte{'\n'}) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 || line[0] != '{' {
-			continue
+		if id, r := parseInfoLine(line, want); r != nil {
+			res[id] = batchResult{res: r}
 		}
-		var in ytInfo
-		if json.Unmarshal(line, &in) != nil || !want[in.ID] {
-			continue
-		}
-		res[in.ID] = batchResult{res: resolvedFrom(in)}
 	}
 	var loose []string // error lines we couldn't tie to an id
 	for _, line := range strings.Split(stderr, "\n") {
@@ -362,26 +495,100 @@ func outputTemplate(dir, id string) string {
 
 // Download lets yt-dlp fetch the audio itself. This is the slower but most robust
 // path, used when the direct stream URL can't be fetched by ytm.
-func (y ytdlp) Download(ctx context.Context, id, dir string, clientIdx int) (string, error) {
+// onProgress, if set, is told the bytes downloaded so far and the expected total (0 when
+// yt-dlp doesn't know it yet).
+func (y ytdlp) Download(ctx context.Context, id, dir string, onProgress func(got, total int64)) (string, error) {
 	if !model.ValidID(id) {
 		return "", &Error{kindPermanent, "invalid video id"}
 	}
-	args := append(y.baseArgs(clientIdx), "-f", "bestaudio/best", "--no-part", "--quiet",
+	args := append(y.baseArgs(), "-f", y.selector(), "--no-part", "--quiet",
 		"--concurrent-fragments", "4", "--http-chunk-size", "10M",
+		// --quiet hides the normal progress bar; ask for a machine-readable one instead
+		"--progress", "--newline", "--progress-template", progTemplate,
 		"-o", outputTemplate(dir, id), "--print", "after_move:filepath",
 		"https://www.youtube.com/watch?v="+id)
-	b, err := y.run(ctx, args...)
+	var path string
+	stderr, err := y.runLines(ctx, func(line []byte, _ bool) {
+		s := strings.TrimSpace(string(line))
+		if got, total, ok := parseProgress(s); ok {
+			if onProgress != nil {
+				onProgress(got, total)
+			}
+			return
+		}
+		if s != "" && !strings.HasPrefix(s, "[") && !strings.HasPrefix(s, "ERROR") && !strings.HasPrefix(s, "WARNING") {
+			path = s // the after_move:filepath line
+		}
+	}, args...)
 	if err != nil {
-		return "", err
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", classify(stderr)
 	}
-	p := strings.TrimSpace(string(b))
-	if i := strings.LastIndexByte(p, '\n'); i >= 0 {
-		p = strings.TrimSpace(p[i+1:])
-	}
-	if p == "" {
+	if path == "" {
 		return "", &Error{kindTransient, "yt-dlp produced no file"}
 	}
-	return p, nil
+	return path, nil
+}
+
+// progPrefix marks ytm's own progress lines in yt-dlp's output.
+const progPrefix = "ytmprog "
+
+var progTemplate = "download:" + progPrefix +
+	"%(progress.downloaded_bytes)s %(progress.total_bytes,progress.total_bytes_estimate)s"
+
+// parseProgress reads one progress line ("ytmprog <got> <total>"; either may be NA).
+func parseProgress(s string) (got, total int64, ok bool) {
+	rest, found := strings.CutPrefix(s, progPrefix)
+	if !found {
+		return 0, 0, false
+	}
+	f := strings.Fields(rest)
+	if len(f) != 2 {
+		return 0, 0, true
+	}
+	num := func(v string) int64 {
+		n, err := strconv.ParseFloat(v, 64)
+		if err != nil || n < 0 {
+			return 0
+		}
+		return int64(n)
+	}
+	return num(f[0]), num(f[1]), true
+}
+
+// musicHit is one song result from a YouTube Music search.
+type musicHit struct {
+	ID, Title string
+}
+
+// SearchMusic looks query up on YouTube Music's song search and returns up to n results.
+// It finds the current upload of a song whose old video id has been taken down.
+func (y ytdlp) SearchMusic(ctx context.Context, query string, n int) ([]musicHit, error) {
+	u := "https://music.youtube.com/search?q=" + url.QueryEscape(query) + "#songs"
+	args := []string{"--ignore-config", "--no-plugin-dirs", "--no-warnings", "--flat-playlist",
+		"--playlist-items", fmt.Sprintf("1:%d", n), "-J", "--", u}
+	b, err := y.run(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	var pl struct {
+		Entries []struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(b, &pl); err != nil {
+		return nil, &Error{kindTransient, "unreadable yt-dlp output"}
+	}
+	var out []musicHit
+	for _, e := range pl.Entries {
+		if model.ValidID(e.ID) {
+			out = append(out, musicHit{ID: e.ID, Title: e.Title})
+		}
+	}
+	return out, nil
 }
 
 // Expand turns a playlist / album URL into tracks.

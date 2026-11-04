@@ -3,6 +3,7 @@ package tag
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -107,6 +108,81 @@ func TestRunMakesDirAbsolute(t *testing.T) {
 	}
 }
 
+// Ogg Opus keeps its cover as a comment: retagging must keep the cover and every other tag
+// (a plain stream copy fails on it, and mapping audio only drops it).
+func TestWriteOggKeepsCoverAndTags(t *testing.T) {
+	ff, err1 := lookPath("ffmpeg")
+	fp, err2 := lookPath("ffprobe")
+	if err1 != nil || err2 != nil {
+		t.Skip("no ffmpeg/ffprobe")
+	}
+	d := t.TempDir()
+	p := filepath.Join(d, "t.opus")
+	if err := exec.Command(ff, "-v", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", "0.3",
+		"-c:a", "libopus", "-metadata", "artist=Keep Me", "-y", p).Run(); err != nil {
+		t.Skip("cannot make opus: ", err)
+	}
+	cover := filepath.Join(d, "c.jpg")
+	if err := exec.Command(ff, "-v", "error", "-f", "lavfi", "-i", "color=red:s=800x500", "-frames:v", "1", "-y", cover).Run(); err != nil {
+		t.Skip("cannot make jpeg: ", err)
+	}
+	ctx := context.Background()
+	if err := Write(ctx, ff, fp, p, map[string]string{"title": "First"}, cover); err != nil {
+		t.Fatal(err)
+	}
+	if err := Write(ctx, ff, fp, p, map[string]string{"album": "Second"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	info, err := Probe(ctx, fp, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasCover {
+		t.Error("cover lost on retag")
+	}
+	for k, want := range map[string]string{"title": "First", "album": "Second", "artist": "Keep Me"} {
+		if info.Tags[k] != want {
+			t.Errorf("%s = %q, want %q (tags %v)", k, info.Tags[k], want, info.Tags)
+		}
+	}
+	if ents, _ := os.ReadDir(d); len(ents) != 2 {
+		t.Errorf("temp files left behind: %v", ents)
+	}
+}
+
+// The Premium upgrade swaps a file's audio and must keep its tags and cover.
+func TestReplaceAudioKeepsTagsAndCover(t *testing.T) {
+	ff, err1 := lookPath("ffmpeg")
+	fp, err2 := lookPath("ffprobe")
+	if err1 != nil || err2 != nil {
+		t.Skip("no ffmpeg/ffprobe")
+	}
+	d := t.TempDir()
+	p, src, cover := filepath.Join(d, "song.opus"), filepath.Join(d, "new.webm"), filepath.Join(d, "c.jpg")
+	mk := func(dst string, extra ...string) error {
+		a := append([]string{"-v", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", "0.3", "-c:a", "libopus"}, extra...)
+		return exec.Command(ff, append(a, "-y", dst)...).Run()
+	}
+	if mk(p, "-metadata", "title=Song", "-metadata", "artist=A") != nil || mk(src, "-b:a", "96k") != nil ||
+		exec.Command(ff, "-v", "error", "-f", "lavfi", "-i", "color=blue:s=300x300", "-frames:v", "1", "-y", cover).Run() != nil {
+		t.Skip("cannot make test media")
+	}
+	ctx := context.Background()
+	if err := Write(ctx, ff, fp, p, map[string]string{"album": "Alb"}, cover); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplaceAudio(ctx, ff, fp, src, p); err != nil {
+		t.Fatal(err)
+	}
+	info, err := Probe(ctx, fp, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasCover || info.Tags["title"] != "Song" || info.Tags["artist"] != "A" || info.Tags["album"] != "Alb" {
+		t.Errorf("lost something: cover=%v tags=%v", info.HasCover, info.Tags)
+	}
+}
+
 // With a real ffmpeg, Write must replace the file atomically and keep its mode.
 func TestWriteReplacesInPlace(t *testing.T) {
 	ff, err := lookPath("ffmpeg")
@@ -120,7 +196,7 @@ func TestWriteReplacesInPlace(t *testing.T) {
 	}
 	os.Chmod(p, 0o640)
 	before, _ := os.Stat(p)
-	if err := Write(context.Background(), ff, p, map[string]string{"title": "Hello\x1b[2J"}, ""); err != nil {
+	if err := Write(context.Background(), ff, "", p, map[string]string{"title": "Hello\x1b[2J"}, ""); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := os.Stat(p)

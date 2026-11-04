@@ -25,6 +25,65 @@ func TestStatusSanitizes(t *testing.T) {
 	}
 }
 
+// countingWriter records each Write separately, to check frames go out in one piece.
+type countingWriter struct{ writes []string }
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	c.writes = append(c.writes, string(p))
+	return len(p), nil
+}
+
+func TestBlockIsOneWriteWithNoEraseFirst(t *testing.T) {
+	w := &countingWriter{}
+	u := &UI{out: w, tty: true}
+	u.Block([]string{"a", "b", "c"})
+	u.Block([]string{"a", "b2"})
+	if len(w.writes) != 2 {
+		t.Fatalf("want one write per frame, got %d", len(w.writes))
+	}
+	f := w.writes[1]
+	// back to the top of the 3-row block, rows overwritten in place, leftovers wiped last
+	if !strings.Contains(f, "\x1b[2A") {
+		t.Errorf("should move up 2 rows: %q", f)
+	}
+	if i, j := strings.Index(f, eraseBelow), strings.Index(f, "b2"); i < j {
+		t.Errorf("erase-below must come after the rows: %q", f)
+	}
+}
+
+func TestIdenticalFrameIsSkipped(t *testing.T) {
+	w := &countingWriter{}
+	u := &UI{out: w, tty: true}
+	u.Block([]string{"same"})
+	u.Block([]string{"same"})
+	if len(w.writes) != 1 {
+		t.Fatalf("identical frame should not be rewritten, got %d writes", len(w.writes))
+	}
+}
+
+func TestLineAndBlockShareOneWrite(t *testing.T) {
+	w := &countingWriter{}
+	u := &UI{out: w, tty: true}
+	u.Block([]string{"status"})
+	u.Line("✓", "song")
+	if len(w.writes) != 2 || !strings.Contains(w.writes[1], "✓ song") || !strings.Contains(w.writes[1], "status") {
+		t.Fatalf("line and block should go out together: %q", w.writes)
+	}
+}
+
+func TestClearStatusRestoresCursor(t *testing.T) {
+	w := &countingWriter{}
+	u := &UI{out: w, tty: true}
+	u.Block([]string{"x"})
+	if !strings.Contains(w.writes[0], hideCursor) {
+		t.Fatal("cursor should be hidden while the block is up")
+	}
+	u.ClearStatus()
+	if !strings.HasSuffix(strings.Join(w.writes, ""), showCursor) {
+		t.Fatalf("cursor not restored: %q", w.writes)
+	}
+}
+
 func TestSanitizeTable(t *testing.T) {
 	for in, want := range map[string]string{
 		"ok\ttab\nnl": "ok\ttab\nnl",

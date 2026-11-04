@@ -44,8 +44,18 @@ func TestEncodeArgs(t *testing.T) {
 	if j := strings.Join(encodeArgs("in.m4a", "", "o.m4a", "m4a", "mp4a.40.2", nil), " "); !strings.Contains(j, "-c:a copy") {
 		t.Errorf("aac source should be remuxed: %s", j)
 	}
-	if j := strings.Join(encodeArgs("in.webm", cover, "o.opus", "opus", "opus", nil), " "); !strings.Contains(j, "-c:a copy") || strings.Contains(j, "image2") {
-		t.Errorf("opus should copy and skip cover: %s", j)
+	// opus: the audio is copied and the "cover" is the ffmetadata file carrying the picture
+	j = strings.Join(encodeArgs("in.webm", "/tmp/x.meta.txt", "o.opus", "opus", "opus", nil), " ")
+	for _, want := range []string{"-c:a copy", "-f ffmetadata", "-i file:/tmp/x.meta.txt", "-map 0:a:0", "-map_metadata -1", "-map_metadata:s:a 1"} {
+		if !strings.Contains(j, want) {
+			t.Errorf("opus with cover: missing %q in %s", want, j)
+		}
+	}
+	if strings.Contains(j, "image2") || strings.Contains(j, "attached_pic") {
+		t.Errorf("opus must not get a picture stream: %s", j)
+	}
+	if j := strings.Join(encodeArgs("in.webm", "", "o.opus", "opus", "opus", nil), " "); strings.Contains(j, "ffmetadata") {
+		t.Errorf("no cover, no metadata file: %s", j)
 	}
 }
 

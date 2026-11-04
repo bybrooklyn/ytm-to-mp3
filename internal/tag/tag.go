@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -20,9 +19,12 @@ import (
 )
 
 type Options struct {
-	Dir     string
-	Apply   bool // write changes (default: preview only)
-	Rename  bool // also move files to Artist/Album/Title [id].ext
+	Dir    string
+	Apply  bool // write changes (default: preview only)
+	Rename bool // also move files to Artist/Album/NN - Title.ext
+	// OnMove, if set, is told about every file moved (by Rename or by Undo), so the state
+	// database can follow it.
+	OnMove  func(from, to string)
 	Undo    bool // revert the last applied batch
 	Offline bool // local cleanup only, no MusicBrainz
 	NoClean bool // skip local cleanup
@@ -33,7 +35,6 @@ type Options struct {
 }
 
 var audioExt = map[string]bool{".mp3": true, ".m4a": true, ".opus": true, ".flac": true, ".ogg": true, ".aac": true}
-var idRe = regexp.MustCompile(`\[([\w-]{11})\]$`)
 
 type proposal struct {
 	info     Info
@@ -221,17 +222,16 @@ func renameTarget(root, path string, info Info, set map[string]string) string {
 	if artist == "" || title == "" {
 		return ""
 	}
+	// Same scheme as new downloads: Artist/Album/NN - Title.ext, no video id in the name
+	// (ytm keeps it in the comment tag).
 	ext := filepath.Ext(path)
-	stem := strings.TrimSuffix(filepath.Base(path), ext)
-	id := ""
-	if m := idRe.FindStringSubmatch(stem); m != nil {
-		id = " [" + m[1] + "]"
-	}
 	parts := []string{root, names.Part(artist, "Unknown Artist")}
+	prefix := ""
 	if al := get("album"); al != "" {
 		parts = append(parts, names.Part(al, "Unknown Album"))
+		prefix = names.TrackPrefix(names.ParseTrack(get("track")))
 	}
-	parts = append(parts, names.Part(title, "Unknown")+id+ext)
+	parts = append(parts, names.PartBetween(prefix, title, "Unknown", ext))
 	np := filepath.Join(parts...)
 	if np == path {
 		return ""
@@ -296,7 +296,7 @@ func apply(ctx context.Context, o Options, pr *proposal, batch string) error {
 		defer os.Remove(newCover)
 	}
 	if len(pr.set) > 0 || cover != "" {
-		if err := Write(ctx, o.FFmpeg, path, pr.set, cover); err != nil {
+		if err := Write(ctx, o.FFmpeg, o.FFprobe, path, pr.set, cover); err != nil {
 			return err
 		}
 	}
@@ -309,6 +309,9 @@ func apply(ctx context.Context, o Options, pr *proposal, batch string) error {
 		}
 		if err := os.Rename(path, pr.newPath); err != nil {
 			return err
+		}
+		if o.OnMove != nil {
+			o.OnMove(path, pr.newPath)
 		}
 		entry.NewPath = pr.newPath
 		removeEmptyDirs(filepath.Dir(path), o.Dir)

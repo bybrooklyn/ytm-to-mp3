@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -21,7 +22,9 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/export"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/takeout"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/vpn"
@@ -42,8 +45,13 @@ const usage = `ytm - download YouTube / YouTube Music as tagged audio, through P
 Options (for one run; ytm setup saves your defaults):
   -o DIR       music folder          -f FORMAT   mp3, m4a, opus, flac
   --no-vpn     skip the VPN this run -j N        max parallel downloads
+  --connections N   VPN exits to use this run
   --dry-run    show what would happen
   --retry      retry tracks that were unavailable before
+  --premium-upgrade   re-download songs at YouTube Premium quality (experimental,
+                      slow, uses your account: turn it on in ytm setup first)
+  --albums     also download the rest of every album you have a song from
+               (--albums-min N: only albums with N or more of your songs)
   -y           assume yes
 
 Other: ytm export (get your Takeout), ytm tag <folder> (fix metadata), ytm update
@@ -61,18 +69,24 @@ func main() {
 
 // opts are the flags shared by every command.
 type opts struct {
-	out     string
-	format  string
-	jobs    int
-	dryRun  bool
-	retry   bool
-	all     bool
-	yes     bool
-	apply   bool
-	rename  bool
-	undo    bool
-	offline bool
-	noVPN   bool
+	out       string
+	format    string
+	jobs      int
+	dryRun    bool
+	retry     bool
+	all       bool
+	yes       bool
+	apply     bool
+	rename    bool
+	undo      bool
+	offline   bool
+	noVPN     bool
+	conns     int  // VPN exits for this run (0 = the saved setting)
+	albums    bool // also download the rest of every album the library has a song from
+	albumsMin int  // only albums with at least this many saved songs
+	// the YouTube Premium upgrade pass (experimental; see premium.go)
+	premiumUpgrade bool
+	premiumLimit   int
 }
 
 func parse(name string, args []string) (opts, []string, error) {
@@ -92,6 +106,11 @@ func parse(name string, args []string) (opts, []string, error) {
 	fs.BoolVar(&o.undo, "undo", false, "")
 	fs.BoolVar(&o.offline, "offline", false, "")
 	fs.BoolVar(&o.noVPN, "no-vpn", false, "")
+	fs.IntVar(&o.conns, "connections", 0, "")
+	fs.BoolVar(&o.albums, "albums", false, "")
+	fs.IntVar(&o.albumsMin, "albums-min", 1, "")
+	fs.BoolVar(&o.premiumUpgrade, "premium-upgrade", false, "")
+	fs.IntVar(&o.premiumLimit, "premium-limit", 300, "")
 	// Go's flag package stops at the first positional; keep going so flags may follow it.
 	var pos []string
 	for {
@@ -123,7 +142,7 @@ func parse(name string, args []string) (opts, []string, error) {
 	}
 	o.out = config.ExpandPath(o.out)
 	if o.format == "" {
-		o.format = orDefault(cfg.Format, "mp3")
+		o.format = orDefault(cfg.Format, config.DefaultFormat)
 	}
 	if !engine.ValidFormat(o.format) {
 		return o, nil, fmt.Errorf("unknown format %q (use %s)", o.format, strings.Join(engine.Formats, ", "))
@@ -153,9 +172,9 @@ func run(args []string) error {
 			return fmt.Errorf("'ytm %s' takes no arguments (got %q)", cmd, pos[0])
 		}
 	}
-	ctx, stop := signalContext()
-	defer stop()
 	u := ui.New()
+	ctx, stop := signalContext(u)
+	defer stop()
 
 	switch cmd {
 	case "help":
@@ -205,6 +224,9 @@ func run(args []string) error {
 		}
 		return runTag(ctx, u, o, pos[0])
 	}
+	if o.premiumUpgrade {
+		return premiumUpgrade(ctx, u, o)
+	}
 
 	switch len(pos) {
 	case 0:
@@ -221,15 +243,18 @@ func run(args []string) error {
 }
 
 // signalContext cancels on the first Ctrl-C and exits hard on the second.
-func signalContext() (context.Context, context.CancelFunc) {
+func signalContext(u *ui.UI) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ch := make(chan os.Signal, 2)
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-ch
-		fmt.Fprintln(os.Stderr, "\nStopping... finishing what's in flight (Ctrl-C again to quit now).")
+		// Through the UI, not straight to the terminal: a stray line under the live block
+		// throws off its redraw and leaves a stale copy on screen.
+		u.Notice("Stopping... finishing what's in flight (Ctrl-C again to quit now).")
 		cancel()
 		<-ch
+		u.RestoreCursor()
 		os.Exit(130)
 	}()
 	return ctx, cancel
@@ -268,6 +293,32 @@ func findExisting() (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// singleVideoID returns the video id of a link to one video (watch?v=, youtu.be/, shorts/),
+// or false for playlists, albums, channels and anything it doesn't recognise.
+func singleVideoID(link string) (string, bool) {
+	u, err := url.Parse(link)
+	if err != nil || u.Query().Get("list") != "" {
+		return "", false
+	}
+	host := strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.")
+	var id string
+	switch {
+	case host == "youtu.be":
+		id = strings.Trim(u.Path, "/")
+	case host == "youtube.com" || host == "music.youtube.com" || host == "m.youtube.com":
+		switch {
+		case u.Path == "/watch":
+			id = u.Query().Get("v")
+		case strings.HasPrefix(u.Path, "/shorts/"):
+			id = strings.TrimPrefix(u.Path, "/shorts/")
+		}
+	}
+	if !model.ValidID(id) {
+		return "", false
+	}
+	return id, true
 }
 
 func isURL(s string) bool { return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") }
@@ -331,6 +382,13 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		}
 		if link, ok := asURL(input); ok {
 			input = link
+			// A single video needs no lookup here: its id is in the link, and the download
+			// looks it up anyway. (Each lookup is a yt-dlp run through the VPN, one after
+			// another, so 40 pasted links used to take minutes before anything started.)
+			if id, ok := singleVideoID(link); ok {
+				add([]model.Track{{ID: id}})
+				continue
+			}
 			var err error
 			if tools.YtDlp == "" {
 				if tools, err = deps.Ensure(ctx, logf); err != nil {
@@ -365,22 +423,42 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	}
 	u.Printf("Found %s", takeout.Describe(tracks))
 
-	if o.dryRun {
-		if _, serr := os.Stat(filepath.Join(o.out, ".ytm")); serr != nil {
-			// Nothing downloaded here yet and a dry run must not create anything.
-			u.Printf("0 already downloaded, %d to go -> %s (%s)", len(tracks), o.out, o.format)
-			for _, t := range tracks {
-				u.Printf("  %s  %s", t.ID, t.Label())
-			}
-			return nil
+	// The state database (it also remembers album lookups); a dry run never creates one.
+	var st *store.Store
+	if _, serr := os.Stat(filepath.Join(o.out, ".ytm")); serr == nil || !o.dryRun {
+		s, err := store.Open(filepath.Join(o.out, ".ytm"))
+		if err != nil {
+			return err
 		}
+		defer s.Close()
+		st = s
 	}
-	st, err := store.Open(filepath.Join(o.out, ".ytm"))
-	if err != nil {
-		return err
+	if o.albums {
+		var err error
+		if tools.YtDlp == "" {
+			if tools, err = deps.Ensure(ctx, logf); err != nil {
+				return err
+			}
+		}
+		if err := connect(); err != nil {
+			return err
+		}
+		var proxies []string
+		for _, x := range xs.Exits {
+			proxies = append(proxies, x.Proxy)
+		}
+		add(completeAlbums(ctx, u, o, tools, proxies, st, tracks))
 	}
-	defer st.Close()
-	if n, _ := st.ImportDisk(o.out); n > 0 {
+	if st == nil {
+		// Nothing downloaded here yet and a dry run must not create anything.
+		u.Printf("0 already downloaded, %d to go -> %s (%s)", len(tracks), o.out, o.format)
+		for _, t := range tracks {
+			u.Printf("  %s  %s", t.ID, t.Label())
+		}
+		return nil
+	}
+	numberFromAlbums(st, tracks)
+	if n, _ := st.ImportDisk(o.out, idFromTags(ctx, logf)); n > 0 {
 		u.Printf("Recognised %d files already in %s", n, o.out)
 	}
 	plan, err := st.Plan(tracks, o.retry)
@@ -390,6 +468,9 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	u.Printf("%d already downloaded, %d to go -> %s (%s)", plan.Done, len(plan.Todo), o.out, o.format)
 	if plan.Skipped > 0 {
 		u.Printf("%d tracks were unavailable last time and are skipped (use --retry to try again)", plan.Skipped)
+	}
+	if n := len(plan.MusicFirst); n > 0 {
+		u.Printf("%d tracks that were unavailable last time will be looked for on YouTube Music", n)
 	}
 	if len(plan.Todo) == 0 {
 		return nil
@@ -413,7 +494,7 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	sum := engine.Run(ctx, engine.Options{
 		Out: o.out, Format: o.format, Jobs: o.jobs, Tools: tools,
 		Store: st, UI: u, CacheDir: filepath.Join(cache, "yt-dlp"), Exits: xs.Exits, Replace: xs.Replace, Healthy: xs.Healthy,
-		OnBlocked: xs.Blocked, OnGood: xs.Good, NewExits: xs.New,
+		OnBlocked: xs.Blocked, OnGood: xs.Good, NewExits: xs.New, MusicFirst: plan.MusicFirst, Replacements: plan.Replacements,
 	}, plan.Todo)
 
 	u.Printf("\n%d downloaded, %d failed, %s in %s", sum.Done, sum.Failed, engine.HumanBytes(sum.Bytes), sum.Elapsed.Round(time.Second))
@@ -425,7 +506,20 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 			u.Printf("  %-24s %4d tracks  %s", x.Name, x.Done, engine.HumanBytes(x.Bytes))
 		}
 	}
-	if fails, _ := st.Failures(); len(fails) > 0 {
+	if all, _ := st.Failures(); len(all) > 0 {
+		// A failed id whose song downloaded under another id isn't missing from the library.
+		var fails []store.Failure
+		dups := 0
+		for _, f := range all {
+			if f.OtherVersion {
+				dups++
+			} else {
+				fails = append(fails, f)
+			}
+		}
+		if dups > 0 {
+			u.Printf("%d unavailable track(s) are other versions of songs you already have", dups)
+		}
 		sort.Slice(fails, func(i, j int) bool { return fails[i].Error < fails[j].Error })
 		u.Printf("Not downloaded (%d); run ytm again to retry the temporary ones:", len(fails))
 		for i, f := range fails {
@@ -444,6 +538,26 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		return context.Canceled
 	}
 	return nil
+}
+
+// idFromTags reads the video id ytm writes into every file's comment tag
+// ("https://music.youtube.com/watch?v=ID"), for recognising files whose names don't carry
+// it. ffprobe is only fetched if a file actually needs reading.
+func idFromTags(ctx context.Context, logf func(string, ...any)) func(string) string {
+	var ffprobe string
+	var once sync.Once
+	return func(p string) string {
+		once.Do(func() { _, ffprobe, _ = deps.EnsureMedia(ctx, logf) })
+		if ffprobe == "" {
+			return ""
+		}
+		info, err := tag.Probe(ctx, ffprobe, p)
+		if err != nil {
+			return ""
+		}
+		id, _ := takeout.ExtractID(info.Tags["comment"])
+		return id
+	}
 }
 
 // removeLegacyCookies deletes the cookie jar older ytm versions may have left behind.
@@ -475,6 +589,34 @@ type exitSet struct {
 // Downloads start as soon as the first two are up; the rest join while it runs. It never
 // silently falls back to your own IP: if the VPN was meant to be on and can't connect,
 // it stops.
+// connections is how many VPN exits to open: the saved number (3 when unset), or with
+// "auto" (-1) the Proton plan's device limit minus one kept free for a spare. Auto is not
+// the default: in a 120-song test 10 exits were no faster than 6 (2026-11-04).
+func connections(cfg config.Config, pc *proton.Client) int {
+	if cfg.Connections > 0 {
+		return cfg.Connections
+	}
+	if cfg.Connections == 0 {
+		return 3
+	}
+	account := ""
+	if pc.Session != nil {
+		account = vpn.AccountID(pc.Session.Username)
+	}
+	if _, limit := vpn.LoadCache(vpn.DefaultCachePath(), account).Servers(); limit > 1 {
+		return min(limit-1, maxConns)
+	}
+	return 3
+}
+
+// connectionsLabel is connections for display: "auto (10)" or the saved number.
+func connectionsLabel(cfg config.Config, pc *proton.Client) string {
+	if cfg.Connections >= 0 {
+		return fmt.Sprint(connections(cfg, pc))
+	}
+	return fmt.Sprintf("auto (%d)", connections(cfg, pc))
+}
+
 func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 	none := exitSet{Close: func() {}}
 	cfg := config.Load()
@@ -485,7 +627,10 @@ func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 		}
 		return none, nil
 	}
-	n := orInt(cfg.Connections, 3)
+	n := connections(cfg, pc)
+	if o.conns > 0 {
+		n = min(o.conns, maxConns)
+	}
 	u.Printf("Connecting %d VPN tunnel(s)...", n)
 	var countries []string
 	if c := strings.ToUpper(strings.TrimSpace(cfg.Countries)); c != "" {

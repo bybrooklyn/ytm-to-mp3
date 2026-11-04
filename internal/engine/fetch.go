@@ -17,9 +17,16 @@ import (
 )
 
 const (
-	chunkSize = 10 << 20 // googlevideo throttles unchunked downloads; ~10 MiB chunks stay fast
+	maxChunk  = 10 << 20 // googlevideo throttles unchunked downloads; ≤10 MiB chunks stay fast
+	minChunk  = 1 << 20  // smaller pieces cost more requests than they save
 	fetchConn = 4        // parallel chunk connections per file
 )
+
+// chunkFor splits a file into about fetchConn pieces, so a typical 3–8 MB song really is
+// fetched over several connections (a fixed 10 MiB chunk made nearly every song one piece).
+func chunkFor(total int64) int64 {
+	return min(maxChunk, max(minChunk, (total+fetchConn-1)/fetchConn))
+}
 
 var errUnfetchable = &Error{kindTransient, "stream URL rejected"}
 
@@ -60,6 +67,7 @@ func fetch(ctx context.Context, client *http.Client, r *Resolved, dst string, on
 		return err
 	}
 
+	chunkSize := chunkFor(total)
 	n := int((total + chunkSize - 1) / chunkSize)
 	next := int64(-1)
 	ctx, cancel := context.WithCancel(ctx)
