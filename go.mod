@@ -6,18 +6,25 @@ require (
 	charm.land/bubbletea/v2 v2.0.2
 	charm.land/huh/v2 v2.0.3
 	github.com/ProtonMail/go-srp v0.0.7
+	github.com/aead/cmac v0.0.0-20160719120800-7af84192f0b1
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/charmbracelet/x/term v0.2.2
+	github.com/grafov/m3u8 v0.11.1
+	github.com/itouakirai/mp4ff v0.0.0-20250930132656-98812935a1c7
 	github.com/ulikunitz/xz v0.5.17
 	golang.org/x/crypto v0.58.0
+	golang.org/x/net v0.62.0
 	golang.org/x/sys v0.49.0
 	golang.zx2c4.com/wireguard v0.0.0-20261024220952-b3bc704ef0ee
+	google.golang.org/protobuf v1.36.2
+	lukechampine.com/frand v1.5.1
 	modernc.org/sqlite v1.60.1
 )
 
 require (
 	charm.land/bubbles/v2 v2.0.0 // indirect
 	charm.land/lipgloss/v2 v2.0.1 // indirect
+	github.com/Eyevinn/mp4ff v0.55.0 // indirect
 	github.com/ProtonMail/bcrypt v0.0.0-20210511135022-227b4adcab57 // indirect
 	github.com/ProtonMail/go-crypto v0.0.0-20230321155629-9a39f2531310 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
@@ -45,7 +52,6 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/time v0.7.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect

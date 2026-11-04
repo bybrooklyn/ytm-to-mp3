@@ -20,6 +20,53 @@ type Config struct {
 	// Premium turns on the optional YouTube Premium upgrade pass; its cookies are in
 	// PremiumCookiesPath(). Never used for normal downloads.
 	Premium bool `json:"premium,omitempty"`
+	// Apple Music (optional, native AAC path). The media-user-token itself is a secret
+	// and lives in AppleTokenPath(), not here.
+	AppleStorefront string `json:"apple_storefront,omitempty"` // e.g. "us"; "" = us
+	AppleLanguage   string `json:"apple_language,omitempty"`   // e.g. "en-US"; "" = storefront default
+}
+
+// AppleTokenPath is where ytm keeps the user's Apple Music media-user-token
+// (mode 0600): the "login" for the native Apple Music download path.
+func AppleTokenPath() string {
+	d, err := dir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "apple-token")
+}
+
+// AppleToken reads the saved Apple Music media-user-token, or "" if none.
+func AppleToken() string {
+	p := AppleTokenPath()
+	if p == "" {
+		return ""
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// SaveAppleToken writes the media-user-token (mode 0600), or removes it when empty.
+func SaveAppleToken(token string) error {
+	p := AppleTokenPath()
+	if p == "" {
+		return fmt.Errorf("no config directory")
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		err := os.Remove(p)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(token+"\n"), 0o600)
 }
 
 // PremiumCookiesPath is where ytm keeps its copy of the user's YouTube Premium cookies
