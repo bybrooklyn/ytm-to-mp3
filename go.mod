@@ -2,6 +2,8 @@ module github.com/bybrooklyn/ytm-to-mp3
 
 go 1.26.0
 
+toolchain go1.26.10
+
 require (
 	charm.land/bubbletea/v2 v2.0.2
 	charm.land/huh/v2 v2.0.3
