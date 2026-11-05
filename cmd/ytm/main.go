@@ -70,7 +70,19 @@ func main() {
 		if errors.Is(err, errBack) {
 			return // Esc on the first screen: nothing to go back to, so leave
 		}
-		fmt.Fprintln(os.Stderr, "ytm:", err)
+		msg := ui.Sanitize(err.Error())
+		if st, serr := os.Stderr.Stat(); serr == nil && st.Mode()&os.ModeCharDevice != 0 {
+			// "  ✗ what went wrong" then any further lines as dim hints, like ytm's other lines
+			first, rest, _ := strings.Cut(msg, "\n")
+			fmt.Fprintln(os.Stderr, ui.Mark(ui.Fail("✗"), first))
+			for _, l := range strings.Split(rest, "\n") {
+				if l != "" {
+					fmt.Fprintln(os.Stderr, "      "+ui.Dim(l))
+				}
+			}
+		} else {
+			fmt.Fprintln(os.Stderr, "ytm:", msg)
+		}
 		os.Exit(1)
 	}
 }
@@ -219,7 +231,7 @@ func run(args []string) error {
 	o, pos, err := parse("ytm", args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Print(usage)
+			printUsage()
 			return nil
 		}
 		return fmt.Errorf("%w (see: ytm --help)", err)
@@ -229,7 +241,7 @@ func run(args []string) error {
 		fmt.Println("ytm", version)
 		return nil
 	case len(pos) == 1 && pos[0] == "help":
-		fmt.Print(usage)
+		printUsage()
 		return nil
 	case o.completion != "":
 		s, err := completionScript(o.completion)
@@ -302,10 +314,10 @@ func wizard(ctx context.Context, u *ui.UI) (string, error) {
 		}
 	}
 	if !u.Interactive() {
-		fmt.Print(usage)
+		printUsage()
 		return "", errors.New("no export given")
 	}
-	u.Printf("ytm needs your YouTube Music export (a Google Takeout file).")
+	u.Warn("ytm needs your YouTube Music export (a Google Takeout file).")
 	if ans := u.Ask("Path to it, or press Enter to get one now: ", ""); ans != "" {
 		return strings.Trim(ans, `"' `), nil
 	}
@@ -374,7 +386,7 @@ func asURL(s string) (string, bool) {
 }
 
 func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
-	logf := func(f string, a ...any) { u.Printf(f, a...) }
+	logf := u.Logf
 	var tools deps.Tools
 	removeLegacyCookies()
 
@@ -395,7 +407,10 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	// A run that will go online starts connecting now, and checks yt-dlp and ffmpeg at the
 	// same time, so both are ready by the time the first link is looked up.
 	for _, in := range inputs {
-		if _, ok := asURL(strings.Trim(in, `"' `)); ok || o.albums {
+		in = strings.Trim(in, `"' `)
+		_, link := asURL(in)
+		export := o.albums && (fileExists(in) || fileExists(takeout.CleanPath(in))) // its albums get looked up
+		if link || export {
 			ex.start()
 			go ex.tools()
 			break
@@ -489,7 +504,7 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	for _, s := range slots {
 		add(s)
 	}
-	u.Printf("Found %s", takeout.Describe(tracks))
+	u.Note("Found %s", takeout.Describe(tracks))
 
 	// The state database (it also remembers album lookups); a dry run never creates one.
 	var st *store.Store
@@ -518,31 +533,30 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	}
 	if st == nil {
 		// Nothing downloaded here yet and a dry run must not create anything.
-		u.Printf("0 already downloaded, %d to go -> %s (%s)", len(tracks), o.out, o.format)
+		u.Styled(planLine(len(tracks), 0, o.out, o.format))
 		for _, t := range tracks {
-			u.Printf("  %s  %s", t.ID, t.Label())
+			u.Item(t.ID, "%s", t.Label())
 		}
 		return nil
 	}
 	numberFromAlbums(st, tracks)
 	if n, _ := st.ImportDisk(o.out, idFromTags(ctx, logf)); n > 0 {
-		u.Printf("Recognised %d files already in %s", n, o.out)
+		u.Note("Recognised %d files already in %s", n, tilde(o.out))
 	}
 	plan, err := st.Plan(tracks, o.retry)
 	if err != nil {
 		return err
 	}
-	u.Styled(fmt.Sprintf("  %s %s to go  %s %s %s", ui.Accent("→"), ui.Bold(fmt.Sprint(len(plan.Todo))),
-		ui.Dim(fmt.Sprintf("%d already downloaded ·", plan.Done)), ui.Sanitize(tilde(o.out)), ui.Cyan(o.format)))
+	u.Styled(planLine(len(plan.Todo), plan.Done, o.out, o.format))
 	if plan.Skipped > 0 {
-		u.Printf("%d tracks were unavailable last time and are skipped (use --retry to try again)", plan.Skipped)
+		u.Note("%d tracks were unavailable last time and are skipped · --retry tries them again", plan.Skipped)
 	}
 	if n := len(plan.MusicFirst); n > 0 {
-		u.Printf("%d tracks that were unavailable last time will be looked for on YouTube Music", n)
+		u.Note("%d tracks that were unavailable last time will be looked for on YouTube Music", n)
 	}
 	if o.dryRun {
 		for _, t := range plan.Todo {
-			u.Printf("  %s  %s", t.ID, t.Label())
+			u.Item(t.ID, "%s", t.Label())
 		}
 		return nil
 	}
@@ -567,10 +581,10 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	u.Styled(runSummary(sum.Done, sum.Failed, sum.Bytes, sum.Elapsed, ""))
 	if os.Getenv("YTM_DEBUG") != "" { // per-exit detail is for debugging, not everyday output
 		if sum.Swaps > 0 {
-			u.Printf("%d exit(s) were blocked and replaced with other locations", sum.Swaps)
+			u.Note("%d exit(s) were blocked and replaced with other locations", sum.Swaps)
 		}
 		for _, x := range sum.PerExit {
-			u.Printf("  %-24s %4d tracks  %s", x.Name, x.Done, engine.HumanBytes(x.Bytes))
+			u.Item(fmt.Sprintf("%-24s", x.Name), "%4d tracks  %s", x.Done, engine.HumanBytes(x.Bytes))
 		}
 	}
 	if all, _ := st.Failures(); len(all) > 0 {
@@ -585,7 +599,7 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 			}
 		}
 		if dups > 0 {
-			u.Printf("%d unavailable track(s) are other versions of songs you already have", dups)
+			u.Note("%d unavailable track(s) are other versions of songs you already have", dups)
 		}
 		if len(fails) > 0 {
 			u.Styled(fmt.Sprintf("\n  %s %s", ui.Bold(fmt.Sprintf("Not downloaded (%d)", len(fails))),
@@ -608,14 +622,14 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 func afterDownload(ctx context.Context, u *ui.UI, o opts, st *store.Store, since time.Time) error {
 	if o.tagAfter {
 		if files := st.DoneSince(since); len(files) > 0 {
-			u.Printf("\nFixing the tags of %d new song(s) with MusicBrainz (turn off in settings)...", len(files))
+			u.Head("Fixing the tags of %s with MusicBrainz · turn off in settings", count(len(files), "new song"))
 			t := o
 			t.apply, t.rename, t.undo, t.offline = true, false, false, false
 			if err := runTag(ctx, u, t, o.out, files...); err != nil {
 				if ctx.Err() != nil {
 					return context.Canceled
 				}
-				u.Printf("tags: %v", err)
+				u.Bad("tags: %v", err)
 			}
 		}
 	}
@@ -694,7 +708,7 @@ func (r *runExits) ensureTools(ctx context.Context, u *ui.UI) (deps.Tools, error
 	if r.tools != nil {
 		return r.tools()
 	}
-	return deps.Ensure(ctx, func(f string, a ...any) { u.Printf(f, a...) })
+	return deps.Ensure(ctx, u.Logf)
 }
 
 func (r *runExits) Close() {
@@ -758,7 +772,7 @@ func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 	pc := protonClient()
 	if o.noVPN || cfg.NoVPN || !pc.SignedIn() {
 		if !o.noVPN && !cfg.NoVPN {
-			u.Printf("(no VPN: sign in to Proton in ytm's Settings to download faster)")
+			u.Note("no VPN · sign in to Proton in ytm's Settings to download faster")
 		}
 		return none, nil
 	}
@@ -774,12 +788,10 @@ func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 	statusDone := make(chan struct{})
 	go func() {
 		defer close(statusDone)
-		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		tick := time.NewTicker(120 * time.Millisecond)
 		defer tick.Stop()
-		for i := 0; ; i++ {
-			u.Status("%s", fmt.Sprintf("%s Connecting to Proton VPN · %d of %d up · %ds", frames[i%len(frames)],
-				up.Load(), n, int(time.Since(began).Seconds())))
+		for {
+			u.Status("Connecting to Proton VPN · %d of %d up · %ds", up.Load(), n, int(time.Since(began).Seconds()))
 			select {
 			case <-stopStatus:
 				return
@@ -795,7 +807,7 @@ func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 			up.Add(1)
 		}
 		if debug || !(strings.HasPrefix(s, "  ✓ ") || strings.HasPrefix(s, "  ✗ ")) {
-			u.Printf("%s", s)
+			u.Logf("%s", s)
 		}
 	}
 	var countries []string

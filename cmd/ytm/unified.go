@@ -68,9 +68,9 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 	if len(tracks) == 0 {
 		return errors.New("nothing to import")
 	}
-	u.Printf("Imported %s", count(len(tracks), "song"))
+	u.Note("Imported %s", count(len(tracks), "song"))
 	if ac == nil && len(fromApple) > 0 && o.source != "youtube" {
-		u.Printf("(not signed in to Apple Music, so these come from YouTube; sign in in Settings for 256 kbps AAC)")
+		u.Note("not signed in to Apple Music, so these come from YouTube · sign in in Settings for 256 kbps AAC")
 	}
 
 	// The music folder's database (it also remembers album lookups); a dry run in a folder
@@ -128,14 +128,14 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 			}
 		}
 	}
-	u.Printf("%s.", sourceSummary(len(appleItems), len(ytItems), heldN, upgrades))
+	u.Styled(ui.Mark(ui.Accent("→"), sourceSummary(len(appleItems), len(ytItems), heldN, upgrades)))
 	if o.dryRun {
 		for _, it := range append(append([]*item{}, appleItems...), ytItems...) {
 			note := ""
 			if it.upgrade {
 				note = "  (upgrade)"
 			}
-			u.Printf("  [%s] %s%s", it.target, it.t.Label(), note)
+			u.Item(fmt.Sprintf("%-7s", it.target), "%s%s", it.t.Label(), note)
 		}
 		return nil
 	}
@@ -176,8 +176,8 @@ func appleForUnified(ctx context.Context, u *ui.UI, o opts) *apple.Client {
 	}
 	sf, err := c.Verify(ctx)
 	if err != nil {
-		u.Printf("(Apple Music login isn't working: %v)", err)
-		u.Printf("(falling back to YouTube for everything; sign in again in Settings)")
+		u.Warn("Apple Music login isn't working: %v", err)
+		u.Hint("falling back to YouTube for everything; sign in again in Settings")
 		return nil
 	}
 	if sf != "" && sf != cfg.AppleStorefront {
@@ -349,7 +349,7 @@ func importCatalog(ctx context.Context, u *ui.UI, ac *apple.Client, inputs []str
 		case spotify.IsURL(in):
 			ts, err := spotify.Resolve(ctx, in)
 			if err != nil {
-				u.Printf("  %s: %v", in, err)
+				u.Bad("%s · %v", in, err)
 				continue
 			}
 			if whole && len(ts) == 1 && ts[0].Album == "" {
@@ -377,7 +377,7 @@ func importCatalog(ctx context.Context, u *ui.UI, ac *apple.Client, inputs []str
 			}
 			ts, err := resolve(ctx, in)
 			if err != nil {
-				u.Printf("  %s: %v", in, err)
+				u.Bad("%s · %v", in, err)
 				continue
 			}
 			for _, t := range ts {

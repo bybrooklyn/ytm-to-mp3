@@ -257,7 +257,7 @@ func (e *engine) rescue(ctx context.Context, t model.Track, ts *tstate, cause er
 			found = j.video // remembered, so an interrupted run doesn't search for it again
 		}
 		if serr := e.Store.MarkMusicTried(t.ID, found); serr != nil && !errors.Is(serr, context.Canceled) {
-			e.UI.Printf("warning: couldn't record the YouTube Music attempt for %s: %v", t.ID, serr)
+			e.UI.Warn("couldn't record the YouTube Music attempt for %s: %v", t.ID, serr)
 		}
 	}
 	switch {

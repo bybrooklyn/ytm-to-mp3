@@ -353,7 +353,7 @@ func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 		}
 	}
 	if dropped > 0 {
-		o.UI.Printf("warning: ignoring %d track(s) with an invalid video id", dropped)
+		o.UI.Warn("ignoring %d track(s) with an invalid video id", dropped)
 	}
 	todo = valid
 	if len(todo) == 0 {
@@ -372,7 +372,7 @@ func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 	e.startLimit, e.laneMax = start, laneMax
 	for _, x := range exits {
 		if _, err := e.newLane(x); err != nil {
-			o.UI.Printf("skipping exit %s: %v", x.Name, err)
+			o.UI.Warn("skipping exit %s: %v", x.Name, err)
 		}
 	}
 	// Exits still connecting: wait for the first one rather than starting with nothing.
@@ -383,7 +383,7 @@ func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 				return Summary{Failed: len(todo)}
 			}
 			if _, err := e.newLane(x); err != nil {
-				o.UI.Printf("skipping exit %s: %v", x.Name, err)
+				o.UI.Warn("skipping exit %s: %v", x.Name, err)
 			}
 		case <-ctx.Done():
 			return Summary{Failed: len(todo), Interrupted: true}
@@ -395,7 +395,7 @@ func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 	// A unique private directory per run: never delete another running instance's files.
 	tmp, err := store.NewTempDir(o.Out)
 	if err != nil {
-		o.UI.Printf("cannot create a temp directory in %s: %v", o.Out, err)
+		o.UI.Bad("cannot create a temp directory in %s: %v", o.Out, err)
 		return Summary{Failed: len(todo)}
 	}
 	e.tmp = tmp
@@ -513,7 +513,7 @@ feed:
 	e.bg.Wait() // health probes / swaps must not outlive Run (the tunnels are closed after it)
 	o.UI.ClearStatus()
 	for _, l := range e.tm.report() {
-		o.UI.Printf("%s", l)
+		o.UI.Note("%s", l)
 	}
 	lanes := e.snap()
 	for _, l := range lanes {
@@ -557,7 +557,7 @@ func (e *engine) addLane(x vpn.Exit) {
 		}
 	}
 	if _, err := e.newLane(x); err != nil {
-		e.UI.Printf("skipping exit %s: %v", x.Name, err)
+		e.UI.Warn("skipping exit %s: %v", x.Name, err)
 		return
 	}
 	e.gmu.Lock()
@@ -639,7 +639,7 @@ func (e *engine) fail(t model.Track, err error) {
 	}
 	perm := kindOf(err) == kindPermanent
 	if serr := e.Store.MarkFailed(t.ID, names.Clean(err.Error()), perm); serr != nil {
-		e.UI.Printf("warning: couldn't record failure for %s: %v", t.ID, serr)
+		e.UI.Warn("couldn't record the failure of %s: %v", t.ID, serr)
 	}
 	e.failed.Add(1)
 	e.UI.Line(red+"✗"+reset, t.Label()+"  ("+names.Clean(err.Error())+")")
@@ -1210,7 +1210,7 @@ func (e *engine) tryDirect(ctx context.Context, j *job) error {
 	}
 	_ = os.Remove(dst)
 	if os.Getenv("YTM_DEBUG") != "" {
-		e.UI.Printf("debug: direct fetch of %s on %s failed: %v", j.tr.ID, ln.exitName(), err)
+		e.UI.Note("debug: direct fetch of %s on %s failed: %v", j.tr.ID, ln.exitName(), err)
 	}
 	if errors.Is(err, errStalled) {
 		// This exit isn't delivering data from Google's CDN: count it hard against the
@@ -1259,7 +1259,7 @@ func (e *engine) encodeWorker(ctx context.Context, in <-chan *job) {
 			continue
 		}
 		if serr := e.Store.MarkDone(j.tr.ID, path); serr != nil {
-			e.UI.Printf("warning: couldn't record %s as done (it may download again next run): %v", j.tr.ID, serr)
+			e.UI.Warn("couldn't record %s as done · it may download again next run: %v", j.tr.ID, serr)
 		}
 		e.done.Add(1)
 		j.lane.done.Add(1)
@@ -1431,7 +1431,7 @@ func (e *engine) encodeJob(ctx context.Context, j *job) (string, error) {
 	e.pathMu.Lock() // pick the name and claim it in one step: two songs can share a title
 	final = e.freePath(final, j.tr.ID)
 	if serr := e.Store.SetPath(j.tr.ID, final); serr != nil {
-		e.UI.Printf("warning: couldn't record %s: %v", j.tr.ID, serr)
+		e.UI.Warn("couldn't record %s: %v", j.tr.ID, serr)
 	}
 	e.pathMu.Unlock()
 	cover := j.cover // fetched while the audio downloaded

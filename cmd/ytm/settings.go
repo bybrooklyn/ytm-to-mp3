@@ -409,7 +409,7 @@ func (m *settingsModel) render() string {
 // printErr reports a failed settings action; backing out of it (Esc, Ctrl-C) isn't one.
 func printErr(err error) {
 	if err != nil && !errors.Is(err, errBack) && !errors.Is(err, context.Canceled) {
-		fmt.Println("  ✗", err)
+		fmt.Println(ui.Mark(ui.Fail("✗"), ui.Sanitize(err.Error())))
 	}
 }
 
@@ -489,7 +489,7 @@ func runSettings(ctx context.Context, u *ui.UI) error {
 			if err := runStatus(ctx, u); err != nil {
 				printErr(err)
 			}
-			fmt.Print("\n  press enter to go back ")
+			fmt.Print("\n  " + ui.Dim("press enter to go back") + " ")
 			_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
 		}
 	}

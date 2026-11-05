@@ -180,12 +180,12 @@ func undo(ctx context.Context, o Options) error {
 			}
 		}
 		if err := Write(ctx, o.FFmpeg, o.FFprobe, cur, e.Old, e.CoverBackup); err != nil {
-			o.UI.Printf("✗ %s  (%v)", cur, err)
+			o.UI.Bad("%s · %v", cur, err)
 			continue
 		}
 		n++
 	}
-	o.UI.Printf("Reverted %d files from batch %s", n, last)
+	o.UI.Good("Reverted %d files · batch %s", n, last)
 	// Drop the reverted batch from the journal.
 	return writeJournal(o.Dir, keep)
 }

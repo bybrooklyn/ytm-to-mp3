@@ -20,7 +20,9 @@ func TestStatusSanitizes(t *testing.T) {
 	var buf bytes.Buffer
 	u := &UI{out: &buf, tty: true}
 	u.Status("x\ny\x1b[31m%s", "z\x07")
-	if strings.ContainsAny(strings.Join(u.block, ""), "\x1b\x07\n") {
+	// ytm's own spinner is coloured; the caller's text must arrive clean
+	row := strings.Join(u.block, "")
+	if !strings.HasSuffix(row, CReset+" x yz") || strings.Contains(row, "\x1b[31m") || strings.ContainsAny(row, "\x07\n") {
 		t.Errorf("status not clean: %q", u.block)
 	}
 }

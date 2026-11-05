@@ -111,23 +111,22 @@ func Find(since time.Time) (string, bool) {
 
 // Guide explains how to request the export, opens the browser, and waits for the zip.
 func Guide(ctx context.Context, u *ui.UI) (string, error) {
-	u.Printf(`
-To download your YouTube Music library you need your data from Google Takeout.
-It's free and takes a few minutes (Google may email you when it's ready):
-
-  1. On the page that opens, click "Deselect all".
-  2. Scroll to "YouTube and YouTube Music" and tick it.
-  3. Click "All YouTube data included", untick everything, then tick
-     "music (library and uploads)" (and "playlists" if you want those). OK.
-  4. Click "Next step", keep "Export once" and ".zip", then "Create export".
-  5. When it's ready, download the zip into your Downloads folder.
-
-ytm will notice the zip and carry on by itself. (Ctrl-C to stop waiting.)
-`)
+	u.Head("Get your library from Google Takeout · free, a few minutes; Google may email you when it's ready")
+	for i, step := range []string{
+		`On the page that opens, click "Deselect all".`,
+		`Scroll to "YouTube and YouTube Music" and tick it.`,
+		`Click "All YouTube data included", untick everything, then tick "music (library and uploads)" (and "playlists" if you want those). OK.`,
+		`Click "Next step", keep "Export once" and ".zip", then "Create export".`,
+		`When it's ready, download the zip into your Downloads folder.`,
+	} {
+		u.Styled(fmt.Sprintf("    %s %s", ui.Cyan(fmt.Sprintf("%d.", i+1)), step))
+	}
+	u.Hint("ytm notices the zip and carries on by itself. (Ctrl-C to stop waiting.)")
 	started := time.Now().Add(-2 * time.Minute) // tolerate a clock/mtime skew
 	if err := OpenBrowser(takeoutURL); err != nil {
-		u.Printf("Open this page in your browser: %s", takeoutURL)
+		u.Note("Open this page in your browser: %s", takeoutURL)
 	}
+	u.Status("Waiting for the Takeout zip in your Downloads folder")
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
 	var lastPath string
@@ -136,6 +135,7 @@ ytm will notice the zip and carry on by itself. (Ctrl-C to stop waiting.)
 	for {
 		select {
 		case <-ctx.Done():
+			u.ClearStatus()
 			return "", ctx.Err()
 		case <-t.C:
 		}
@@ -153,7 +153,8 @@ ytm will notice the zip and carry on by itself. (Ctrl-C to stop waiting.)
 			lastPath, lastSize, stable = p, st.Size(), 0
 		}
 		if stable >= 2 { // size unchanged for ~4s: the browser has finished writing it
-			u.Printf("Found %s (%s)", p, Describe(p))
+			u.ClearStatus()
+			u.Good("Found %s · %s", p, Describe(p))
 			return p, nil
 		}
 	}

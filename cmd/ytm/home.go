@@ -87,7 +87,7 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 		case err != nil:
 			// A tool that failed shouldn't take the whole app with it: say why, and offer
 			// the menu again.
-			fmt.Printf("\n  %s✗%s %s\n", red, reset, ui.Sanitize(err.Error()))
+			fmt.Println("\n" + ui.Mark(ui.Fail("✗"), ui.Sanitize(err.Error())))
 		case choice == "library" || choice == "link":
 			return nil // a download ran; we're done
 		}
@@ -130,7 +130,7 @@ func toolsMenu(ctx context.Context, u *ui.UI, o opts) error {
 		}
 		return premiumUpgrade(ctx, u, o, false)
 	case "update":
-		return deps.Update(ctx, func(f string, a ...any) { u.Printf(f, a...) })
+		return deps.Update(ctx, u.Logf)
 	case "doctor":
 		return runDoctor(ctx, u, o)
 	}

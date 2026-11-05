@@ -17,17 +17,17 @@ import (
 // runDoctor checks everything ytm depends on and says what to do about each problem.
 func runDoctor(ctx context.Context, u *ui.UI, o opts) error {
 	problems := 0
-	ok := func(f string, a ...any) { u.Printf("  ✓ "+f, a...) }
+	ok := func(f string, a ...any) { u.Good(f, a...) }
 	bad := func(fix string, f string, a ...any) {
 		problems++
-		u.Printf("  ✗ "+f, a...)
-		u.Printf("      → %s", fix)
+		u.Bad(f, a...)
+		u.Hint("→ %s", fix)
 	}
-	note := func(f string, a ...any) { u.Printf("  · "+f, a...) }
+	note := func(f string, a ...any) { u.Note(f, a...) }
 
-	u.Printf("ytm %s on %s/%s", version, runtime.GOOS, runtime.GOARCH)
+	u.Head("ytm %s · %s/%s", version, runtime.GOOS, runtime.GOARCH)
 
-	u.Printf("\nSettings")
+	u.Head("Settings")
 	if _, err := config.LoadChecked(); err != nil {
 		bad("fix or delete that file, then check Settings", "%v", err)
 	} else if config.Exists() {
@@ -41,7 +41,7 @@ func runDoctor(ctx context.Context, u *ui.UI, o opts) error {
 		ok("music folder %s is writable", o.out)
 	}
 
-	u.Printf("\nTools (ytm downloads any that are missing on first use)")
+	u.Head("Tools · ytm downloads any that are missing on first use")
 	for _, t := range []string{"yt-dlp", "ffmpeg", "ffprobe", "deno", "node", "bun"} {
 		if p, err := exec.LookPath(t); err == nil {
 			ok("%s: %s", t, p)
@@ -50,7 +50,7 @@ func runDoctor(ctx context.Context, u *ui.UI, o opts) error {
 		}
 	}
 
-	u.Printf("\nNetwork")
+	u.Head("Network")
 	for _, h := range []string{"https://github.com", "https://www.youtube.com", "https://vpn-api.proton.me"} {
 		if err := reach(ctx, h); err != nil {
 			bad("check your internet connection, proxy or firewall", "%s: %v", h, err)
@@ -59,7 +59,7 @@ func runDoctor(ctx context.Context, u *ui.UI, o opts) error {
 		}
 	}
 
-	u.Printf("\nProton VPN")
+	u.Head("Proton VPN")
 	pc := protonClient()
 	switch {
 	case !pc.SignedIn():
@@ -70,7 +70,7 @@ func runDoctor(ctx context.Context, u *ui.UI, o opts) error {
 		ok("signed in as %s (Settings > Test VPN shows each exit)", pc.Session.Username)
 	}
 
-	u.Printf("\nApple Music")
+	u.Head("Apple Music")
 	if !appleSignedIn() {
 		note("not signed in (optional): Settings > Apple Music, for 256 kbps AAC")
 	} else {
@@ -88,10 +88,10 @@ func runDoctor(ctx context.Context, u *ui.UI, o opts) error {
 	}
 
 	if problems == 0 {
-		u.Printf("\nAll good.")
+		u.Styled("\n" + ui.Mark(ui.OK("✓"), ui.Bold("All good")))
 		return nil
 	}
-	u.Printf("\n%d problem(s) found.", problems)
+	u.Styled("\n" + ui.Mark(ui.Fail("✗"), ui.Bold(fmt.Sprintf("%d problem(s) found", problems))))
 	return fmt.Errorf("%d problem(s) found", problems)
 }
 

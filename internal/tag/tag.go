@@ -94,7 +94,7 @@ func Run(ctx context.Context, o Options) error {
 	if len(files) == 0 {
 		return fmt.Errorf("no audio files found in %s", o.Dir)
 	}
-	o.UI.Printf("Checking %d files%s...", len(files), map[bool]string{true: " (offline)", false: ""}[o.Offline])
+	o.UI.Note("Checking %d files%s...", len(files), map[bool]string{true: " · offline", false: ""}[o.Offline])
 
 	batch := time.Now().Format("20060102-150405")
 	var changed, matched, unmatched, failed int
@@ -107,7 +107,7 @@ func Run(ctx context.Context, o Options) error {
 		pr, err := propose(ctx, o, p)
 		if err != nil {
 			failed++
-			o.UI.Printf("✗ %s  (%v)", rel, err)
+			o.UI.Bad("%s · %v", rel, err)
 			continue
 		}
 		if pr.matched {
@@ -119,19 +119,19 @@ func Run(ctx context.Context, o Options) error {
 			continue
 		}
 		changed++
-		o.UI.Printf("%s", describe(rel, pr, o.Dir))
+		o.UI.Styled(describe(rel, pr, o.Dir))
 		if o.Apply {
 			if err := apply(ctx, o, pr, batch); err != nil {
 				failed++
-				o.UI.Printf("  ✗ %v", err)
+				o.UI.Bad("%v", err)
 			}
 		}
 	}
 	o.UI.ClearStatus()
-	o.UI.Printf("\n%d files checked: %d to change, %d confidently identified on MusicBrainz, %d left as YouTube tagged them, %d errors",
-		len(files), changed, matched, unmatched, failed)
+	o.UI.Head("%d files checked · %d to change", len(files), changed)
+	o.UI.Hint("%d identified on MusicBrainz for sure, %d left as they were, %d errors", matched, unmatched, failed)
 	if changed > 0 && !o.Apply {
-		o.UI.Printf("This was a preview. Re-run with --apply to write these changes (undo with --undo).")
+		o.UI.Hint("This was a preview. Re-run with --apply to write these changes (undo with --undo).")
 	}
 	return nil
 }
@@ -347,27 +347,40 @@ func firstNonEmpty(s ...string) string {
 	return ""
 }
 
+// describe is a file's proposed changes, for ui.Styled:
+//
+//	~ Artist/Album/Song.opus
+//	    title                    old → new
+//
+// Tag values come from the file and MusicBrainz, so they are sanitized here.
 func describe(rel string, pr *proposal, root string) string {
 	var b strings.Builder
-	b.WriteString("~ " + rel + "\n")
+	b.WriteString(ui.Mark(ui.Accent("~"), ui.Sanitize(rel)) + "\n")
 	keys := make([]string, 0, len(pr.set))
 	for k := range pr.set {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	row := func(k, old, now string) {
+		fmt.Fprintf(&b, "      %s %s %s %s\n", ui.Dim(fmt.Sprintf("%-26s", k)), ui.Dim(old), ui.Dim("→"), now)
+	}
 	for _, k := range keys {
-		old := pr.info.Tags[k]
+		old := ui.Sanitize(pr.info.Tags[k])
 		if old == "" {
 			old = "(none)"
 		}
-		fmt.Fprintf(&b, "    %-24s %s -> %s\n", k, old, pr.set[k])
+		now := ui.Green(ui.Sanitize(pr.set[k]))
+		if pr.set[k] == "" {
+			now = ui.Dim("(cleared)")
+		}
+		row(k, old, now)
 	}
 	if pr.coverURL != "" {
-		b.WriteString("    cover                    replace with album art\n")
+		row("cover", "", ui.Green("album art"))
 	}
 	if pr.newPath != "" {
 		nrel, _ := filepath.Rel(root, pr.newPath)
-		fmt.Fprintf(&b, "    move                     -> %s\n", nrel)
+		row("move", "", ui.Cyan(ui.Sanitize(nrel)))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

@@ -49,7 +49,7 @@ func appleMatch(ctx context.Context, u *ui.UI, o opts, paths []string) error {
 	if err != nil {
 		return err
 	}
-	u.Printf("Loaded %s", takeout.Describe(lib))
+	u.Note("Loaded %s", takeout.Describe(lib))
 
 	s, err := openApple(ctx, u, o)
 	if err != nil {
@@ -64,17 +64,17 @@ func appleMatch(ctx context.Context, u *ui.UI, o opts, paths []string) error {
 	sure, maybe, missing := appleTally(res)
 	report := filepath.Join(o.out, ".ytm", "apple-match.txt")
 	if err := writeAppleReport(report, res); err != nil {
-		u.Printf("(couldn't write %s: %v)", report, err)
+		u.Warn("couldn't write %s: %v", report, err)
 	}
-	u.Printf("\nOn Apple Music: %d of %d songs. %d sure, %d less certain, %d not found.",
+	u.Head("On Apple Music: %d of %d songs · %d sure, %d less certain, %d not found",
 		sure+maybe, len(res), sure, maybe, missing)
 	if maybe > 0 {
-		u.Printf("Less certain matches (first few; all of them are in %s):", tilde(report))
+		u.Note("Less certain matches · the first few; all of them are in %s", tilde(report))
 		shown := 0
 		for _, r := range res {
 			if r.found && !r.m.Sure && shown < 8 {
 				shown++
-				u.Printf("  %s  →  %s", songLabel(r.yt.PrimaryArtist(), r.yt.Title), songLabel(r.m.Track.Artist, r.m.Track.Title))
+				u.Item(songLabel(r.yt.PrimaryArtist(), r.yt.Title), "→  %s", songLabel(r.m.Track.Artist, r.m.Track.Title))
 			}
 		}
 	}
@@ -165,7 +165,7 @@ func appleLookup(ctx context.Context, u *ui.UI, s *appleSession, lib []model.Tra
 		}
 	}
 	if cached > 0 {
-		u.Printf("%d songs were looked up before (remembered).", cached)
+		u.Note("%d songs were looked up before · remembered", cached)
 	}
 	if len(todo) == 0 {
 		return res, nil
@@ -240,8 +240,8 @@ func appleLookup(ctx context.Context, u *ui.UI, s *appleSession, lib []model.Tra
 	u.ClearStatus()
 	if cause := context.Cause(ctx); errors.Is(cause, errAppleRateLimited) {
 		left := len(todo) - int(looked.Load())
-		u.Printf("Apple Music is limiting searches from this address for now: %d songs are still to look up.", left)
-		u.Printf("What was found so far is kept; run it again later (an hour or so) to look up the rest.")
+		u.Warn("Apple Music is limiting searches from this address for now · %d songs are still to look up", left)
+		u.Hint("What was found so far is kept; run it again later (an hour or so) to look up the rest.")
 		return res, nil
 	} else if cause != nil {
 		return nil, cause

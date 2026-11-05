@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -35,6 +37,55 @@ func runSummary(done, failed int, bytes int64, elapsed time.Duration, what strin
 		b.WriteString("  " + ui.Dim("· "+tail))
 	}
 	return b.String()
+}
+
+// planLine is what a download is about to do, for ui.Styled:
+// "  → 24 to go  · 3 already downloaded · ~/Music opus".
+func planLine(todo, done int, out, format string) string {
+	return fmt.Sprintf("  %s %s to go  %s %s %s", ui.Accent("→"), ui.Bold(fmt.Sprint(todo)),
+		ui.Dim(fmt.Sprintf("· %d already downloaded ·", done)), ui.Sanitize(tilde(out)), ui.Cyan(format))
+}
+
+// flagRe finds an option in the help text ("--albums-min N", "-o DIR", "--source youtube").
+var flagRe = regexp.MustCompile(`(^|[\s(])(--?[a-z][a-z-]*(?:=false)?(?: (?:[A-Z]+|youtube|SHELL))?)`)
+
+// printUsage prints the help: on a terminal with the title bold, the section heading bold
+// and every option cyan; piped, as plain text.
+func printUsage() {
+	if st, err := os.Stdout.Stat(); err != nil || st.Mode()&os.ModeCharDevice == 0 {
+		fmt.Print(usage)
+		return
+	}
+	lines := strings.Split(strings.TrimRight(usage, "\n"), "\n")
+	for i, l := range lines {
+		switch {
+		case i == 0:
+			name, rest, _ := strings.Cut(l, " - ")
+			l = ui.Accent("♪ ") + ui.Bold(name) + ui.Dim(" - "+rest)
+		case i == 1:
+			l = ui.Dim(l)
+		case strings.HasSuffix(l, ":") && !strings.HasPrefix(l, " "):
+			l = ui.Bold(l)
+		case strings.HasPrefix(strings.TrimSpace(l), "ytm"):
+			cmd, rest, _ := strings.Cut(strings.TrimSpace(l), "   ")
+			l = "  " + ui.Cyan(cmd) + "   " + rest
+		default:
+			l = flagRe.ReplaceAllStringFunc(l, func(m string) string {
+				flag := strings.TrimLeft(m, " \t(")
+				return m[:len(m)-len(flag)] + ui.Cyan(flag)
+			})
+		}
+		fmt.Println(l)
+	}
+}
+
+// warnBlock prints a multi-line warning: its first line marked "!", the rest dim under it.
+func warnBlock(u *ui.UI, text string) {
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	u.Warn("%s", lines[0])
+	for _, l := range lines[1:] {
+		u.Styled("    " + ui.Dim(ui.Sanitize(l)))
+	}
 }
 
 // failureLines lists songs that didn't download grouped by why, the most common reason

@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
@@ -145,7 +146,7 @@ func (u *UI) Line(prefix, text string) {
 	if !u.tty {
 		prefix = ansi.Strip(prefix)
 	}
-	u.frame([]string{prefix + " " + strings.ReplaceAll(Sanitize(text), "\n", " ")})
+	u.frame([]string{"  " + prefix + " " + strings.ReplaceAll(Sanitize(text), "\n", " ")})
 }
 
 // Styled prints a line of the caller's own making above the live block, colours and all
@@ -173,27 +174,33 @@ func (u *UI) LineNote(prefix, text, note string) {
 	if !u.tty {
 		prefix, sep = ansi.Strip(prefix), "  · "+note
 	}
-	u.frame([]string{prefix + " " + strings.ReplaceAll(Sanitize(text), "\n", " ") + sep})
+	u.frame([]string{"  " + prefix + " " + strings.ReplaceAll(Sanitize(text), "\n", " ") + sep})
 }
 
 // Notice prints a message above the live block; safe to call from any goroutine (e.g. a
 // signal handler), unlike writing to the terminal directly.
-func (u *UI) Notice(msg string) { u.Printf("%s", msg) }
+func (u *UI) Notice(msg string) { u.Warn("%s", msg) }
 
 // Sanitize strips escape sequences and control / bidi characters (except newline and
 // tab) so untrusted text (titles, tags, tool output) can't drive the terminal.
 func Sanitize(s string) string { return names.StripControl(s) }
 
-// Status replaces the pinned status line (ignored when not on a terminal).
+// Status replaces the pinned status line (ignored when not on a terminal). It is shown as
+// "  ⠹ text" with a cyan spinner that turns each time it is updated, and the part after
+// " · " dimmed, like ytm's other lines.
 func (u *UI) Status(format string, a ...any) {
 	if !u.tty {
 		return
 	}
+	text := strings.NewReplacer("\n", " ", "\t", " ").Replace(Sanitize(fmt.Sprintf(format, a...)))
+	frame := spinFrames[int(time.Now().UnixMilli()/100)%len(spinFrames)]
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.block = []string{strings.NewReplacer("\n", " ", "\t", " ").Replace(Sanitize(fmt.Sprintf(format, a...)))}
+	u.block = []string{Mark(Accent(frame), text)}
 	u.frame(nil)
 }
+
+var spinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 // Block replaces the live block with several rows. Rows may carry the caller's own
 // colour codes; any untrusted text in them (titles, errors) must go through Sanitize first.
@@ -245,7 +252,12 @@ func (u *UI) ClearStatus() {
 func (u *UI) Ask(prompt, def string) string {
 	u.mu.Lock()
 	u.erase()
-	fmt.Fprint(u.out, Sanitize(prompt))
+	p := Sanitize(prompt)
+	if u.tty { // "  ? question [Y/n] " with the question marked like ytm's other lines
+		p = Mark(Accent("?"), strings.ReplaceAll(p, "\n", "\n    "))
+		p = strings.NewReplacer("[Y/n]", Dim("[Y/n]"), "[y/N]", Dim("[y/N]")).Replace(p)
+	}
+	fmt.Fprint(u.out, p)
 	u.mu.Unlock()
 	line, _ := u.in.ReadString('\n')
 	line = strings.TrimSpace(line)

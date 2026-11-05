@@ -17,8 +17,8 @@ import (
 // or find the YouTube library there.
 func appleMenu(ctx context.Context, u *ui.UI, o opts) error {
 	if !appleSignedIn() {
-		fmt.Printf("\n  %sApple Music%s gives 256 kbps AAC with your own Apple Music subscription.\n", cAccent, cReset)
-		fmt.Printf("  %sSign in at music.apple.com in your browser (and play a song), then continue.%s\n\n", cDim, cReset)
+		fmt.Println("\n" + ui.Mark(ui.Accent("♪"), ui.Bold("Apple Music")+" gives 256 kbps AAC with your own Apple Music subscription"))
+		fmt.Println("      " + ui.Dim("Sign in at music.apple.com in your browser (and play a song), then continue.") + "\n")
 		in := true
 		if err := one(ctx, huh.NewConfirm().Title("Sign in to Apple Music now?").
 			Affirmative("Sign in").Negative("Back").Value(&in)); err != nil {

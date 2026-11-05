@@ -90,7 +90,7 @@ func premiumSetup(ctx context.Context, u *ui.UI) error {
 		var cs []browsercookies.Cookie
 		for _, b := range browsers {
 			if b.ID == source {
-				fmt.Printf("  Reading %s's cookies (your keyring may ask for permission)...\n", b.Name)
+				fmt.Println(ui.Mark(ui.Dim("·"), "Reading "+ui.Sanitize(b.Name)+"'s cookies · your keyring may ask for permission"))
 				if cs, err = b.Import(); err != nil {
 					return err
 				}
@@ -99,13 +99,13 @@ func premiumSetup(ctx context.Context, u *ui.UI) error {
 		if err := browsercookies.WriteNetscape(dst, cs); err != nil {
 			return err
 		}
-		fmt.Printf("  %s✓%s %d YouTube cookies imported\n", cGreen, cReset, len(cs))
+		fmt.Println(ui.Mark(ui.OK("✓"), fmt.Sprintf("%d YouTube cookies imported", len(cs))))
 	}
 	cfg.Premium = true
 	if err := cfg.Save(); err != nil {
 		return err
 	}
-	fmt.Printf("  %s✓%s Premium upgrade on. Run it from the menu or with: ytm --premium-upgrade\n", cGreen, cReset)
+	fmt.Println(ui.Mark(ui.OK("✓"), "Premium upgrade on · run it from the menu or with: ytm --premium-upgrade"))
 	return nil
 }
 
@@ -142,9 +142,9 @@ func premiumUpgrade(ctx context.Context, u *ui.UI, o opts, auto bool) error {
 		return errors.New("the YouTube Premium upgrade is off: turn it on in Settings first")
 	}
 	if auto {
-		u.Printf("\nYouTube Premium upgrade (experimental, slow; turn off in settings, Ctrl-C to stop)...")
+		u.Head("YouTube Premium upgrade · experimental, slow; turn off in settings, Ctrl-C to stop")
 	} else {
-		u.Printf("%s\n", premiumWarning)
+		warnBlock(u, premiumWarning)
 		if !o.yes && !u.Confirm("Start?", true) {
 			return nil
 		}
@@ -166,10 +166,10 @@ func premiumUpgrade(ctx context.Context, u *ui.UI, o opts, auto bool) error {
 		return err
 	}
 	if len(todo) == 0 {
-		u.Printf("Every song is already upgraded (or has no Premium stream).")
+		u.Good("Every song is already upgraded · or has no Premium stream")
 		return nil
 	}
-	logf := func(f string, a ...any) { u.Printf(f, a...) }
+	logf := u.Logf
 	tools, err := deps.Ensure(ctx, logf)
 	if err != nil {
 		return err
@@ -215,14 +215,15 @@ songs:
 		switch {
 		case errors.Is(err, engine.ErrAccountBlocked):
 			u.ClearStatus()
-			u.Printf("Stopped: %v. Wait a day before trying again (and re-export the cookies if it persists).", err)
+			u.Bad("Stopped: %v", err)
+			u.Hint("Wait a day before trying again (and re-export the cookies if it persists).")
 			return nil
 		case errors.Is(err, engine.ErrNoPremiumFormat):
 			none++
 			_ = st.SetPremium(t.ID, -1)
 			if missesInARow++; missesInARow >= 5 {
 				u.ClearStatus()
-				u.Printf("Stopped: 5 songs in a row had no Premium stream, so the account probably isn't getting them right now.")
+				u.Bad("Stopped: 5 songs in a row had no Premium stream · the account probably isn't getting them right now")
 				break songs
 			}
 			continue

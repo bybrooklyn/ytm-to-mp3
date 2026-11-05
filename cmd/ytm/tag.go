@@ -21,7 +21,7 @@ func runTag(ctx context.Context, u *ui.UI, o opts, dir string, files ...string) 
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 		return fmt.Errorf("%s is not a folder", dir)
 	}
-	ffmpeg, ffprobe, err := deps.EnsureMedia(ctx, func(f string, a ...any) { u.Printf(f, a...) })
+	ffmpeg, ffprobe, err := deps.EnsureMedia(ctx, u.Logf)
 	if err != nil {
 		return err
 	}

@@ -30,7 +30,7 @@ func appleLogout(u *ui.UI) error {
 	if err := config.SaveAppleCookies(""); err != nil {
 		return err
 	}
-	u.Printf("Forgot your Apple Music login.")
+	u.Good("Forgot your Apple Music login.")
 	return nil
 }
 
@@ -40,7 +40,7 @@ func appleLogin(ctx context.Context, u *ui.UI) error {
 	if !u.Interactive() {
 		return errors.New("signing in to Apple Music needs a terminal")
 	}
-	u.Printf("Apple Music login")
+	u.Head("Apple Music login")
 
 	var token, jar, store string
 	// Read it straight from a browser you're already signed in to. Every
@@ -53,12 +53,12 @@ func appleLogin(ctx context.Context, u *ui.UI) error {
 			token, jar, store = tok, j, sf
 		}
 	} else {
-		u.Printf("No live Apple Music session found in a browser.")
+		u.Warn("No live Apple Music session found in a browser.")
 	}
 	if token == "" {
-		u.Printf("Sign in at https://music.apple.com in your browser (and play a song so the")
-		u.Printf("session is active), then try again — or paste the cookie named")
-		u.Printf("\"media-user-token\" here (DevTools > Application > Cookies > music.apple.com).")
+		u.Hint("Sign in at https://music.apple.com in your browser (and play a song so the")
+		u.Hint("session is active), then try again — or paste the cookie named")
+		u.Hint("\"media-user-token\" here (DevTools > Application > Cookies > music.apple.com).")
 		token = strings.TrimSpace(u.Ask("media-user-token (or Enter to cancel): ", ""))
 		if token == "" {
 			return errors.New("no login")
@@ -85,7 +85,7 @@ func appleLogin(ctx context.Context, u *ui.UI) error {
 	if err := cfg.Save(); err != nil {
 		return err
 	}
-	u.Printf("✓ Signed in to Apple Music (store: %s).", strings.ToUpper(orDefault(cfg.AppleStorefront, "us")))
+	u.Good("Signed in to Apple Music · store %s", strings.ToUpper(orDefault(cfg.AppleStorefront, "us")))
 	return nil
 }
 
@@ -94,21 +94,21 @@ func appleLogin(ctx context.Context, u *ui.UI) error {
 func appleStatus(ctx context.Context, u *ui.UI) error {
 	token := config.AppleToken()
 	if token == "" {
-		u.Printf("No Apple Music login saved: sign in from the Apple Music menu.")
+		u.Warn("No Apple Music login saved · sign in from the Apple Music menu")
 		return nil
 	}
 	cfg := config.Load()
-	u.Printf("Apple Music login saved (store %s). Checking...", strings.ToUpper(orDefault(cfg.AppleStorefront, "us")))
+	u.Note("Apple Music login saved · store %s; checking...", strings.ToUpper(orDefault(cfg.AppleStorefront, "us")))
 	_ = apple.SetProxy("")
 	c, err := apple.New(token, config.AppleCookies(), cfg.AppleStorefront, cfg.AppleLanguage)
 	if err != nil {
 		return err
 	}
 	if _, err := c.Verify(ctx); err != nil {
-		u.Printf("Login is NOT working: %v", err)
+		u.Bad("The login isn't working: %v", err)
 		return nil
 	}
-	u.Printf("Login works.")
+	u.Good("The login works.")
 	return nil
 }
 
@@ -134,7 +134,7 @@ func detectLiveAppleLogin(ctx context.Context, u *ui.UI) (token, jar, storefront
 		if sf, err := c.Verify(ctx); err == nil {
 			return tok, j, sf, b.Name, true
 		}
-		u.Printf("(%s has an Apple Music login, but it has expired)", b.Name)
+		u.Warn("%s has an Apple Music login, but it has expired", b.Name)
 	}
 	return "", "", "", "", false
 }
@@ -187,7 +187,7 @@ func openApple(ctx context.Context, u *ui.UI, o opts) (*appleSession, error) {
 	}
 	if len(s.exits) == 0 {
 		s.exits = []string{""}
-		u.Printf("(no VPN: Apple Music traffic will use your own address)")
+		u.Note("no VPN · Apple Music traffic will use your own address")
 	}
 	if xs.New != nil {
 		go func() {
@@ -279,7 +279,7 @@ type appleLiveKey struct{}
 // appleRun downloads jobs several at a time over the session's exits, retrying a
 // song on another exit when the network fails, and records each in the database.
 func appleRun(ctx context.Context, u *ui.UI, o opts, s *appleSession, jobs []appleJob) error {
-	ffmpeg, ffprobe, err := deps.EnsureMedia(ctx, func(f string, a ...any) { u.Printf(f, a...) })
+	ffmpeg, ffprobe, err := deps.EnsureMedia(ctx, u.Logf)
 	if err != nil {
 		return err
 	}
@@ -298,10 +298,10 @@ func appleRun(ctx context.Context, u *ui.UI, o opts, s *appleSession, jobs []app
 		}
 	}
 	if have > 0 || notOffered > 0 {
-		u.Printf("%d already downloaded from Apple Music, %d not offered to your account (skipped).", have, notOffered)
+		u.Note("%d already downloaded from Apple Music · %d not offered to your account (skipped)", have, notOffered)
 	}
 	if len(todo) == 0 {
-		u.Printf("Nothing new to download.")
+		u.Good("Nothing new to download.")
 		return nil
 	}
 
@@ -326,7 +326,7 @@ func appleRun(ctx context.Context, u *ui.UI, o opts, s *appleSession, jobs []app
 	if o.jobs > 0 {
 		workers = min(workers, o.jobs)
 	}
-	u.Printf("Downloading %d songs from Apple Music (256 kbps AAC), %d at a time...", len(todo), workers)
+	u.Head("Downloading %s from Apple Music · 256 kbps AAC, %d at a time", count(len(todo), "song"), workers)
 	began := time.Now()
 	stopDraw := make(chan struct{})
 	drawn := make(chan struct{})
@@ -425,7 +425,7 @@ func appleRun(ctx context.Context, u *ui.UI, o opts, s *appleSession, jobs []app
 		return cause
 	}
 	if failed.Load() > 0 {
-		u.Printf("Run the same command again to retry the failed ones.")
+		u.Hint("Run the same command again to retry the failed ones.")
 	}
 	return ctx.Err()
 }

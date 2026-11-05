@@ -150,13 +150,13 @@ func loginFlow(ctx context.Context, pc *proton.Client, cfg *config.Config) error
 			})
 		}
 		if err == nil {
-			fmt.Println("  ✓ signed in as", pc.Session.Username)
+			fmt.Println(ui.Mark(ui.OK("✓"), "signed in as "+ui.Sanitize(pc.Session.Username)))
 			return nil
 		}
 		if errors.Is(err, errBack) || errors.Is(err, context.Canceled) {
 			return err // Esc or Ctrl-C at the 2FA prompt
 		}
-		fmt.Println("  ✗", err)
+		fmt.Println(ui.Mark(ui.Fail("✗"), ui.Sanitize(err.Error())))
 		var ae *proton.APIError
 		if errors.As(err, &ae) && (ae.RateLimited() || ae.BadVersion() || ae.Code == 9001) {
 			// retrying can't help and a rate limit gets longer with every attempt
@@ -181,7 +181,7 @@ func ask2FA(ctx context.Context, pc *proton.Client) error {
 		if err == nil {
 			return nil
 		}
-		fmt.Println("  ✗", err)
+		fmt.Println(ui.Mark(ui.Fail("✗"), ui.Sanitize(err.Error())))
 	}
 	return errors.New("2FA failed")
 }
@@ -190,20 +190,20 @@ func ask2FA(ctx context.Context, pc *proton.Client) error {
 func runStatus(ctx context.Context, u *ui.UI) error {
 	cfg := config.Load()
 	pc := protonClient()
-	u.Printf("Settings (%s):", config.Path())
-	u.Printf("  music folder: %s", config.ExpandPath(orDefault(cfg.Out, config.DefaultOut())))
-	u.Printf("  format:       %s", orDefault(cfg.Format, config.DefaultFormat))
-	u.Printf("  VPN exits:    %s", connectionsLabel(cfg, pc))
+	u.Head("Settings · %s", tilde(config.Path()))
+	u.Item("music folder", "%s", tilde(config.ExpandPath(orDefault(cfg.Out, config.DefaultOut()))))
+	u.Item("format      ", "%s", orDefault(cfg.Format, config.DefaultFormat))
+	u.Item("VPN exits   ", "%s", connectionsLabel(cfg, pc))
 	if !pc.SignedIn() {
-		u.Printf("VPN: not signed in (sign in in Settings)")
+		u.Warn("VPN: not signed in · sign in in Settings")
 		return nil
 	}
 	if cfg.NoVPN {
-		u.Printf("VPN: signed in as %s but turned off", pc.Session.Username)
+		u.Note("VPN: signed in as %s, but turned off", pc.Session.Username)
 		return nil
 	}
-	u.Printf("VPN: signed in as %s; connecting...", pc.Session.Username)
-	pool, err := vpn.Open(ctx, pc, connections(cfg, pc), func(f string, a ...any) { u.Printf(f, a...) })
+	u.Note("VPN: signed in as %s · connecting...", pc.Session.Username)
+	pool, err := vpn.Open(ctx, pc, connections(cfg, pc), u.Logf)
 	if err != nil {
 		return err
 	}
@@ -217,7 +217,7 @@ func runStatus(ctx context.Context, u *ui.UI) error {
 			resp.Body.Close()
 			ip = strings.TrimSpace(string(b))
 		}
-		u.Printf("  %-22s exits at %s", x.Name, ip)
+		u.Item(fmt.Sprintf("%-22s", x.Name), "exits at %s", ip)
 	}
 	return nil
 }

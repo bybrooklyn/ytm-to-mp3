@@ -335,10 +335,10 @@ var perTrackMB = map[string]float64{"opus": 3.5, "m4a": 4, "mp3": 8, "flac": 30}
 func completeAlbums(ctx context.Context, u *ui.UI, o opts, tools deps.Tools, proxies []string, st *store.Store, tracks []model.Track) []model.Track {
 	gs := groupAlbums(tracks, o.albumsMin)
 	if len(gs) == 0 {
-		u.Printf("No albums to complete (songs need an artist and album name).")
+		u.Note("No albums to complete · songs need an artist and album name")
 		return nil
 	}
-	u.Printf("Looking up %d albums on YouTube Music (once; the answers are remembered)...", len(gs))
+	u.Note("Looking up %s on YouTube Music · once; the answers are remembered", count(len(gs), "album"))
 	found := findAlbums(ctx, u, tools, proxies, st, o.dryRun, gs)
 	have := map[string]bool{}
 	for _, t := range tracks {
@@ -350,7 +350,7 @@ func completeAlbums(ctx context.Context, u *ui.UI, o opts, tools deps.Tools, pro
 			extra = append(extra, albumTracks(g, a, have)...)
 		}
 	}
-	u.Printf("Found %d of %d albums: %d more songs, about %s.", len(found), len(gs), len(extra),
+	u.Good("Found %d of %d albums · %d more songs, about %s", len(found), len(gs), len(extra),
 		engine.HumanBytes(int64(float64(len(extra))*perTrackMB[o.format]*(1<<20))))
 	if len(extra) == 0 || o.dryRun || u.Confirm("Download them too?", true) {
 		return extra
