@@ -74,3 +74,46 @@ func (s *Store) TrackStatus(id string) (done bool, path string) {
 	}
 	return status == "done", path
 }
+
+// HeldCopy is one downloaded song as the database knows it, from any source.
+type HeldCopy struct {
+	ID     string // YouTube video id (or a synthetic id) for youtube; Apple catalog id for apple
+	Title  string
+	Artist string
+	Source string // apple | youtube
+	Path   string
+}
+
+// Held lists every downloaded song: Apple Music downloads first, then YouTube ones. A
+// YouTube row whose file is now an Apple copy (ytm apple match --replace) is reported
+// once, as apple.
+func (s *Store) Held() ([]HeldCopy, error) {
+	var out []HeldCopy
+	seen := map[string]bool{}
+	for _, q := range []struct{ source, sql string }{
+		{"apple", `SELECT id, title, artist, path FROM apple_tracks WHERE status='done' AND path!=''`},
+		{"youtube", `SELECT id, title, artist, path FROM tracks WHERE status='done' AND path!=''`},
+	} {
+		rows, err := s.db.Query(q.sql)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			h := HeldCopy{Source: q.source}
+			if err := rows.Scan(&h.ID, &h.Title, &h.Artist, &h.Path); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if seen[h.Path] {
+				continue
+			}
+			seen[h.Path] = true
+			out = append(out, h)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}

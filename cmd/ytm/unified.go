@@ -31,8 +31,11 @@ const spotifyUsage = `ytm spotify - download public Spotify albums, playlists an
 
 Spotify is used only for the song list; Spotify's own audio is DRM'd and is not
 downloaded. The audio comes from the best source you have: Apple Music (256 kbps
-AAC) when you're signed in and the song matches, otherwise YouTube. Songs
-already held are skipped, and a song held from a worse source is upgraded.`
+AAC) when you're signed in and the song matches, otherwise YouTube. Songs you
+already have (from any source) are skipped, and a song held from a worse source
+is upgraded (the old file is kept in <music folder>/.ytm/replaced).
+
+Plain 'ytm <link>' does the same for Spotify and Apple Music links.`
 
 // runSpotify dispatches the `ytm spotify ...` command.
 func runSpotify(ctx context.Context, u *ui.UI, o opts, args []string) error {
@@ -45,33 +48,37 @@ func runSpotify(ctx context.Context, u *ui.UI, o opts, args []string) error {
 			return fmt.Errorf("%q is not a Spotify album, playlist or track link", a)
 		}
 	}
-	return downloadUnified(ctx, u, o, args)
+	ex := &runExits{ctx: ctx, u: u, o: o}
+	defer ex.Close()
+	return downloadUnified(ctx, u, o, ex, args)
 }
 
 // item is one imported song and the decision made for it.
 type item struct {
-	t        catalog.Track
-	key      string
-	target   catalog.Source // apple or youtube
-	match    apple.Track    // set when target == apple
-	upgrade  bool           // replacing a copy we already have from a worse source
-	oldPath  string         // the file to replace on upgrade
+	t       catalog.Track
+	key     string
+	target  catalog.Source // apple or youtube
+	match   apple.Track    // set when target == apple
+	upgrade bool           // replacing a copy we already have from a worse source
+	oldPath string         // the file to replace on upgrade
+	oldID   string         // that file's YouTube library id, when it is a library song
 }
 
-// downloadUnified imports songs from the given sources (Spotify/Apple links),
-// then downloads each from the best available source — Apple Music (256k AAC)
-// when signed in and confidently matched, YouTube otherwise — skipping songs
-// already held and upgrading ones held from a worse source.
-func downloadUnified(ctx context.Context, u *ui.UI, o opts, inputs []string) error {
-	xs, err := buildExits(ctx, u, o)
+// downloadUnified imports songs from Spotify and Apple Music links, then downloads each
+// from the best available source — Apple Music (256k AAC) when signed in and confidently
+// matched, YouTube otherwise — skipping songs already held (however they were downloaded)
+// and upgrading ones held from a worse source.
+func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs []string) error {
+	xs, err := ex.get()
 	if err != nil {
 		return err
 	}
-	defer xs.Close()
 	proxies := exitProxies(xs)
-
 	_ = spotify.SetProxy(proxies[0])
-	tracks, err := importCatalog(ctx, u, proxies[0], inputs)
+	_ = apple.SetProxy(proxies[0])
+
+	ac := appleForUnified(ctx, u, o)
+	tracks, fromApple, err := importCatalog(ctx, u, ac, inputs)
 	if err != nil {
 		return err
 	}
@@ -79,63 +86,45 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, inputs []string) err
 		return errors.New("nothing to import")
 	}
 	u.Printf("Imported %d songs", len(tracks))
-
-	st, err := store.Open(filepath.Join(o.out, ".ytm"))
-	if err != nil {
-		return err
+	if ac == nil && len(fromApple) > 0 && o.source != "youtube" {
+		u.Printf("(not signed in to Apple Music, so these come from YouTube; 'ytm apple login' gets 256 kbps AAC)")
 	}
-	defer st.Close()
 
-	// Apple is the preferred source when a working login is present.
-	var ac *apple.Client
-	if o.source != "youtube" && appleSignedIn() {
-		cfg := config.Load()
-		c, err := apple.New(config.AppleToken(), config.AppleCookies(), cfg.AppleStorefront, cfg.AppleLanguage)
-		if err == nil {
-			_ = apple.SetProxy(proxies[0])
-			if _, verr := c.Verify(ctx); verr != nil {
-				u.Printf("(Apple Music login isn't working: %v)", verr)
-				u.Printf("(falling back to YouTube for everything)")
-			} else {
-				ac = c
-			}
+	items := decideSources(ctx, u, ac, proxies, tracks, fromApple, o.maybe)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	// The music folder's database; a dry run in a folder with none must not create it.
+	var st *store.Store
+	if _, serr := os.Stat(filepath.Join(o.out, ".ytm")); serr == nil || !o.dryRun {
+		if st, err = store.Open(filepath.Join(o.out, ".ytm")); err != nil {
+			return err
 		}
+		defer st.Close()
 	}
-
-	items := make([]item, len(tracks))
-	for i, t := range tracks {
-		items[i] = item{t: t, key: t.Key(), target: catalog.YouTube}
-	}
-	if ac != nil {
-		matchAppleAll(ctx, u, ac, proxies, items, o.maybe)
-	}
-
-	// Dedup and upgrade decisions against what is already held.
 	var appleItems, ytItems []*item
-	held, upgrades := 0, 0
-	for i := range items {
-		it := &items[i]
-		lib := st.Library(it.key)
-		want := catalog.Rank(it.target)
-		if lib.Done && fileExists(lib.Path) {
-			if lib.Quality >= want {
-				held++
-				continue
+	heldN, upgrades := 0, 0
+	if st != nil {
+		appleItems, ytItems, heldN, upgrades = planUnified(st, items, !o.dryRun)
+	} else {
+		for i := range items {
+			if items[i].target == catalog.Apple {
+				appleItems = append(appleItems, &items[i])
+			} else {
+				ytItems = append(ytItems, &items[i])
 			}
-			it.upgrade, it.oldPath = true, lib.Path
-			upgrades++
-		}
-		if it.target == catalog.Apple {
-			appleItems = append(appleItems, it)
-		} else {
-			ytItems = append(ytItems, it)
 		}
 	}
 	u.Printf("%d from Apple Music, %d from YouTube, %d already held%s.",
-		len(appleItems), len(ytItems), held, plural(upgrades, ", %d to upgrade"))
+		len(appleItems), len(ytItems), heldN, plural(upgrades, ", %d to upgrade"))
 	if o.dryRun {
 		for _, it := range append(append([]*item{}, appleItems...), ytItems...) {
-			u.Printf("  [%s] %s", it.target, it.t.Label())
+			note := ""
+			if it.upgrade {
+				note = "  (upgrade)"
+			}
+			u.Printf("  [%s] %s%s", it.target, it.t.Label(), note)
 		}
 		return nil
 	}
@@ -157,20 +146,166 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, inputs []string) err
 	return firstErr
 }
 
-// importCatalog turns Spotify and Apple Music links into canonical tracks.
-func importCatalog(ctx context.Context, u *ui.UI, proxy string, inputs []string) ([]catalog.Track, error) {
-	// Apple catalog reads need only the anonymous developer token, so links
-	// resolve without a login.
-	var ac *apple.Client
-	appleClient := func() *apple.Client {
-		if ac == nil {
-			ac, _ = apple.New("anonymous", "", "us", "")
-			_ = apple.SetProxy(proxy)
+// appleForUnified is the signed-in Apple Music client when there is a login that works
+// (checked with Apple) and the run may use it; nil means YouTube for everything.
+func appleForUnified(ctx context.Context, u *ui.UI, o opts) *apple.Client {
+	if o.source == "youtube" || !appleSignedIn() {
+		return nil
+	}
+	cfg := config.Load()
+	c, err := apple.New(config.AppleToken(), config.AppleCookies(), cfg.AppleStorefront, cfg.AppleLanguage)
+	if err != nil {
+		return nil
+	}
+	sf, err := c.Verify(ctx)
+	if err != nil {
+		u.Printf("(Apple Music login isn't working: %v)", err)
+		u.Printf("(falling back to YouTube for everything; 'ytm apple login' fixes it)")
+		return nil
+	}
+	if sf != "" && sf != cfg.AppleStorefront {
+		cfg.AppleStorefront = sf
+		_ = cfg.Save()
+	}
+	return c
+}
+
+// decideSources picks each track's source: Apple Music when there is a working login and
+// a match (an Apple Music link's own songs need no search), YouTube otherwise.
+func decideSources(ctx context.Context, u *ui.UI, ac *apple.Client, proxies []string, tracks []catalog.Track,
+	fromApple map[string]apple.Track, includeMaybe bool) []item {
+	items := make([]item, len(tracks))
+	for i, t := range tracks {
+		items[i] = item{t: t, key: t.Key(), target: catalog.YouTube}
+		if at, ok := fromApple[t.OriginID]; ok && ac != nil && t.Origin == catalog.Apple {
+			items[i].target, items[i].match = catalog.Apple, at
 		}
-		return ac
+	}
+	if ac != nil {
+		matchAppleAll(ctx, u, ac, proxies, items, includeMaybe)
+	}
+	return items
+}
+
+// planUnified checks every item against what the music folder already holds — songs this
+// pipeline downloaded, Apple Music downloads, and the YouTube library — and sorts the rest
+// by source. A song held from a worse source than its target is marked for upgrade.
+func planUnified(st *store.Store, items []item, remember bool) (appleItems, ytItems []*item, heldN, upgrades int) {
+	byName := heldByName(st)
+	for i := range items {
+		it := &items[i]
+		h, ok := heldCopy(st, byName, it)
+		if ok && h.quality >= catalog.Rank(it.target) {
+			heldN++
+			if h.indirect && remember { // remember it under this song's key: the next run is one lookup
+				_ = st.LibraryPut(it.key, it.t.Title, it.t.PrimaryArtist(), h.source, h.quality, h.path)
+			}
+			continue
+		}
+		if ok {
+			it.upgrade, it.oldPath, it.oldID = true, h.path, h.ytID
+			upgrades++
+		}
+		if it.target == catalog.Apple {
+			appleItems = append(appleItems, it)
+		} else {
+			ytItems = append(ytItems, it)
+		}
+	}
+	return appleItems, ytItems, heldN, upgrades
+}
+
+// held is a copy of a song that is already in the music folder.
+type held struct {
+	path, source string
+	quality      int
+	ytID         string // its YouTube library id, for a copy that is a library song
+	indirect     bool   // found by Apple id or by name, not under the song's key
+}
+
+// heldCopy finds the copy of it already on disk, if any: under its key, then as the Apple
+// song it was matched to, then by title and artist.
+func heldCopy(st *store.Store, byName map[string]store.HeldCopy, it *item) (held, bool) {
+	if lib := st.Library(it.key); lib.Done && fileExists(lib.Path) {
+		return held{path: lib.Path, source: lib.Source, quality: lib.Quality}, true
+	}
+	if it.target == catalog.Apple {
+		if a := st.Apple(it.match.ID); a.Done && fileExists(a.Path) {
+			return held{path: a.Path, source: string(catalog.Apple), quality: catalog.Rank(catalog.Apple), indirect: true}, true
+		}
+	}
+	for _, artist := range it.t.Artists {
+		h, ok := byName[catalog.NameKey(it.t.Title, artist)]
+		if !ok || !fileExists(h.Path) {
+			continue
+		}
+		c := held{path: h.Path, source: h.Source, quality: catalog.Rank(catalog.Source(h.Source)), indirect: true}
+		if h.Source == string(catalog.YouTube) && model.ValidID(h.ID) {
+			c.ytID = h.ID
+		}
+		return c, true
+	}
+	return held{}, false
+}
+
+// heldByName indexes every downloaded song by title and artist (and by each name in a
+// joined "A, B & C" credit); when two share a name the better copy wins.
+func heldByName(st *store.Store) map[string]store.HeldCopy {
+	hs, err := st.Held()
+	if err != nil {
+		return nil
+	}
+	idx := map[string]store.HeldCopy{}
+	for _, h := range hs {
+		for _, a := range splitArtists(h.Artist) {
+			k := catalog.NameKey(h.Title, a)
+			if old, ok := idx[k]; !ok || catalog.Rank(catalog.Source(h.Source)) > catalog.Rank(catalog.Source(old.Source)) {
+				idx[k] = h
+			}
+		}
+	}
+	return idx
+}
+
+// splitArtists is the whole credit plus each name in it ("A, B & C" -> "A, B & C", A, B,
+// C), with YouTube's " - Topic" channel suffix dropped.
+func splitArtists(s string) []string {
+	s = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), " - Topic"))
+	if s == "" {
+		return nil
+	}
+	out := []string{s}
+	joined := strings.NewReplacer(" & ", ",", " feat. ", ",", " ft. ", ",", " x ", ",").Replace(s)
+	if parts := strings.Split(joined, ","); len(parts) > 1 {
+		for _, p := range parts {
+			if p = strings.TrimSpace(p); p != "" {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
+// importCatalog turns Spotify and Apple Music links into canonical tracks. Apple songs are
+// also returned by id (fromApple), so they download as themselves with no search. ac is
+// the signed-in client, if any; without one, Apple links resolve anonymously.
+func importCatalog(ctx context.Context, u *ui.UI, ac *apple.Client, inputs []string) ([]catalog.Track, map[string]apple.Track, error) {
+	appleClient := func() (*apple.Client, error) {
+		if ac == nil {
+			// Catalog reads need only the developer token, so links resolve without a login.
+			cfg := config.Load()
+			c, err := apple.New("anonymous", "", orDefault(cfg.AppleStorefront, "us"), cfg.AppleLanguage)
+			if err != nil {
+				return nil, err
+			}
+			ac = c
+		}
+		return ac, nil
 	}
 	var out []catalog.Track
+	fromApple := map[string]apple.Track{}
 	seen := map[string]bool{}
+	byName := map[string][]int{} // NameKey -> indexes into out
 	add := func(t catalog.Track) {
 		k := string(t.Origin) + ":" + t.OriginID
 		if t.OriginID == "" {
@@ -180,6 +315,19 @@ func importCatalog(ctx context.Context, u *ui.UI, proxy string, inputs []string)
 			return
 		}
 		seen[k] = true
+		// The same song linked from two services (an album pasted from Spotify and from
+		// Apple Music) is one song: keep the Apple copy, which has the ISRC and full details
+		// and downloads with no search.
+		nk := catalog.NameKey(t.Title, t.PrimaryArtist())
+		for _, i := range byName[nk] {
+			if sameSong(out[i], t) {
+				if t.Origin == catalog.Apple && out[i].Origin != catalog.Apple {
+					out[i] = t
+				}
+				return
+			}
+		}
+		byName[nk] = append(byName[nk], len(out))
 		out = append(out, t)
 	}
 	for _, in := range inputs {
@@ -195,26 +343,66 @@ func importCatalog(ctx context.Context, u *ui.UI, proxy string, inputs []string)
 				add(fromSpotify(t))
 			}
 		case apple.IsURL(in):
-			ts, err := appleClient().ResolveURL(ctx, in)
+			c, err := appleClient()
+			if err != nil {
+				return nil, nil, err
+			}
+			ts, err := c.ResolveURL(ctx, in)
 			if err != nil {
 				u.Printf("  %s: %v", in, err)
 				continue
 			}
 			for _, t := range ts {
-				add(fromApple(t))
+				fromApple[t.ID] = t
+				add(appleToCatalog(t))
 			}
 		default:
-			return nil, fmt.Errorf("%q is not a Spotify or Apple Music link", in)
+			return nil, nil, fmt.Errorf("%q is not a Spotify or Apple Music link", in)
 		}
 	}
-	return out, nil
+	return out, fromApple, nil
 }
 
-// matchAppleAll looks every item up on Apple Music over the exits and marks the
-// ones with an acceptable match for the Apple source.
+// sameSong reports whether two tracks with the same title and artist are one recording:
+// not when both name an album and the albums differ, or both know the length and it
+// differs by more than a few seconds (a live or extended version).
+func sameSong(a, b catalog.Track) bool {
+	if a.ISRC != "" && b.ISRC != "" {
+		return strings.EqualFold(a.ISRC, b.ISRC)
+	}
+	if a.Album != "" && b.Album != "" && crossAlbumKey(a.Album) != crossAlbumKey(b.Album) {
+		return false
+	}
+	if a.DurationMillis > 0 && b.DurationMillis > 0 {
+		d := a.DurationMillis - b.DurationMillis
+		return d < 4000 && d > -4000
+	}
+	return true
+}
+
+// crossAlbumKey folds an album name for comparing across services; Apple Music adds " - Single"
+// and " - EP" to the names of those.
+func crossAlbumKey(s string) string {
+	for _, suf := range []string{" - Single", " - EP"} {
+		s = strings.TrimSuffix(s, suf)
+	}
+	return catalog.NameKey(s, "")
+}
+
+// matchAppleAll looks the items not yet on Apple up on Apple Music over the exits, and
+// marks the ones with an acceptable match for the Apple source.
 func matchAppleAll(ctx context.Context, u *ui.UI, ac *apple.Client, proxies []string, items []item, includeMaybe bool) {
+	var need []*item
+	for i := range items {
+		if items[i].target != catalog.Apple {
+			need = append(need, &items[i])
+		}
+	}
+	if len(need) == 0 {
+		return
+	}
 	var next, finished, found atomic.Int64
-	workers := min(len(items), max(2, 2*len(proxies)), 8)
+	workers := min(len(need), max(2, 2*len(proxies)), 8)
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
@@ -222,13 +410,13 @@ func matchAppleAll(ctx context.Context, u *ui.UI, ac *apple.Client, proxies []st
 			defer wg.Done()
 			for ctx.Err() == nil {
 				i := int(next.Add(1)) - 1
-				if i >= len(items) {
+				if i >= len(need) {
 					return
 				}
-				it := &items[i]
+				it := need[i]
 				q := apple.Query{Title: it.t.Title, Artists: it.t.Artists, Album: it.t.Album, DurationMillis: it.t.DurationMillis}
 				m, ok, err := ac.Match(apple.WithExit(ctx, proxies[(w+int(finished.Load()))%len(proxies)]), q)
-				u.Status("Matching on Apple Music: %d/%d (%d found)", finished.Add(1), len(items), found.Load())
+				u.Status("Matching on Apple Music: %d/%d (%d found)", finished.Add(1), len(need), found.Load())
 				if err != nil || !ok || (!m.Sure && !includeMaybe) {
 					continue
 				}
@@ -249,7 +437,9 @@ func runAppleItems(ctx context.Context, u *ui.UI, o opts, ac *apple.Client, st *
 	for i, it := range items {
 		jobs[i] = appleJob{t: it.match, dest: applePath(o.out, it.match)}
 		if it.upgrade {
-			jobs[i].ytPath, jobs[i].replace = it.oldPath, true
+			// The old copy moves to .ytm/replaced; a library song stays counted as done,
+			// so a library download won't fetch it from YouTube again.
+			jobs[i].ytID, jobs[i].ytPath, jobs[i].replace = it.oldID, it.oldPath, true
 		}
 	}
 	err := appleRun(ctx, u, o, s, jobs)
@@ -311,7 +501,7 @@ func fromSpotify(t spotify.Track) catalog.Track {
 	}
 }
 
-func fromApple(t apple.Track) catalog.Track {
+func appleToCatalog(t apple.Track) catalog.Track {
 	var artists []string
 	if t.Artist != "" {
 		artists = []string{t.Artist}

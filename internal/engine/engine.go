@@ -1343,6 +1343,12 @@ func joinArtists(a []string) string {
 
 func (e *engine) encodeJob(ctx context.Context, j *job) (string, error) {
 	final, meta := outputPath(e.Out, j.tr, j.res, e.Format)
+	if !model.ValidID(j.tr.ID) && model.ValidID(j.vid()) {
+		// A song imported from Spotify or Apple Music has only a key for an id; the link
+		// worth keeping is the video it was found as. (A library song keeps its own id,
+		// which is how its file is recognised later.)
+		meta["comment"] = "https://music.youtube.com/watch?v=" + j.vid()
+	}
 	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
 		return "", err
 	}

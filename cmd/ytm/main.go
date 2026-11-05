@@ -37,8 +37,11 @@ var version = "dev"
 const usage = `ytm - download YouTube / YouTube Music as tagged audio, through Proton VPN
 
   ytm setup               one-time setup: Proton sign-in, music folder, format
-  ytm <link>...           download videos, playlists or albums (YouTube or Apple Music)
+  ytm <link>...           download videos, playlists or albums from YouTube, Apple Music
+                          or Spotify (Apple/Spotify songs come from Apple Music when
+                          you're signed in and it has them, otherwise from YouTube)
   ytm apple ...           Apple Music via your subscription (ytm apple help)
+  ytm spotify <link>...   same as ytm <link>, for Spotify (ytm spotify help)
   ytm [takeout.zip]       download your YouTube Music library (guides you if you have no export)
   ytm status              show settings and test the VPN exits
   ytm doctor              check tools, network, folders and login; says how to fix problems
@@ -55,6 +58,8 @@ Options (for one run; ytm setup saves your defaults):
                       slow, uses your account: turn it on in ytm setup first)
   --albums     also download the rest of every album you have a song from
                (--albums-min N: only albums with N or more of your songs)
+  --source youtube  get Apple Music and Spotify songs from YouTube even when
+                    signed in to Apple Music
   -y           assume yes
 
 Other: ytm export (get your Takeout), ytm tag <folder> (fix metadata), ytm update
@@ -147,6 +152,9 @@ func parse(name string, args []string) (opts, []string, error) {
 	}
 	if o.jobs < 0 {
 		return o, nil, fmt.Errorf("-j must be 1 or more")
+	}
+	if o.source = strings.ToLower(o.source); o.source != "" && o.source != "youtube" {
+		return o, nil, fmt.Errorf("--source must be youtube (or left out for the best source), not %q", o.source)
 	}
 	if o.jobs == 0 {
 		o.jobs = cfg.Jobs // saved in settings; 0 = automatic
@@ -386,60 +394,32 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	var tools deps.Tools
 	removeLegacyCookies()
 
-	// Spotify links are metadata only: the unified pipeline downloads them from the
-	// best available source (Apple Music or YouTube).
-	var spotifyLinks, rest0 []string
-	for _, in := range inputs {
-		if spotify.IsURL(strings.Trim(in, `"' `)) {
-			spotifyLinks = append(spotifyLinks, in)
-		} else {
-			rest0 = append(rest0, in)
-		}
-	}
-	if len(spotifyLinks) > 0 {
-		if err := downloadUnified(ctx, u, o, spotifyLinks); err != nil {
-			return err
-		}
-		if len(rest0) == 0 {
-			return nil
-		}
-		inputs = rest0
-	}
+	// The VPN is brought up the first time anything needs the network (so even looking up
+	// a pasted playlist goes out through it and not from your own address), and every part
+	// of the run shares it.
+	ex := &runExits{ctx: ctx, u: u, o: o}
+	defer ex.Close()
+	var xs exitSet
+	connect := func() (err error) { xs, err = ex.get(); return err }
 
-	// Apple Music links use their own pipeline (native AAC, not the yt-dlp engine).
-	var appleLinks, rest []string
+	// Spotify and Apple Music links name songs; the unified pipeline fetches each from the
+	// best source there is (Apple Music when signed in and matched, otherwise YouTube).
+	var catalogLinks, rest []string
 	for _, in := range inputs {
-		if apple.IsURL(strings.Trim(in, `"' `)) {
-			appleLinks = append(appleLinks, in)
+		if t := strings.Trim(in, `"' `); spotify.IsURL(t) || apple.IsURL(t) {
+			catalogLinks = append(catalogLinks, t)
 		} else {
 			rest = append(rest, in)
 		}
 	}
-	if len(appleLinks) > 0 {
-		if err := appleDownloadLinks(ctx, u, o, appleLinks); err != nil {
+	if len(catalogLinks) > 0 {
+		if err := downloadUnified(ctx, u, o, ex, catalogLinks); err != nil {
 			return err
 		}
 		if len(rest) == 0 {
 			return nil
 		}
 		inputs = rest
-	}
-
-	// The VPN is brought up the first time anything needs the network, so even looking up
-	// a pasted playlist goes out through it and not from your own address.
-	var (
-		xs        = exitSet{Close: func() {}}
-		connected bool
-	)
-	defer func() { xs.Close() }()
-	connect := func() error {
-		if connected {
-			return nil
-		}
-		connected = true
-		var err error
-		xs, err = buildExits(ctx, u, o)
-		return err
 	}
 
 	var tracks []model.Track
@@ -678,9 +658,32 @@ func removeLegacyCookies() {
 	}
 }
 
-// buildExits connects the Proton VPN tunnels when you're signed in (unless --no-vpn).
-// It never silently falls back to your own IP: if the VPN was meant to be on and can't
-// connect, it stops.
+// runExits connects the VPN the first time part of a run asks for it, and hands the same
+// exits to every later part, so a run mixing YouTube, Apple Music and Spotify links
+// connects once.
+type runExits struct {
+	ctx context.Context
+	u   *ui.UI
+	o   opts
+	xs  exitSet
+	up  bool
+	err error
+}
+
+func (r *runExits) get() (exitSet, error) {
+	if !r.up {
+		r.up = true
+		r.xs, r.err = buildExits(r.ctx, r.u, r.o)
+	}
+	return r.xs, r.err
+}
+
+func (r *runExits) Close() {
+	if r.up && r.xs.Close != nil {
+		r.xs.Close()
+	}
+}
+
 // exitSet is the VPN side of a run: the exits that are up, how to replace or check one,
 // the hooks that feed block/throughput results back into the server cache, and a channel
 // of exits that finish connecting after the run has started.

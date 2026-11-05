@@ -6,8 +6,9 @@ import (
 )
 
 var (
-	subcommands = []string{"setup", "login", "logout", "status", "doctor", "export", "tag", "update", "version", "help", "completion"}
-	flagNames   = []string{"-o", "-f", "-j", "--no-vpn", "--dry-run", "--retry", "--all", "-y", "--version"}
+	subcommands = []string{"setup", "login", "logout", "status", "doctor", "export", "tag", "update", "version", "help", "completion", "apple", "spotify"}
+	flagNames   = []string{"-o", "-f", "-j", "--no-vpn", "--dry-run", "--retry", "--all", "-y", "--version",
+		"--albums", "--connections", "--source", "--maybe", "--replace", "--premium-upgrade"}
 )
 
 // completionScript returns a tab-completion script for the given shell.
@@ -53,7 +54,8 @@ compdef _ytm ytm
 		b.WriteString("complete -c ytm -s o -r -F -d 'music folder'\n")
 		b.WriteString("complete -c ytm -s f -x -a 'mp3 m4a opus flac' -d 'format'\n")
 		b.WriteString("complete -c ytm -s j -x -d 'max parallel downloads'\n")
-		for _, f := range []string{"no-vpn", "dry-run", "retry", "all", "version"} {
+		b.WriteString("complete -c ytm -l source -x -a 'youtube' -d 'audio source for Apple Music/Spotify links'\n")
+		for _, f := range []string{"no-vpn", "dry-run", "retry", "all", "version", "albums", "connections", "maybe", "replace", "premium-upgrade"} {
 			fmt.Fprintf(&b, "complete -c ytm -l %s\n", f)
 		}
 		return b.String(), nil

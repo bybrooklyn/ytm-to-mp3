@@ -26,3 +26,12 @@ func TestRank(t *testing.T) {
 		t.Errorf("ranks out of order: apple=%d youtube=%d spotify=%d", Rank(Apple), Rank(YouTube), Rank(Spotify))
 	}
 }
+
+func TestNameKey(t *testing.T) {
+	if NameKey("Beyoncé (Live)", "Destiny's Child") != NameKey("beyonce live", "destinys child") {
+		t.Error("name keys should fold case, accents and punctuation")
+	}
+	if NameKey("Song", "A") == NameKey("Song", "B") {
+		t.Error("different artists share a name key")
+	}
+}

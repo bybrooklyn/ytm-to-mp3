@@ -43,6 +43,7 @@ ytm tag <folder>             improve metadata (preview; add --apply to write, --
 ytm update                   refresh yt-dlp
 ytm version                  (or --version)
 ytm apple ...                Apple Music with your own subscription (see below)
+ytm spotify <link>...        a public Spotify album, playlist or track (plain `ytm <link>` works too)
 ```
 
 Options: `-o DIR` (default `~/Music`), `-f mp3|m4a|opus|flac`, `-j N` max parallel downloads, `--no-vpn`, `--connections N` (VPN exits this run), `--dry-run`, `--retry`, `--albums` (also the rest of every album you have a song from; `--albums-min N` limits it to albums with N or more of your songs), `--all`. Flags can go before or after the command.
@@ -75,13 +76,21 @@ If you have YouTube Premium you can optionally turn on the **Premium upgrade** (
 With an Apple Music subscription, ytm can download songs as **256 kbps AAC** (`.m4a`), decrypted locally with your account. Lossless (ALAC) is not available this way. Sign in from **Apple Music...** in the menu, the settings screen, or `ytm apple login`: ytm finds a live music.apple.com session in Firefox or a Chromium-based browser, checks it with Apple and picks up your country's store.
 
 ```
-ytm apple <link>...          an Apple Music album, song or playlist (plain `ytm <link>` works too)
+ytm apple <link>...          an Apple Music album, song or playlist, from Apple Music only
 ytm apple match [export]     find your YouTube library on Apple Music and download it as AAC
 ytm apple status | logout
 ```
 
 - **Library match** looks every song up once (the answers are kept in the music folder's `.ytm` database), ignoring YouTube's upload noise ("Official Audio", "- Topic"). It refuses a different version: a live, remix, instrumental or sped-up recording doesn't count as the song. It shows how many it found, sure and less certain, and lists the less certain ones and the misses in `.ytm/apple-match.txt`. Then you choose: only the sure matches or all of them (`--maybe`), and **next to** the YouTube copies (same name, `.m4a`) or **instead of** them (`--replace`: each YouTube file moves to `.ytm/replaced/`, and later library runs won't fetch it from YouTube again). `--dry-run` stops after the preview.
 - Songs are named like the YouTube downloads (`Artist/Album/01 - Title.m4a`), with Apple's tags, cover art, genre and a link back in the comment tag. Several download at once over your VPN exits. A song that fails on the network is retried on another exit, and a song Apple doesn't offer your account is remembered and skipped. Catalog lookups are paced per exit, because Apple rate-limits quick searches.
+
+## Links from any service: best source per song
+
+Paste a YouTube, Apple Music or Spotify link (or several, mixed) into `ytm <link>...` or **Download a link** in the menu; the VPN connects once for the whole run.
+
+- **Spotify** gives only the song list (its audio is DRM'd and never downloaded); it needs no login, and works for public albums, playlists and tracks.
+- **Apple Music and Spotify songs** come from Apple Music (256 kbps AAC) when you're signed in there and it has the song (an Apple link's own songs need no search), otherwise from YouTube Music by search. Without an Apple sign-in, Apple links still work: they come from YouTube. `--source youtube` always uses YouTube; `--maybe` also takes less certain Apple matches.
+- **No duplicates:** a song you already have, however it was downloaded (your YouTube library, `ytm apple`, an earlier link), is skipped. The same album pasted from two services is one set of songs. A song you have from YouTube that Apple Music now gives is upgraded; the YouTube file moves to `.ytm/replaced/` and library runs won't fetch it again.
 
 ## Metadata
 

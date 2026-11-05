@@ -15,6 +15,7 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/export"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/spotify"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/takeout"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
 )
@@ -44,7 +45,7 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 		var choice string
 		err := one(ctx, huh.NewSelect[string]().Title("What do you want to do?").Options(
 			huh.NewOption("Download my YouTube Music library", "library"),
-			huh.NewOption("Download a link (video, playlist or album)", "link"),
+			huh.NewOption("Download a link (YouTube, Apple Music or Spotify)", "link"),
 			huh.NewOption("Apple Music...", "apple"),
 			huh.NewOption("Settings", "settings"),
 			huh.NewOption("More tools...", "tools"),
@@ -296,26 +297,28 @@ func askForExport(ctx context.Context) (takeout.Source, error) {
 	return found, err
 }
 
-// linkFlow asks for one or more YouTube (or Apple Music) links and downloads them.
+// linkFlow asks for one or more YouTube, Apple Music or Spotify links and downloads them.
 func linkFlow(ctx context.Context, u *ui.UI, o opts) error {
 	var in string
 	var links []string
+	where := "YouTube, since you're not signed in to Apple Music"
+	if appleSignedIn() {
+		where = "Apple Music (256 kbps AAC) when it has the song, else YouTube"
+	}
 	if err := one(ctx, huh.NewInput().Title("Paste a link").
-		Description("A video, playlist or album from YouTube or YouTube Music, or an Apple Music album, song\nor playlist (needs your Apple Music sign-in). Several links separated by spaces work too.").
+		Description("A video, playlist or album from YouTube or YouTube Music, or an album, song or playlist\n"+
+			"from Apple Music or Spotify (those come from "+where+").\nSeveral links separated by spaces work too.").
 		Value(&in).Validate(func(s string) error {
 		links = links[:0]
 		for _, f := range strings.Fields(s) {
 			f = strings.Trim(f, `"'`)
-			if apple.IsURL(f) {
-				if !appleSignedIn() {
-					return errors.New("sign in to Apple Music first (Apple Music... in the menu)")
-				}
+			if apple.IsURL(f) || spotify.IsURL(f) {
 				links = append(links, f)
 				continue
 			}
 			l, ok := asURL(f)
 			if !ok {
-				return fmt.Errorf("%q isn't a YouTube or Apple Music link", f)
+				return fmt.Errorf("%q isn't a YouTube, Apple Music or Spotify link", f)
 			}
 			links = append(links, l)
 		}

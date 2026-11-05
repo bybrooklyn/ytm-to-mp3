@@ -77,6 +77,13 @@ func (t Track) Key() string {
 	return "name:" + strings.Join(parts, "|")
 }
 
+// NameKey is the loose identity of a song by name alone, "title|artist" folded the way
+// Key folds them, for finding a song already held when the other side has no ISRC (a
+// YouTube library song, a Spotify track).
+func NameKey(title, artist string) string {
+	return norm(title) + "|" + norm(artist)
+}
+
 // Label is a short "Artist - Title" for messages.
 func (t Track) Label() string {
 	if a := t.PrimaryArtist(); a != "" {
