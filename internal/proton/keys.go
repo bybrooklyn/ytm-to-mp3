@@ -63,7 +63,7 @@ func (c *Client) key(slot int) (*WGKey, *time.Time, error) {
 	}
 	seed, err := base64.StdEncoding.DecodeString(*keyStr)
 	if err != nil || len(seed) != ed25519.SeedSize {
-		return nil, nil, errors.New("the saved Proton key is damaged; run: ytm logout, then ytm setup")
+		return nil, nil, errors.New("the saved Proton key is damaged: sign out and in again in ytm's Settings")
 	}
 	pub := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
 	der, err := x509.MarshalPKIXPublicKey(pub)
@@ -89,7 +89,7 @@ func (c *Client) IdentityAt(ctx context.Context, slot int) (*WGKey, error) {
 	c.mu.Lock()
 	if c.Session == nil {
 		c.mu.Unlock()
-		return nil, errors.New("not signed in: run ytm setup")
+		return nil, errors.New("not signed in to Proton: sign in in ytm's Settings")
 	}
 	k, until, err := c.key(slot)
 	fresh := err == nil && time.Now().Before(*until)

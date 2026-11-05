@@ -83,7 +83,7 @@ func (c *Client) Submit2FA(ctx context.Context, code string) error {
 		if errors.As(err, &ae) && ae.Code == 8002 {
 			// Proton "jails" the login after too many wrong codes: it must start over.
 			c.Logout()
-			return errors.New("Proton reset this sign-in after wrong 2FA codes; start again with ytm setup")
+			return errors.New("Proton reset this sign-in after wrong 2FA codes; sign in again in ytm's Settings")
 		}
 		return err
 	}

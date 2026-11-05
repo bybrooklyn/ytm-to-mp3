@@ -73,4 +73,4 @@ case ":$PATH:" in
     ;;
 esac
 echo
-echo "Next: run  ytm setup"
+echo "Next: run  ytm"

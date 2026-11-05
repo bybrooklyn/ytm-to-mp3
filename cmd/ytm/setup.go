@@ -92,22 +92,6 @@ func working(ctx context.Context, title string, f func(context.Context) error) e
 	return err
 }
 
-// runSetup is the one-time, re-runnable wizard.
-func runSetup(ctx context.Context, u *ui.UI, accountOnly bool) error {
-	if !u.Interactive() {
-		return errors.New("setup needs a terminal")
-	}
-	if accountOnly {
-		cfg := config.Load()
-		fmt.Print("\n  ytm login\n\n")
-		if err := signIn(ctx, protonClient(), &cfg); err != nil {
-			return err
-		}
-		return cfg.Save()
-	}
-	return runSettings(ctx, u)
-}
-
 func signIn(ctx context.Context, pc *proton.Client, cfg *config.Config) error {
 	if pc.SignedIn() {
 		keep := true
@@ -133,7 +117,7 @@ func loginFlow(ctx context.Context, pc *proton.Client, cfg *config.Config) error
 	}
 	if !useVPN {
 		cfg.NoVPN = true
-		pc.Logout()
+		pc.Revoke(ctx) // end the session at Proton too, not just here
 		return nil
 	}
 	cfg.NoVPN = false
@@ -176,11 +160,11 @@ func loginFlow(ctx context.Context, pc *proton.Client, cfg *config.Config) error
 		var ae *proton.APIError
 		if errors.As(err, &ae) && (ae.RateLimited() || ae.BadVersion() || ae.Code == 9001) {
 			// retrying can't help and a rate limit gets longer with every attempt
-			return errors.New("stopping here; fix the above, then run ytm setup again (set YTM_DEBUG=1 to see Proton's raw reply)")
+			return errors.New("stopping here; fix the above, then try again in Settings (set YTM_DEBUG=1 to see Proton's raw reply)")
 		}
 		again := true
 		if one(ctx, huh.NewConfirm().Title("Try again?").Value(&again)) != nil || !again {
-			return errors.New("not signed in; run ytm setup to try again")
+			return errors.New("not signed in; try again in Settings")
 		}
 	}
 }
@@ -211,7 +195,7 @@ func runStatus(ctx context.Context, u *ui.UI) error {
 	u.Printf("  format:       %s", orDefault(cfg.Format, config.DefaultFormat))
 	u.Printf("  VPN exits:    %s", connectionsLabel(cfg, pc))
 	if !pc.SignedIn() {
-		u.Printf("VPN: not signed in (run: ytm setup)")
+		u.Printf("VPN: not signed in (sign in in Settings)")
 		return nil
 	}
 	if cfg.NoVPN {

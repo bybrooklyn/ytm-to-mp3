@@ -420,10 +420,12 @@ func isStepRow(k rowKind) bool {
 }
 
 func (m *settingsModel) View() tea.View {
-	if m.done || m.action != "" {
-		return tea.NewView("") // leave a clean line behind
+	v := tea.NewView("")
+	if !m.done && m.action == "" {
+		v = tea.NewView(m.render())
 	}
-	return tea.NewView(m.render())
+	v.AltScreen = true // a screen of its own, like the home screen
+	return v
 }
 
 // runSettings shows the settings screen. Sign-in/out and the VPN test need the plain
@@ -458,10 +460,11 @@ func runSettings(ctx context.Context, u *ui.UI) error {
 					return fmt.Errorf("couldn't save your settings to %s: %w", config.Path(), err)
 				}
 			}
-			fmt.Printf("  %s✓%s settings kept in %s\n", cGreen, cReset, config.Path())
 			return nil
 		case "signout":
-			pc.Logout()
+			// Ends the session at Proton too, not just here; the WireGuard device key stays
+			// listed in the account until it is removed at account.protonvpn.com.
+			pc.Revoke(ctx)
 		case "signin":
 			c := config.Load()
 			if err := loginFlow(ctx, pc, &c); err != nil {

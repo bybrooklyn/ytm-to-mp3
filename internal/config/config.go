@@ -10,7 +10,7 @@ import (
 )
 
 type Config struct {
-	// Saved by `ytm setup`; command-line flags override them for one run.
+	// Saved by the Settings screen; command-line flags override them for one run.
 	Out         string `json:"out,omitempty"`
 	Format      string `json:"format,omitempty"`
 	Connections int    `json:"connections,omitempty"` // VPN exits to use at once

@@ -44,6 +44,3 @@ snapshot:
 clean:
     rm -rf ytm ytm.exe dist
 
-# test the VPN exits
-status:
-    go run ./cmd/ytm status

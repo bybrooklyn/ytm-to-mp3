@@ -34,35 +34,30 @@ import (
 
 var version = "dev"
 
-const usage = `ytm - download YouTube / YouTube Music as tagged audio, through Proton VPN
+const usage = `ytm - your music library from YouTube Music, Apple Music and Spotify,
+downloaded as tagged audio through Proton VPN
 
-  ytm setup               one-time setup: Proton sign-in, music folder, format
-  ytm <link>...           download videos, playlists or albums from YouTube, Apple Music
-                          or Spotify (Apple/Spotify songs come from Apple Music when
-                          you're signed in and it has them, otherwise from YouTube)
-  ytm apple ...           Apple Music via your subscription (ytm apple help)
-  ytm spotify <link>...   same as ytm <link>, for Spotify (ytm spotify help)
-  ytm [takeout.zip]       download your YouTube Music library (guides you if you have no export)
-  ytm status              show settings and test the VPN exits
-  ytm doctor              check tools, network, folders and login; says how to fix problems
-  ytm logout              forget your Proton login
-  ytm completion SHELL    tab completion (bash, zsh, fish, powershell)
+  ytm                     open ytm: downloads, your library, settings and tools in one place
+  ytm <link or file>...   download right away: YouTube, Apple Music or Spotify links (songs,
+                          albums, playlists), a Takeout .zip, folder or .csv, or a text file
+                          of links. Each song comes from the best source you have: Apple Music
+                          (256 kbps AAC) when you're signed in there and it has it, else YouTube.
 
-Options (for one run; ytm setup saves your defaults):
+Options for one run (your defaults are in ytm's Settings):
   -o DIR       music folder          -f FORMAT   mp3, m4a, opus, flac
   --no-vpn     skip the VPN this run -j N        max parallel downloads
   --connections N   VPN exits to use this run
-  --dry-run    show what would happen
-  --retry      retry tracks that were unavailable before
-  --premium-upgrade   re-download songs at YouTube Premium quality (experimental,
-                      slow, uses your account: turn it on in ytm setup first)
+  --dry-run    show what would happen, download nothing
+  --retry      retry songs that were unavailable before
   --albums     also download the rest of every album you have a song from
                (--albums-min N: only albums with N or more of your songs)
   --source youtube  get Apple Music and Spotify songs from YouTube even when
-                    signed in to Apple Music
+                    signed in to Apple Music (--maybe: also less certain Apple matches)
+  --premium-upgrade   re-download songs at YouTube Premium quality (experimental,
+                      slow, uses your account: turn it on in Settings first)
   -y           assume yes
-
-Other: ytm export (get your Takeout), ytm tag <folder> (fix metadata), ytm update
+  --completion SHELL  print tab completion for bash, zsh, fish or powershell
+  --version, --help
 `
 
 func main() {
@@ -107,7 +102,9 @@ type opts struct {
 	replace, maybe bool
 	// source forces the audio source for a unified (Spotify) import: "" = best available
 	// (Apple when signed in, else YouTube), "youtube" = always YouTube.
-	source string
+	source     string
+	version    bool   // --version
+	completion string // --completion SHELL
 	// given is which flags were on the command line: they win over saved settings for the
 	// whole run, even after the settings screen re-reads them.
 	given map[string]bool
@@ -116,7 +113,7 @@ type opts struct {
 func parse(name string, args []string) (opts, []string, error) {
 	var o opts
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(io.Discard) // errors are printed once by main, with a pointer to 'ytm help'
+	fs.SetOutput(io.Discard) // errors are printed once by main, with a pointer to 'ytm --help'
 	fs.Usage = func() {}
 	fs.StringVar(&o.out, "o", "", "")
 	fs.StringVar(&o.format, "f", "", "")
@@ -140,6 +137,9 @@ func parse(name string, args []string) (opts, []string, error) {
 	fs.BoolVar(&o.replace, "replace", false, "")
 	fs.BoolVar(&o.maybe, "maybe", false, "")
 	fs.StringVar(&o.source, "source", "", "")
+	fs.BoolVar(&o.version, "version", false, "")
+	fs.BoolVar(&o.version, "v", false, "")
+	fs.StringVar(&o.completion, "completion", "", "")
 	// Go's flag package stops at the first positional; keep going so flags may follow it.
 	var pos []string
 	for {
@@ -200,85 +200,60 @@ func parse(name string, args []string) (opts, []string, error) {
 	return o, pos, nil
 }
 
-// commands are the words that act as subcommands when they come first (flags may precede them).
-var commands = map[string]bool{"export": true, "tag": true, "update": true, "version": true, "help": true,
-	"setup": true, "login": true, "logout": true, "status": true, "doctor": true, "completion": true,
-	"apple": true, "spotify": true}
+// movedInto says where each old subcommand lives now: everything is in ytm itself.
+var movedInto = map[string]string{
+	"setup":  "Settings",
+	"login":  "Settings (Proton account)",
+	"logout": "Settings (Proton account)",
+	"status": "Settings (Test VPN)",
+	"doctor": "\"Check that everything works\"",
+	"export": "\"Download my YouTube Music library\" (it helps you get the export)",
+	"tag":    "\"Fix tags\"",
+	"update": "\"Update yt-dlp, ffmpeg and deno\"",
+	"apple":  "Settings (Apple Music) and \"Upgrade my library to Apple Music\"; links just work: ytm <link>",
+}
 
 func run(args []string) error {
-	if len(args) == 1 && (args[0] == "--version" || args[0] == "-v") {
-		args = []string{"version"}
-	}
 	o, pos, err := parse("ytm", args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
+			fmt.Print(usage)
 			return nil
 		}
-		return fmt.Errorf("%w (see: ytm help)", err)
+		return fmt.Errorf("%w (see: ytm --help)", err)
 	}
-	cmd := ""
-	if len(pos) > 0 && commands[pos[0]] {
-		cmd, pos = pos[0], pos[1:]
-		if len(pos) > 0 && cmd != "tag" && cmd != "export" && cmd != "completion" && cmd != "apple" && cmd != "spotify" {
-			return fmt.Errorf("'ytm %s' takes no arguments (got %q)", cmd, pos[0])
+	switch {
+	case o.version || (len(pos) == 1 && pos[0] == "version"):
+		fmt.Println("ytm", version)
+		return nil
+	case len(pos) == 1 && pos[0] == "help":
+		fmt.Print(usage)
+		return nil
+	case o.completion != "":
+		s, err := completionScript(o.completion)
+		if err != nil {
+			return err
+		}
+		fmt.Print(s)
+		return nil
+	}
+	// The old subcommands: "ytm apple <link>" / "ytm spotify <link>" are just links now; the
+	// rest say where they went (unless a file of that name is meant).
+	if len(pos) > 0 {
+		if _, err := os.Stat(pos[0]); err != nil {
+			if (pos[0] == "apple" || pos[0] == "spotify") && len(pos) > 1 {
+				pos = pos[1:]
+			} else if where, ok := movedInto[pos[0]]; ok {
+				return fmt.Errorf("'ytm %s' is now part of ytm itself: run ytm and pick %s", pos[0], where)
+			} else if pos[0] == "completion" {
+				return errors.New("use: ytm --completion bash|zsh|fish|powershell")
+			}
 		}
 	}
 	u := ui.New()
 	ctx, stop := signalContext(u)
 	defer stop()
 
-	switch cmd {
-	case "help":
-		fmt.Print(usage)
-		return nil
-	case "version":
-		fmt.Println("ytm", version)
-		return nil
-	case "update":
-		return deps.Update(ctx, func(f string, a ...any) { u.Printf(f, a...) })
-	case "export":
-		p, err := export.Guide(ctx, u)
-		if err != nil {
-			return err
-		}
-		return download(ctx, u, o, p)
-	case "setup":
-		return runSetup(ctx, u, false)
-	case "login":
-		return runSetup(ctx, u, true)
-	case "logout":
-		pc := protonClient()
-		if !pc.SignedIn() {
-			u.Printf("you weren't signed in to Proton")
-			return nil
-		}
-		pc.Revoke(ctx)
-		u.Printf("signed out of Proton (and removed ytm's saved login). The ytm device key stays listed in your Proton account until you remove it at account.protonvpn.com.")
-		return nil
-	case "status":
-		return runStatus(ctx, u)
-	case "doctor":
-		return runDoctor(ctx, u, o)
-	case "completion":
-		if len(pos) != 1 {
-			return errors.New("usage: ytm completion bash|zsh|fish|powershell")
-		}
-		s, err := completionScript(pos[0])
-		if err != nil {
-			return err
-		}
-		fmt.Print(s)
-		return nil
-	case "tag":
-		if len(pos) != 1 {
-			return errors.New("usage: ytm tag <folder> [--apply] [--rename] [--undo] [--offline] [-y]")
-		}
-		return runTag(ctx, u, o, pos[0])
-	case "apple":
-		return runApple(ctx, u, o, pos)
-	case "spotify":
-		return runSpotify(ctx, u, o, pos)
-	}
 	if o.premiumUpgrade {
 		return premiumUpgrade(ctx, u, o, false)
 	}
@@ -742,7 +717,7 @@ func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 	pc := protonClient()
 	if o.noVPN || cfg.NoVPN || !pc.SignedIn() {
 		if !o.noVPN && !cfg.NoVPN {
-			u.Printf("(no VPN: run 'ytm setup' to sign in to Proton and download faster)")
+			u.Printf("(no VPN: sign in to Proton in ytm's Settings to download faster)")
 		}
 		return none, nil
 	}

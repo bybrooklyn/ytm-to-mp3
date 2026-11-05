@@ -23,55 +23,6 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
 )
 
-const appleUsage = `ytm apple - download from Apple Music with your subscription (256 kbps AAC)
-
-  ytm apple login            save your Apple Music login (read from your browser)
-  ytm apple logout           forget it
-  ytm apple status           check the saved login with Apple
-  ytm apple <link>...        download an Apple Music album, song or playlist
-  ytm apple match [export]   find your YouTube library's songs on Apple Music and
-                             download them as AAC (uses your Takeout export)
-      --replace              replace the YouTube copies (old files are kept in
-                             <music folder>/.ytm/replaced until you delete them)
-      --maybe                also download the less certain matches
-      --dry-run              only show what it found
-      -y                     don't ask (sure matches only, unless --maybe)
-
-Songs go to Artist/Album/NN - Title.m4a in your music folder, several at a time
-over your Proton VPN exits. Downloads and lookups are remembered in the folder's
-.ytm database, so a second run only does what is new.
-
-Apple Music audio is lossless only over FairPlay, which needs a separate
-decryption backend ytm does not run; this path gives 256 kbps AAC, decrypted
-locally with your account.`
-
-// runApple dispatches the `ytm apple ...` subcommands.
-func runApple(ctx context.Context, u *ui.UI, o opts, args []string) error {
-	sub := ""
-	if len(args) > 0 {
-		sub = args[0]
-	}
-	switch sub {
-	case "", "help", "-h", "--help":
-		fmt.Println(appleUsage)
-		return nil
-	case "login":
-		return appleLogin(ctx, u)
-	case "logout":
-		return appleLogout(u)
-	case "status":
-		return appleStatus(ctx, u)
-	case "match":
-		var paths []string
-		for _, a := range args[1:] {
-			paths = append(paths, strings.Trim(a, `"' `))
-		}
-		return appleMatch(ctx, u, o, paths)
-	}
-	// Otherwise treat every argument as an Apple Music link.
-	return appleDownloadLinks(ctx, u, o, args)
-}
-
 func appleLogout(u *ui.UI) error {
 	if err := config.SaveAppleToken(""); err != nil {
 		return err
@@ -87,7 +38,7 @@ func appleLogout(u *ui.UI) error {
 // pasted), checks it with Apple and saves it with the account's country.
 func appleLogin(ctx context.Context, u *ui.UI) error {
 	if !u.Interactive() {
-		return errors.New("ytm apple login needs a terminal")
+		return errors.New("signing in to Apple Music needs a terminal")
 	}
 	u.Printf("Apple Music login")
 
@@ -135,29 +86,6 @@ func appleLogin(ctx context.Context, u *ui.UI) error {
 		return err
 	}
 	u.Printf("✓ Signed in to Apple Music (store: %s).", strings.ToUpper(orDefault(cfg.AppleStorefront, "us")))
-	return nil
-}
-
-// appleStatus reports whether a saved login still works, checking it against
-// Apple.
-func appleStatus(ctx context.Context, u *ui.UI) error {
-	token := config.AppleToken()
-	if token == "" {
-		u.Printf("No Apple Music login saved. Run: ytm apple login")
-		return nil
-	}
-	cfg := config.Load()
-	u.Printf("Apple Music login saved (store %s). Checking...", strings.ToUpper(orDefault(cfg.AppleStorefront, "us")))
-	_ = apple.SetProxy("")
-	c, err := apple.New(token, config.AppleCookies(), cfg.AppleStorefront, cfg.AppleLanguage)
-	if err != nil {
-		return err
-	}
-	if _, err := c.Verify(ctx); err != nil {
-		u.Printf("Login is NOT working: %v", err)
-		return nil
-	}
-	u.Printf("Login works.")
 	return nil
 }
 
@@ -219,7 +147,7 @@ func (s *appleSession) exitCount() int {
 func openApple(ctx context.Context, u *ui.UI, o opts) (*appleSession, error) {
 	token := config.AppleToken()
 	if token == "" {
-		return nil, errors.New("no Apple Music login (run: ytm apple login, or sign in from the Apple Music menu)")
+		return nil, errors.New("no Apple Music login: sign in in Settings (Apple Music)")
 	}
 	cfg := config.Load()
 	c, err := apple.New(token, config.AppleCookies(), cfg.AppleStorefront, cfg.AppleLanguage)
@@ -258,7 +186,7 @@ func openApple(ctx context.Context, u *ui.UI, o opts) (*appleSession, error) {
 	if err != nil {
 		s.close()
 		if errors.Is(err, apple.ErrLogin) {
-			return nil, fmt.Errorf("%w\n(or run: ytm apple login)", err)
+			return nil, fmt.Errorf("%w\n(then sign in again in Settings: Apple Music)", err)
 		}
 		return nil, fmt.Errorf("can't reach Apple Music: %w", err)
 	}
@@ -278,52 +206,6 @@ func (s *appleSession) Close() {
 		s.st.Close()
 	}
 	s.close()
-}
-
-// appleDownloadLinks resolves and downloads Apple Music links.
-func appleDownloadLinks(ctx context.Context, u *ui.UI, o opts, links []string) error {
-	for i, l := range links {
-		links[i] = strings.Trim(l, `"' `)
-		if !apple.IsURL(links[i]) {
-			return fmt.Errorf("%q is not an Apple Music album, song or playlist link", l)
-		}
-	}
-	s, err := openApple(ctx, u, o)
-	if err != nil {
-		return err
-	}
-	defer s.Close()
-
-	var jobs []appleJob
-	seen := map[string]bool{}
-	for _, l := range links {
-		ts, err := s.c.ResolveURL(ctx, l)
-		if err != nil {
-			if errors.Is(err, apple.ErrLogin) {
-				return err
-			}
-			u.Printf("  %s: %v", l, err)
-			continue
-		}
-		for _, t := range ts {
-			if !seen[t.ID] {
-				seen[t.ID] = true
-				jobs = append(jobs, appleJob{t: t, dest: applePath(o.out, t)})
-			}
-		}
-	}
-	if len(jobs) == 0 {
-		return errors.New("nothing to download")
-	}
-	if o.dryRun {
-		for _, j := range jobs {
-			rel, _ := filepath.Rel(o.out, j.dest)
-			u.Printf("  %s", rel)
-		}
-		u.Printf("%d songs (dry run: nothing downloaded)", len(jobs))
-		return nil
-	}
-	return appleRun(ctx, u, o, s, jobs)
 }
 
 // appleJob is one song to download: where it goes and, for a library song, the YouTube

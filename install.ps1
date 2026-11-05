@@ -69,7 +69,7 @@ try {
 
     Write-Host "Installed to $dest\ytm.exe"
     Write-Host ''
-    Write-Host 'Next: run  ytm setup'
+    Write-Host 'Next: run  ytm'
 } catch {
     Write-Host "error: $($_.Exception.Message)" -ForegroundColor Red
     $global:LASTEXITCODE = 1

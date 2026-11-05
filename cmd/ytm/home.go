@@ -9,13 +9,12 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/apple"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/export"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/spotify"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/takeout"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
 )
@@ -23,8 +22,9 @@ import (
 // errBack means "go back to the menu" from a sub-flow.
 var errBack = errors.New("back")
 
-// runHome is what plain `ytm` does in a terminal: a short menu that leads to the right
-// flow, so nothing has to be remembered.
+// runHome is what plain `ytm` does in a terminal: one screen with everything ytm does.
+// An action runs in the plain terminal (so its output stays readable), then the screen
+// comes back.
 func runHome(ctx context.Context, u *ui.UI, o opts) error {
 	if !config.Exists() {
 		first := true
@@ -37,66 +37,50 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 			first = false // Esc: skip
 		}
 		if first {
-			if err := runSetup(ctx, u, false); err != nil && !errors.Is(err, errBack) {
+			if err := runSettings(ctx, u); err != nil && !errors.Is(err, errBack) {
 				return err
 			}
 			o = refreshOpts(o)
 		}
 	}
-	for again := false; ; again = true {
-		if again {
-			// Coming back from a screen: start the menu on a clean screen instead of stacking
-			// another header (and the left-overs of what ran) under the last one.
-			fmt.Print("\x1b[H\x1b[2J")
+	cur := 0
+	for {
+		m := newHomeModel(o, cur, "")
+		final, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
-		fmt.Println(header(o, u.Width()))
-		var choice string
-		err := one(ctx, huh.NewSelect[string]().Title("What do you want to do?").Options(
-			huh.NewOption("Download my YouTube Music library", "library"),
-			huh.NewOption("Download a link (YouTube, Apple Music or Spotify)", "link"),
-			huh.NewOption("Apple Music...", "apple"),
-			huh.NewOption("Settings", "settings"),
-			huh.NewOption("More tools...", "tools"),
-			huh.NewOption("Quit", "quit"),
-		).Value(&choice))
 		if err != nil {
 			return err
 		}
-		switch choice {
-		case "library":
-			err = libraryFlow(ctx, u, o)
-		case "link":
-			err = linkFlow(ctx, u, o)
-		case "settings":
-			if err = runSetup(ctx, u, false); err == nil {
-				o = refreshOpts(o)
-			}
-			continue // settings are saved as you go; straight back to the menu
-		case "tools":
-			err = toolsMenu(ctx, u, o)
-		case "apple":
-			err = appleMenu(ctx, u, o)
-		default:
+		fm := final.(*homeModel)
+		cur = fm.cur
+		if fm.action == "" {
 			return nil
+		}
+		err = homeAction(ctx, u, o, fm.action, fm.inputs)
+		if fm.action == "settings" {
+			o = refreshOpts(o)
 		}
 		switch {
 		case errors.Is(err, errBack):
-			continue
+			continue // backed out: straight back to the screen
 		case ctx.Err() != nil || errors.Is(err, context.Canceled):
 			return err // Ctrl-C: leave
 		case err != nil:
-			// A tool that failed shouldn't take the whole app with it: say why, and offer
-			// the menu again.
+			// A failure shouldn't take the whole app with it: say why, then the screen again.
 			fmt.Printf("\n  %s✗%s %s\n", red, reset, ui.Sanitize(err.Error()))
-		case choice == "library" || choice == "link":
-			return nil // a download ran; we're done
 		}
+		if fm.action == "settings" && err == nil {
+			continue // settings are saved as you go, nothing to read: back to the screen
+		}
+		// Leave what ran on screen until it has been read.
 		back := true
-		if err := one(ctx, huh.NewConfirm().Title("Back to the menu?").Affirmative("Menu").Negative("Quit").Value(&back)); err != nil {
+		if err := one(ctx, huh.NewConfirm().Title("Back to ytm?").Affirmative("Back").Negative("Quit").Value(&back)); err != nil {
 			if !errors.Is(err, errBack) {
 				return nil
 			}
-			back = true // Esc: the menu
+			back = true // Esc: back
 		}
 		if !back {
 			return nil
@@ -104,24 +88,35 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 	}
 }
 
-// toolsMenu holds everything that isn't downloading.
-func toolsMenu(ctx context.Context, u *ui.UI, o opts) error {
-	var choice string
-	if err := one(ctx, huh.NewSelect[string]().Title("More tools").Options(
-		huh.NewOption("Fix tags in my music folder (MusicBrainz)", "tag"),
-		huh.NewOption("Tidy file names (Artist/Album/01 - Title)", "tidy"),
-		huh.NewOption("YouTube Premium upgrade now (experimental, slow)", "premium"),
-		huh.NewOption("Update yt-dlp, ffmpeg and deno", "update"),
-		huh.NewOption("Check that everything works", "doctor"),
-		huh.NewOption("Back", "back"),
-	).Value(&choice)); err != nil {
-		return err
-	}
-	switch choice {
-	case "tag":
-		return tagFlow(ctx, u, o)
-	case "tidy":
-		return tidyFlow(ctx, u, o)
+// homeAction runs what was picked on the home screen.
+func homeAction(ctx context.Context, u *ui.UI, o opts, action string, inputs []string) error {
+	fmt.Println()
+	switch action {
+	case "input":
+		return download(ctx, u, o, inputs...)
+	case "library":
+		return libraryFlow(ctx, u, o)
+	case "apple":
+		if !appleSignedIn() {
+			fmt.Printf("  %sApple Music%s gives 256 kbps AAC with your own Apple Music subscription.\n", cAccent, cReset)
+			fmt.Printf("  %sSign in at music.apple.com in your browser (and play a song), then continue.%s\n\n", cDim, cReset)
+			in := true
+			if err := one(ctx, huh.NewConfirm().Title("Sign in to Apple Music now?").
+				Affirmative("Sign in").Negative("Back").Value(&in)); err != nil {
+				return err
+			}
+			if !in {
+				return errBack
+			}
+			if err := appleLogin(ctx, u); err != nil {
+				return err
+			}
+		}
+		src, err := chooseExport(ctx, u)
+		if err != nil {
+			return err
+		}
+		return appleMatch(ctx, u, o, src.Paths)
 	case "premium":
 		if !config.Load().Premium {
 			if err := premiumSetup(ctx, u); err != nil || !config.Load().Premium {
@@ -129,10 +124,16 @@ func toolsMenu(ctx context.Context, u *ui.UI, o opts) error {
 			}
 		}
 		return premiumUpgrade(ctx, u, o, false)
-	case "update":
-		return deps.Update(ctx, func(f string, a ...any) { u.Printf(f, a...) })
+	case "tag":
+		return tagFlow(ctx, u, o)
+	case "tidy":
+		return tidyFlow(ctx, u, o)
+	case "settings":
+		return runSettings(ctx, u)
 	case "doctor":
 		return runDoctor(ctx, u, o)
+	case "update":
+		return deps.Update(ctx, func(f string, a ...any) { u.Printf(f, a...) })
 	}
 	return errBack
 }
@@ -184,37 +185,6 @@ func extras(o opts) string {
 		return "just download (extras are off in settings)"
 	}
 	return "also: " + strings.Join(on, ", ") + "  (change in settings)"
-}
-
-func header(o opts, width int) string {
-	pc := protonClient()
-	cfg := config.Load()
-	vpn, vpnShort := "VPN off", "no VPN"
-	if pc.SignedIn() && !cfg.NoVPN && !o.noVPN {
-		n := connectionsLabel(cfg, pc)
-		if o.conns > 0 { // --connections for this run
-			n = fmt.Sprint(min(o.conns, maxConns))
-		}
-		vpn, vpnShort = "Proton VPN, "+n+" connections", "VPN ×"+n
-		if n == "1" {
-			vpn = "Proton VPN, 1 connection"
-		}
-	}
-	// Never wrap: on a narrow terminal shorten the VPN part, then the folder.
-	folder := tilde(o.out)
-	line := func() string { return "  ytm  " + folder + "  ·  " + o.format + "  ·  " + vpn }
-	if len([]rune(line())) > width-1 {
-		vpn = vpnShort
-	}
-	if over := len([]rune(line())) - (width - 1); over > 0 {
-		r := []rune(folder)
-		if keep := len(r) - over - 1; keep > 3 {
-			folder = "…" + string(r[len(r)-keep:])
-		} else {
-			folder = filepath.Base(o.out)
-		}
-	}
-	return fmt.Sprintf("\n  \x1b[1mytm\x1b[0m  \x1b[2m%s  ·  %s  ·  %s\x1b[0m\n", folder, o.format, vpn)
 }
 
 // tilde shortens a path under the home folder for display.
@@ -344,39 +314,4 @@ func askForExport(ctx context.Context) (takeout.Source, error) {
 		return nil
 	}))
 	return found, err
-}
-
-// linkFlow asks for one or more YouTube, Apple Music or Spotify links and downloads them.
-func linkFlow(ctx context.Context, u *ui.UI, o opts) error {
-	var in string
-	var links []string
-	where := "Not signed in to Apple Music: Apple and Spotify songs come from YouTube."
-	if appleSignedIn() {
-		where = "Apple and Spotify songs come from Apple Music when it has them, else YouTube."
-	}
-	if err := one(ctx, huh.NewInput().Title("Paste a link").
-		Description("A song, album or playlist from YouTube, Apple Music or Spotify.\n"+
-			"Paste several separated by spaces.\n"+where).
-		Value(&in).Validate(func(s string) error {
-		links = links[:0]
-		for _, f := range strings.Fields(s) {
-			f = strings.Trim(f, `"'`)
-			if apple.IsURL(f) || spotify.IsURL(f) {
-				links = append(links, f)
-				continue
-			}
-			l, ok := asURL(f)
-			if !ok {
-				return fmt.Errorf("%q isn't a YouTube, Apple Music or Spotify link", f)
-			}
-			links = append(links, l)
-		}
-		if len(links) == 0 {
-			return errors.New("paste a link")
-		}
-		return nil
-	})); err != nil {
-		return err
-	}
-	return download(ctx, u, o, links...)
 }

@@ -36,7 +36,7 @@ func appleMatch(ctx context.Context, u *ui.UI, o opts, paths []string) error {
 	if len(paths) == 0 {
 		p, ok := findExisting()
 		if !ok {
-			return errors.New("give a Takeout export: ytm apple match <takeout.zip>")
+			return errors.New("pick your Takeout export first")
 		}
 		paths = []string{p}
 	}
@@ -307,7 +307,7 @@ func writeAppleReport(path string, res []appleFound) error {
 	}
 	sort.Strings(missing)
 	var b strings.Builder
-	fmt.Fprintf(&b, "ytm apple match, %s\n\n", time.Now().Format("2006-01-02 15:04"))
+	fmt.Fprintf(&b, "ytm: library on Apple Music, %s\n\n", time.Now().Format("2006-01-02 15:04"))
 	fmt.Fprintf(&b, "Less certain matches (%d): downloaded only when you choose \"all matches\" (or --maybe)\n", len(maybe))
 	b.WriteString(strings.Join(maybe, "\n"))
 	fmt.Fprintf(&b, "\n\nNot found on Apple Music (%d)\n", len(missing))

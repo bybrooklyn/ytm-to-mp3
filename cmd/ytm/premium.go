@@ -139,7 +139,7 @@ func premiumUpgrade(ctx context.Context, u *ui.UI, o opts, auto bool) error {
 	cfg := config.Load()
 	cookies := config.PremiumCookiesPath()
 	if _, err := os.Stat(cookies); err != nil || !cfg.Premium {
-		return errors.New("the YouTube Premium upgrade is off: turn it on in settings (ytm setup) first")
+		return errors.New("the YouTube Premium upgrade is off: turn it on in Settings first")
 	}
 	if auto {
 		u.Printf("\nYouTube Premium upgrade (experimental, slow; turn off in settings, Ctrl-C to stop)...")

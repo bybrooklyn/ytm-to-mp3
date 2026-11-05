@@ -253,7 +253,7 @@ func (e *APIError) Error() string {
 		hint = "Proton rejected the app version ytm identifies as (ytm needs an update; or set YTM_APP_VERSION)"
 	case e.NeedsHuman():
 		hint = "Proton wants a human check (" + strings.Join(e.HVMethods, ", ") + ") before it lets this app sign in. " +
-			"Sign in once at https://account.protonvpn.com in a browser on this same network, then run ytm setup again"
+			"Sign in once at https://account.protonvpn.com in a browser on this same network, then sign in again in ytm's Settings"
 	case e.Code == 8002:
 		hint = "wrong password or 2FA code"
 	case e.Code == 2028:
@@ -349,7 +349,7 @@ func (c *Client) send(ctx context.Context, id appID, method, path string, authed
 		}
 		c.mu.Unlock()
 		if s == nil {
-			return errors.New("not signed in: run ytm setup")
+			return errors.New("not signed in to Proton: sign in in ytm's Settings")
 		}
 		req.Header.Set("x-pm-uid", uid)
 		req.Header.Set("Authorization", "Bearer "+tok)
@@ -400,7 +400,7 @@ func (c *Client) refresh(ctx context.Context, stale string) error {
 	s := c.Session
 	if s == nil {
 		c.mu.Unlock()
-		return errors.New("not signed in: run ytm setup")
+		return errors.New("not signed in to Proton: sign in in ytm's Settings")
 	}
 	if s.AccessToken != stale {
 		c.mu.Unlock()
@@ -420,7 +420,7 @@ func (c *Client) refresh(ctx context.Context, stale string) error {
 	if err != nil {
 		var ae *APIError
 		if errors.As(err, &ae) && (ae.Status == 400 || ae.Status == 401 || ae.Status == 422) {
-			return errors.New("your Proton session expired; run: ytm setup")
+			return errors.New("your Proton session expired: sign in again in ytm's Settings")
 		}
 		return fmt.Errorf("couldn't refresh the Proton session (network?): %w", err)
 	}

@@ -5,6 +5,7 @@ go 1.26.0
 toolchain go1.26.10
 
 require (
+	charm.land/bubbles/v2 v2.0.0
 	charm.land/bubbletea/v2 v2.0.2
 	charm.land/huh/v2 v2.0.3
 	github.com/ProtonMail/go-srp v0.0.7
@@ -25,7 +26,6 @@ require (
 )
 
 require (
-	charm.land/bubbles/v2 v2.0.0 // indirect
 	charm.land/lipgloss/v2 v2.0.1 // indirect
 	github.com/Eyevinn/mp4ff v0.55.0 // indirect
 	github.com/ProtonMail/bcrypt v0.0.0-20210511135022-227b4adcab57 // indirect

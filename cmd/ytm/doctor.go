@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
+	"github.com/bybrooklyn/ytm-to-mp3/internal/apple"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
 )
@@ -27,14 +29,14 @@ func runDoctor(ctx context.Context, u *ui.UI, o opts) error {
 
 	u.Printf("\nSettings")
 	if _, err := config.LoadChecked(); err != nil {
-		bad("fix or delete that file, then run: ytm setup", "%v", err)
+		bad("fix or delete that file, then check Settings", "%v", err)
 	} else if config.Exists() {
 		ok("%s", config.Path())
 	} else {
-		note("no settings saved yet (using defaults). Run: ytm setup")
+		note("no settings saved yet (using defaults): see Settings")
 	}
 	if err := checkFolder(o.out); err != nil {
-		bad("pick another folder with: ytm setup", "music folder %s: %v", o.out, err)
+		bad("pick another folder in Settings", "music folder %s: %v", o.out, err)
 	} else {
 		ok("music folder %s is writable", o.out)
 	}
@@ -61,11 +63,28 @@ func runDoctor(ctx context.Context, u *ui.UI, o opts) error {
 	pc := protonClient()
 	switch {
 	case !pc.SignedIn():
-		note("not signed in (optional). Run: ytm setup")
+		note("not signed in (optional): sign in in Settings")
 	case config.Load().NoVPN:
 		note("signed in as %s, VPN turned off in settings", pc.Session.Username)
 	default:
-		ok("signed in as %s (test the tunnels with: ytm status)", pc.Session.Username)
+		ok("signed in as %s (Settings > Test VPN shows each exit)", pc.Session.Username)
+	}
+
+	u.Printf("\nApple Music")
+	if !appleSignedIn() {
+		note("not signed in (optional): Settings > Apple Music, for 256 kbps AAC")
+	} else {
+		cfg := config.Load()
+		_ = apple.SetProxy("")
+		c, err := apple.New(config.AppleToken(), config.AppleCookies(), cfg.AppleStorefront, cfg.AppleLanguage)
+		if err == nil {
+			_, err = c.Verify(ctx)
+		}
+		if err != nil {
+			bad("sign in again at music.apple.com in your browser, then Settings > Apple Music", "the saved login doesn't work: %v", err)
+		} else {
+			ok("signed in (store %s), and Apple accepts the login", strings.ToUpper(orDefault(cfg.AppleStorefront, "us")))
+		}
 	}
 
 	if problems == 0 {

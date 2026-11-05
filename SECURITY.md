@@ -14,14 +14,14 @@ Only the latest release receives security fixes.
 
 ## What ytm stores locally
 
-Config lives in your user config directory (`ytm status` prints the path), caches in your
+Config lives in your user config directory (the Settings screen shows the path), caches in your
 user cache directory under `ytm`.
 
 - `config.json`: your settings (music folder, format, number of VPN connections, whether
   to use a browser login or the VPN). No secrets.
 - `proton.json`: the Proton VPN session (access/refresh tokens and the WireGuard key
   seed), written atomically with mode 0600 in a 0700 directory. Anyone who can read it can
-  use your Proton session; `ytm logout` revokes the session at Proton and deletes the file.
+  use your Proton session; signing out in Settings revokes the session at Proton and deletes the file.
   Your password is never written to disk. On Windows the 0600 mode has no effect and the
   folder's normal permissions protect the file. The device key stays listed in your Proton
   account until you remove it at account.protonvpn.com.
@@ -39,8 +39,8 @@ user cache directory under `ytm`.
 - YouTube / YouTube Music, via yt-dlp.
 - GitHub, to download and update helper tools and releases.
 - Proton's API (SPKI-pinned) when you use the Proton VPN feature.
-- MusicBrainz, for tag lookups, unless you pass `--offline`.
-- `api.ipify.org`, only when you run `ytm status` (to show your public IP).
+- MusicBrainz, for tag lookups (Fix tags can also work offline).
+- `api.ipify.org`, only when you use Test VPN in Settings (to show your public IP).
 
 There is no telemetry.
 

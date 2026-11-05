@@ -21,38 +21,6 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
 )
 
-const spotifyUsage = `ytm spotify - download public Spotify albums, playlists and tracks
-
-  ytm spotify <link>...     download a Spotify album, playlist or track
-      --source youtube      always use YouTube (skip Apple Music even if signed in)
-      --maybe               accept less certain Apple Music matches
-      --dry-run             show what would download, and from which source
-      -o DIR / -f FORMAT    music folder / format (for YouTube downloads)
-
-Spotify is used only for the song list; Spotify's own audio is DRM'd and is not
-downloaded. The audio comes from the best source you have: Apple Music (256 kbps
-AAC) when you're signed in and the song matches, otherwise YouTube. Songs you
-already have (from any source) are skipped, and a song held from a worse source
-is upgraded (the old file is kept in <music folder>/.ytm/replaced).
-
-Plain 'ytm <link>' does the same for Spotify and Apple Music links.`
-
-// runSpotify dispatches the `ytm spotify ...` command.
-func runSpotify(ctx context.Context, u *ui.UI, o opts, args []string) error {
-	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		fmt.Println(spotifyUsage)
-		return nil
-	}
-	for _, a := range args {
-		if !spotify.IsURL(strings.Trim(a, `"' `)) {
-			return fmt.Errorf("%q is not a Spotify album, playlist or track link", a)
-		}
-	}
-	ex := &runExits{ctx: ctx, u: u, o: o}
-	defer ex.Close()
-	return downloadUnified(ctx, u, o, ex, args)
-}
-
 // item is one imported song and the decision made for it.
 type item struct {
 	t       catalog.Track
@@ -87,7 +55,7 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 	}
 	u.Printf("Imported %s", count(len(tracks), "song"))
 	if ac == nil && len(fromApple) > 0 && o.source != "youtube" {
-		u.Printf("(not signed in to Apple Music, so these come from YouTube; 'ytm apple login' gets 256 kbps AAC)")
+		u.Printf("(not signed in to Apple Music, so these come from YouTube; sign in in Settings for 256 kbps AAC)")
 	}
 
 	items := decideSources(ctx, u, ac, proxies, tracks, fromApple, o.maybe)
@@ -159,7 +127,7 @@ func appleForUnified(ctx context.Context, u *ui.UI, o opts) *apple.Client {
 	sf, err := c.Verify(ctx)
 	if err != nil {
 		u.Printf("(Apple Music login isn't working: %v)", err)
-		u.Printf("(falling back to YouTube for everything; 'ytm apple login' fixes it)")
+		u.Printf("(falling back to YouTube for everything; sign in again in Settings)")
 		return nil
 	}
 	if sf != "" && sf != cfg.AppleStorefront {
