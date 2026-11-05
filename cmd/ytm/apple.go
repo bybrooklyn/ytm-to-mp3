@@ -89,6 +89,29 @@ func appleLogin(ctx context.Context, u *ui.UI) error {
 	return nil
 }
 
+// appleStatus reports whether a saved login still works, checking it against
+// Apple.
+func appleStatus(ctx context.Context, u *ui.UI) error {
+	token := config.AppleToken()
+	if token == "" {
+		u.Printf("No Apple Music login saved: sign in from the Apple Music menu.")
+		return nil
+	}
+	cfg := config.Load()
+	u.Printf("Apple Music login saved (store %s). Checking...", strings.ToUpper(orDefault(cfg.AppleStorefront, "us")))
+	_ = apple.SetProxy("")
+	c, err := apple.New(token, config.AppleCookies(), cfg.AppleStorefront, cfg.AppleLanguage)
+	if err != nil {
+		return err
+	}
+	if _, err := c.Verify(ctx); err != nil {
+		u.Printf("Login is NOT working: %v", err)
+		return nil
+	}
+	u.Printf("Login works.")
+	return nil
+}
+
 // detectLiveAppleLogin tries each installed browser's Apple Music cookies and
 // returns the first session Apple still accepts (validated directly, no VPN), with
 // the account's storefront.

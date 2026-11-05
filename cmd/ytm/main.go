@@ -206,11 +206,11 @@ var movedInto = map[string]string{
 	"login":  "Settings (Proton account)",
 	"logout": "Settings (Proton account)",
 	"status": "Settings (Test VPN)",
-	"doctor": "\"Check that everything works\"",
+	"doctor": "More tools > Check that everything works",
 	"export": "\"Download my YouTube Music library\" (it helps you get the export)",
-	"tag":    "\"Fix tags\"",
-	"update": "\"Update yt-dlp, ffmpeg and deno\"",
-	"apple":  "Settings (Apple Music) and \"Upgrade my library to Apple Music\"; links just work: ytm <link>",
+	"tag":    "More tools > Fix tags",
+	"update": "More tools > Update yt-dlp, ffmpeg and deno",
+	"apple":  "Apple Music... (links just work: ytm <link>)",
 }
 
 func run(args []string) error {

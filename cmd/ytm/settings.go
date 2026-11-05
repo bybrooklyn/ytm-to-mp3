@@ -420,12 +420,10 @@ func isStepRow(k rowKind) bool {
 }
 
 func (m *settingsModel) View() tea.View {
-	v := tea.NewView("")
-	if !m.done && m.action == "" {
-		v = tea.NewView(m.render())
+	if m.done || m.action != "" {
+		return tea.NewView("") // leave a clean line behind
 	}
-	v.AltScreen = true // a screen of its own, like the home screen
-	return v
+	return tea.NewView(m.render())
 }
 
 // runSettings shows the settings screen. Sign-in/out and the VPN test need the plain
