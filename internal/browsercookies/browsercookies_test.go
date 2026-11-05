@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -190,7 +191,7 @@ func TestWriteNetscape(t *testing.T) {
 	if strings.Contains(s, "EVIL") || strings.Contains(s, "stolen") {
 		t.Error("a value with a newline must be dropped, not written")
 	}
-	if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
+	if st, _ := os.Stat(p); runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 		t.Errorf("mode %v", st.Mode().Perm())
 	}
 }

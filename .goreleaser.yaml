@@ -52,7 +52,9 @@ nfpms:
     formats: [deb, rpm]
     recommends: [ffmpeg]
 
-brews:
+# A cask (goreleaser deprecated binary formulas). ffmpeg isn't a dependency: ytm fetches
+# its own copy when none is installed.
+homebrew_casks:
   - name: ytm
     repository:
       owner: bybrooklyn
@@ -60,13 +62,14 @@ brews:
       token: '{{ with index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}{{ . }}{{ end }}'
     homepage: https://github.com/bybrooklyn/ytm-to-mp3
     description: Download your YouTube Music library as tagged audio files
-    license: MIT
     skip_upload: '{{ if index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}auto{{ else }}true{{ end }}'
-    dependencies:
-      - name: ffmpeg
-        type: optional
-    test: |
-      system "#{bin}/ytm", "--version"
+    hooks:
+      post:
+        # the binary isn't notarized: without this macOS refuses to run it
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/ytm"]
+          end
 
 scoops:
   - name: ytm

@@ -1,6 +1,7 @@
 package names
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -83,7 +84,7 @@ func TestImageDecoderOf(t *testing.T) {
 }
 
 func TestFFPath(t *testing.T) {
-	if got := FFPath("-evil.mp3"); !strings.HasPrefix(got, "file:/") {
+	if got := FFPath("-evil.mp3"); !strings.HasPrefix(got, "file:") || !filepath.IsAbs(strings.TrimPrefix(got, "file:")) {
 		t.Errorf("FFPath = %q", got)
 	}
 }

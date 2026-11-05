@@ -170,11 +170,11 @@ func TestFolderEdit(t *testing.T) {
 		t.Fatalf("invalid folder must stay in edit: editing=%v err=%q", m.editing, m.err)
 	}
 	press(m, "backspace", "backspace", "backspace", "/", "t", "m", "p", "enter")
-	if m.editing || last.Out != "/tmp" || *n != 1 {
+	if m.editing || last.Out != config.ExpandPath("/tmp") || *n != 1 {
 		t.Fatalf("editing=%v out=%q", m.editing, last.Out)
 	}
 	press(m, "enter", "x", "esc")
-	if m.editing || last.Out != "/tmp" {
+	if m.editing || last.Out != config.ExpandPath("/tmp") {
 		t.Fatal("esc must cancel")
 	}
 }

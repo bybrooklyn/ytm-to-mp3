@@ -1,6 +1,9 @@
 package tag
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func rec(id, title, artist string, score, lengthMs int, rels ...mbRelease) mbRecording {
 	r := mbRecording{ID: id, Title: title, Score: score, Length: lengthMs, Releases: rels}
@@ -23,18 +26,18 @@ func album(id, title, date string) mbRelease {
 
 func TestRenameTargetScheme(t *testing.T) {
 	info := Info{Tags: map[string]string{"artist": "C418", "title": "Door", "album": "Volume Alpha", "track": "2/24"}}
-	got := renameTarget("/m", "/m/C418/Volume Alpha/Door [aaaaaaaaaaa].opus", info, nil, 0, 0)
-	if got != "/m/C418/Volume Alpha/02 - Door.opus" {
+	got := renameTarget(filepath.FromSlash("/m"), filepath.FromSlash("/m/C418/Volume Alpha/Door [aaaaaaaaaaa].opus"), info, nil, 0, 0)
+	if got != filepath.FromSlash("/m/C418/Volume Alpha/02 - Door.opus") {
 		t.Errorf("got %q", got)
 	}
 	// no album: no number, still no [id]
 	info.Tags["album"] = ""
-	if got := renameTarget("/m", "/m/C418/Door [aaaaaaaaaaa].opus", info, nil, 0, 0); got != "/m/C418/Door.opus" {
+	if got := renameTarget(filepath.FromSlash("/m"), filepath.FromSlash("/m/C418/Door [aaaaaaaaaaa].opus"), info, nil, 0, 0); got != filepath.FromSlash("/m/C418/Door.opus") {
 		t.Errorf("got %q", got)
 	}
 	// already right: nothing to do
 	info.Tags["album"] = "Volume Alpha"
-	if got := renameTarget("/m", "/m/C418/Volume Alpha/02 - Door.opus", info, nil, 0, 0); got != "" {
+	if got := renameTarget(filepath.FromSlash("/m"), filepath.FromSlash("/m/C418/Volume Alpha/02 - Door.opus"), info, nil, 0, 0); got != "" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -51,7 +54,7 @@ func TestRenameTargetAlbumLookup(t *testing.T) {
 	if no != 2 || total != 24 || gotArgs[0] != "C418" || gotArgs[3] != "aaaaaaaaaaa" {
 		t.Fatalf("fallback = %d/%d, lookup %q", no, total, gotArgs)
 	}
-	if got := renameTarget("/m", "/m/C418/Volume Alpha/Door.opus", info, nil, no, total); got != "/m/C418/Volume Alpha/02 - Door.opus" {
+	if got := renameTarget(filepath.FromSlash("/m"), filepath.FromSlash("/m/C418/Volume Alpha/Door.opus"), info, nil, no, total); got != filepath.FromSlash("/m/C418/Volume Alpha/02 - Door.opus") {
 		t.Errorf("got %q", got)
 	}
 	// a number in the tags wins: no lookup

@@ -13,17 +13,17 @@ import (
 func TestApplePathScheme(t *testing.T) {
 	tr := apple.Track{ID: "1", Title: "Let It Happen", Artist: "Tame Impala", AlbumArtist: "Tame Impala",
 		Album: "Currents", TrackNumber: 1, TrackCount: 13}
-	if got := applePath("/m", tr); got != "/m/Tame Impala/Currents/01 - Let It Happen.m4a" {
+	if got := applePath("/m", tr); got != filepath.FromSlash("/m/Tame Impala/Currents/01 - Let It Happen.m4a") {
 		t.Errorf("got %q", got)
 	}
 	tr.Album, tr.AlbumArtist = "", ""
-	if got := applePath("/m", tr); got != "/m/Tame Impala/Let It Happen.m4a" {
+	if got := applePath("/m", tr); got != filepath.FromSlash("/m/Tame Impala/Let It Happen.m4a") {
 		t.Errorf("no album: got %q", got)
 	}
 	// nothing from Apple's metadata can climb out of the folder
 	tr.Artist, tr.Title = "../..", "../../etc/passwd"
 	got := applePath("/m", tr)
-	if rel, err := filepath.Rel("/m", filepath.Clean(got)); err != nil || strings.HasPrefix(rel, "..") || strings.Count(rel, "/") != 1 {
+	if rel, err := filepath.Rel("/m", filepath.Clean(got)); err != nil || strings.HasPrefix(rel, "..") || strings.Count(rel, string(filepath.Separator)) != 1 {
 		t.Errorf("escapes or adds folders: %q", got)
 	}
 }

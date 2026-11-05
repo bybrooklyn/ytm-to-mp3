@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 )
 
 func writeJPEG(t *testing.T) string {
@@ -46,7 +48,7 @@ func TestEncodeArgs(t *testing.T) {
 	}
 	// opus: the audio is copied and the "cover" is the ffmetadata file carrying the picture
 	j = strings.Join(encodeArgs("in.webm", "/tmp/x.meta.txt", "o.opus", "opus", "opus", nil), " ")
-	for _, want := range []string{"-c:a copy", "-f ffmetadata", "-i file:/tmp/x.meta.txt", "-map 0:a:0", "-map_metadata -1", "-map_metadata:s:a 1"} {
+	for _, want := range []string{"-c:a copy", "-f ffmetadata", "-i " + names.FFPath("/tmp/x.meta.txt"), "-map 0:a:0", "-map_metadata -1", "-map_metadata:s:a 1"} {
 		if !strings.Contains(j, want) {
 			t.Errorf("opus with cover: missing %q in %s", want, j)
 		}
@@ -62,13 +64,19 @@ func TestEncodeArgs(t *testing.T) {
 func TestEncodeArgsPathsNeverOptions(t *testing.T) {
 	a := encodeArgs("-evil.webm", "", "-out.mp3", "mp3", "opus", nil)
 	for i, s := range a {
-		if i > 0 && a[i-1] == "-i" && !strings.HasPrefix(s, "file:/") {
+		if i > 0 && a[i-1] == "-i" && !explicitFile(s) {
 			t.Errorf("input %q is not an explicit absolute file: path", s)
 		}
 	}
-	if last := a[len(a)-1]; !strings.HasPrefix(last, "file:/") {
+	if last := a[len(a)-1]; !explicitFile(last) {
 		t.Errorf("output %q is not explicit", last)
 	}
+}
+
+// explicitFile: a "file:" URL of an absolute path ("file:/x" or "file:C:\x"), which ffmpeg
+// can never read as an option.
+func explicitFile(s string) bool {
+	return strings.HasPrefix(s, "file:") && filepath.IsAbs(strings.TrimPrefix(s, "file:"))
 }
 
 func TestEncodeArgsRejectsNonImageCover(t *testing.T) {

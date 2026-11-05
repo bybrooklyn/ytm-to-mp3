@@ -12,7 +12,15 @@ import (
 )
 
 func TestInside(t *testing.T) {
-	root := filepath.FromSlash("/lib/music")
+	// "/x" is not absolute on Windows (no drive); Abs gives it the current one there.
+	abs := func(p string) string {
+		if !strings.HasPrefix(p, "/") {
+			return filepath.FromSlash(p)
+		}
+		a, _ := filepath.Abs(filepath.FromSlash(p))
+		return a
+	}
+	root := abs("/lib/music")
 	for p, want := range map[string]bool{
 		"/lib/music/a/b.mp3":        true,
 		"/lib/music":                true,
@@ -23,7 +31,7 @@ func TestInside(t *testing.T) {
 		"":                          false,
 		"/lib/music/a/../../../etc": false,
 	} {
-		if got := inside(root, filepath.FromSlash(p)); got != want {
+		if got := inside(root, abs(p)); got != want {
 			t.Errorf("inside(%q) = %v, want %v", p, got, want)
 		}
 	}
@@ -91,8 +99,14 @@ func TestWriteJournalAtomicRoundTrip(t *testing.T) {
 func TestProbeArgsExplicitPath(t *testing.T) {
 	a := probeArgs("-weird.mp3")
 	j := strings.Join(a, " ")
-	if !strings.Contains(j, "-protocol_whitelist file,pipe") || !strings.Contains(j, "-i file:/") {
+	if !strings.Contains(j, "-protocol_whitelist file,pipe") {
 		t.Errorf("probeArgs = %s", j)
+	}
+	// the input is a file: URL of an absolute path ("file:/x", "file:C:\x"), never an option
+	for i, s := range a {
+		if i > 0 && a[i-1] == "-i" && (!strings.HasPrefix(s, "file:") || !filepath.IsAbs(strings.TrimPrefix(s, "file:"))) {
+			t.Errorf("input %q is not an explicit absolute file: path", s)
+		}
 	}
 }
 

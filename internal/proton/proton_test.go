@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -205,7 +206,7 @@ func TestRefreshHappensOnceUnderConcurrent401s(t *testing.T) {
 	if n := refreshes.Load(); n != 1 {
 		t.Fatalf("refresh token rotates, so it must be used once; used %d times", n)
 	}
-	if st, err := os.Stat(c.Path); err != nil || st.Mode().Perm() != 0o600 {
+	if st, err := os.Stat(c.Path); err != nil || (runtime.GOOS != "windows" && st.Mode().Perm() != 0o600) {
 		t.Fatalf("session file missing or not 0600: %v %v", st, err)
 	}
 }
@@ -238,7 +239,7 @@ func TestSessionFileIsPrivateAndAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	st, err := os.Stat(p)
-	if err != nil || st.Mode().Perm() != 0o600 {
+	if err != nil || (runtime.GOOS != "windows" && st.Mode().Perm() != 0o600) {
 		t.Fatalf("want 0600 file, got %v %v", st, err)
 	}
 	if _, err := os.Stat(p + ".tmp"); err == nil {

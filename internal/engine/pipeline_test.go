@@ -66,6 +66,9 @@ func tid(i int) string { return fmt.Sprintf("t%010d", i) }
 
 func fakeOptions(t *testing.T, exits ...vpn.Exit) (Options, string) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake yt-dlp and ffmpeg are shell scripts (covered on Linux and macOS)")
+	}
 	dir := t.TempDir()
 	yt := filepath.Join(dir, "yt-dlp")
 	ff := filepath.Join(dir, "ffmpeg")

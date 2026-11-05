@@ -10,7 +10,11 @@ func TestLoadToleratesOldKeysAndRoundTrips(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
-	p := filepath.Join(dir, "ytm", "config.json")
+	t.Setenv("AppData", dir) // Windows
+	p, err := path()         // where this OS keeps it (macOS: ~/Library/Application Support)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		t.Fatal(err)
 	}

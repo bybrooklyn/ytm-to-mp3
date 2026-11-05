@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -29,12 +30,14 @@ func zipAt(t *testing.T, dir, name string, files map[string]string) string {
 
 func TestSplitPathsAndCleanPath(t *testing.T) {
 	cases := map[string][]string{
-		`/a/b.zip`:                      {"/a/b.zip"},
-		`/a/My\ Files/t.zip`:            {"/a/My Files/t.zip"},
-		`"/a/My Files/t.zip"`:           {"/a/My Files/t.zip"},
-		`'/a/x.zip' /b/y.zip`:           {"/a/x.zip", "/b/y.zip"},
-		`file:///a/My%20Files/t.zip`:    {"/a/My Files/t.zip"},
-		`  /a/one.zip   /a/two\ 2.zip `: {"/a/one.zip", "/a/two 2.zip"},
+		`/a/b.zip`:                   {"/a/b.zip"},
+		`"/a/My Files/t.zip"`:        {"/a/My Files/t.zip"},
+		`'/a/x.zip' /b/y.zip`:        {"/a/x.zip", "/b/y.zip"},
+		`file:///a/My%20Files/t.zip`: {"/a/My Files/t.zip"},
+	}
+	if runtime.GOOS != "windows" { // there a backslash separates folders; it isn't an escape
+		cases[`/a/My\ Files/t.zip`] = []string{"/a/My Files/t.zip"}
+		cases[`  /a/one.zip   /a/two\ 2.zip `] = []string{"/a/one.zip", "/a/two 2.zip"}
 	}
 	for in, want := range cases {
 		if got := SplitPaths(in); !reflect.DeepEqual(got, want) {
