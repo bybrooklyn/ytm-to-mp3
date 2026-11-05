@@ -34,6 +34,9 @@ type Track struct {
 	DurationMillis int
 	ArtworkURL     string
 	ReleaseDate    string
+	// TrackNo/TrackTotal: the position on the album, for an album link (the embed lists an
+	// album's songs in order); 0 for playlists and single tracks.
+	TrackNo, TrackTotal int
 }
 
 // ErrNotSpotifyURL is returned for a link that is not a recognised Spotify
@@ -208,17 +211,22 @@ func trackFromEntity(e *entity) Track {
 }
 
 func tracksFromList(e *entity) []Track {
-	album := ""
-	if e.Type == "album" {
-		album = e.Name
+	album, date := "", ""
+	isAlbum := e.Type == "album"
+	if isAlbum {
+		album, date = e.Name, e.ReleaseDate.ISODate
 	}
 	art := bestImage(e)
 	out := make([]Track, 0, len(e.TrackList))
-	for _, it := range e.TrackList {
-		out = append(out, Track{
+	for i, it := range e.TrackList {
+		t := Track{
 			ID: idFromURI(it.URI), Title: it.Title, Artists: splitArtists(it.Subtitle),
-			Album: album, DurationMillis: it.Duration, ArtworkURL: art,
-		})
+			Album: album, DurationMillis: it.Duration, ArtworkURL: art, ReleaseDate: date,
+		}
+		if isAlbum {
+			t.TrackNo, t.TrackTotal = i+1, len(e.TrackList)
+		}
+		out = append(out, t)
 	}
 	return out
 }

@@ -187,22 +187,35 @@ func (e *engine) findOnMusic(ctx context.Context, t model.Track, ts *tstate) (*j
 	if r := e.Replacements[t.ID]; r != "" {
 		cands = append(cands, musicHit{ID: r, Title: t.Title})
 	}
+	// A hit that can't be looked up because of the exit (throttled, a bot check) is tried
+	// once more on another; if that is all that stood in the way, the error says so, so the
+	// song is retried later instead of being written off as "not on YouTube Music".
+	var transient error
 	tryHits := func(hits []musicHit, check bool) (*job, error) {
 		for _, h := range hits {
-			ln := e.pick()
-			if err := ln.gov.Acquire(ctx); err != nil {
-				return nil, err
+			for attempt := 0; attempt < 2; attempt++ {
+				ln := e.pick()
+				if err := ln.gov.Acquire(ctx); err != nil {
+					return nil, err
+				}
+				epoch := ln.epoch.Load()
+				res, err := ln.ytdlp().Resolve(ctx, h.ID)
+				ln.gov.Release(outcome(err))
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				if err != nil {
+					if kindOf(err) == kindPermanent {
+						break // this video is gone; on to the next hit
+					}
+					transient = err
+					continue
+				}
+				if check && !artistMatches(t.Artists, res.Artists) {
+					break
+				}
+				return &job{tr: t, res: res, lane: ln, epoch: epoch, ts: ts, music: true, video: h.ID}, nil
 			}
-			epoch := ln.epoch.Load()
-			res, err := ln.ytdlp().Resolve(ctx, h.ID)
-			ln.gov.Release(outcome(err))
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			if err != nil || (check && !artistMatches(t.Artists, res.Artists)) {
-				continue
-			}
-			return &job{tr: t, res: res, lane: ln, epoch: epoch, ts: ts, music: true, video: h.ID}, nil
 		}
 		return nil, nil
 	}
@@ -221,6 +234,9 @@ func (e *engine) findOnMusic(ctx context.Context, t model.Track, ts *tstate) (*j
 	if j != nil || err != nil {
 		return j, err
 	}
+	if transient != nil {
+		return nil, transient
+	}
 	return nil, errNoMusicMatch
 }
 
@@ -232,18 +248,30 @@ func (e *engine) rescue(ctx context.Context, t model.Track, ts *tstate, cause er
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	found := ""
-	if err == nil {
-		found = j.video // remembered, so an interrupted run doesn't search for it again
-	}
-	if serr := e.Store.MarkMusicTried(t.ID, found); serr != nil && !errors.Is(serr, context.Canceled) {
-		e.UI.Printf("warning: couldn't record the YouTube Music attempt for %s: %v", t.ID, serr)
-	}
-	if err != nil {
-		if errors.Is(err, errNoMusicMatch) {
-			return nil, &Error{kindOf(cause), cause.Error() + "; not found on YouTube Music either"}
+	// Only a real answer is remembered (a match, or "not there"): a search that failed on
+	// the network says nothing about the song, so the next run tries again.
+	if err == nil || errors.Is(err, errNoMusicMatch) {
+		found := ""
+		if err == nil {
+			found = j.video // remembered, so an interrupted run doesn't search for it again
 		}
-		return nil, cause
+		if serr := e.Store.MarkMusicTried(t.ID, found); serr != nil && !errors.Is(serr, context.Canceled) {
+			e.UI.Printf("warning: couldn't record the YouTube Music attempt for %s: %v", t.ID, serr)
+		}
 	}
-	return j, nil
+	switch {
+	case err == nil:
+		return j, nil
+	case !model.ValidID(t.ID):
+		// A song imported from Apple Music or Spotify: it never had a video of its own, so
+		// the YouTube Music search is the whole story.
+		if errors.Is(err, errNoMusicMatch) {
+			return nil, &Error{kindPermanent, "not found on YouTube Music"}
+		}
+		return nil, &Error{kindTransient, "YouTube Music search failed: " + err.Error()}
+	case errors.Is(err, errNoMusicMatch):
+		return nil, &Error{kindOf(cause), cause.Error() + "; not found on YouTube Music either"}
+	default:
+		return nil, &Error{kindTransient, cause.Error() + "; the YouTube Music search failed (" + err.Error() + "), will retry"}
+	}
 }

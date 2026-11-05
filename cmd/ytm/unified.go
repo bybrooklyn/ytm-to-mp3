@@ -85,7 +85,7 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 	if len(tracks) == 0 {
 		return errors.New("nothing to import")
 	}
-	u.Printf("Imported %d songs", len(tracks))
+	u.Printf("Imported %s", count(len(tracks), "song"))
 	if ac == nil && len(fromApple) > 0 && o.source != "youtube" {
 		u.Printf("(not signed in to Apple Music, so these come from YouTube; 'ytm apple login' gets 256 kbps AAC)")
 	}
@@ -116,8 +116,7 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 			}
 		}
 	}
-	u.Printf("%d from Apple Music, %d from YouTube, %d already held%s.",
-		len(appleItems), len(ytItems), heldN, plural(upgrades, ", %d to upgrade"))
+	u.Printf("%s.", sourceSummary(len(appleItems), len(ytItems), heldN, upgrades))
 	if o.dryRun {
 		for _, it := range append(append([]*item{}, appleItems...), ytItems...) {
 			note := ""
@@ -497,6 +496,7 @@ func runYouTubeItems(ctx context.Context, u *ui.UI, o opts, st *store.Store, xs 
 func fromSpotify(t spotify.Track) catalog.Track {
 	return catalog.Track{
 		Title: t.Title, Artists: t.Artists, Album: t.Album, DurationMillis: t.DurationMillis,
+		TrackNo: t.TrackNo, TrackTotal: t.TrackTotal,
 		ArtworkURL: t.ArtworkURL, ReleaseDate: t.ReleaseDate, Origin: catalog.Spotify, OriginID: t.ID,
 	}
 }
@@ -545,6 +545,33 @@ func moveAside(root, path string) error {
 		return err
 	}
 	return os.Rename(path, dst)
+}
+
+// count is "1 song", "3 songs".
+func count(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// sourceSummary is the plan in one line, leaving out what is zero:
+// "12 from Apple Music, 1 from YouTube, 3 already held (2 to upgrade)".
+func sourceSummary(fromApple, fromYouTube, held, upgrades int) string {
+	var parts []string
+	if fromApple > 0 {
+		parts = append(parts, fmt.Sprintf("%d from Apple Music", fromApple))
+	}
+	if fromYouTube > 0 {
+		parts = append(parts, fmt.Sprintf("%d from YouTube", fromYouTube))
+	}
+	if held > 0 {
+		parts = append(parts, fmt.Sprintf("%d already held", held))
+	}
+	if len(parts) == 0 {
+		return "Nothing to download"
+	}
+	return strings.Join(parts, ", ") + plural(upgrades, " (%d to upgrade)")
 }
 
 func plural(n int, format string) string {

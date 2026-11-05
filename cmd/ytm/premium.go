@@ -59,7 +59,7 @@ func premiumSetup(ctx context.Context, u *ui.UI) error {
 	sources = append(sources, huh.NewOption("Use a cookies.txt file", "file"))
 	var accept bool
 	source, path := sources[0].Value, ""
-	err := huh.NewForm(
+	err := runForm(ctx, huh.NewForm(
 		huh.NewGroup(huh.NewNote().Title("YouTube Premium upgrade").Description(premiumWarning),
 			huh.NewConfirm().Title("Turn it on anyway?").Affirmative("Yes, I understand").Negative("No").Value(&accept)),
 		huh.NewGroup(huh.NewSelect[string]().Title("Where should ytm get your YouTube sign-in from?").
@@ -70,7 +70,7 @@ func premiumSetup(ctx context.Context, u *ui.UI) error {
 			Description("Open a private/incognito window, sign in to YouTube Music, export the youtube.com\ncookies with a \"cookies.txt\" browser extension, then CLOSE the private window.").
 			Value(&path).Validate(func(s string) error { return checkCookies(config.ExpandPath(strings.Trim(s, `"' `))) })).
 			WithHideFunc(func() bool { return !accept || source != "file" }),
-	).RunWithContext(ctx)
+	))
 	if err != nil || !accept {
 		return err
 	}

@@ -31,17 +31,25 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 		if err := one(ctx, huh.NewConfirm().Title("Welcome to ytm. Set it up first? (takes a minute)").
 			Description("Pick your music folder and sign in to Proton VPN. You can skip and change it later.").
 			Affirmative("Set up").Negative("Skip").Value(&first)); err != nil {
-			return err
+			if !errors.Is(err, errBack) {
+				return err
+			}
+			first = false // Esc: skip
 		}
 		if first {
-			if err := runSetup(ctx, u, false); err != nil {
+			if err := runSetup(ctx, u, false); err != nil && !errors.Is(err, errBack) {
 				return err
 			}
 			o = refreshOpts(o)
 		}
 	}
-	for {
-		fmt.Println(header(o))
+	for again := false; ; again = true {
+		if again {
+			// Coming back from a screen: start the menu on a clean screen instead of stacking
+			// another header (and the left-overs of what ran) under the last one.
+			fmt.Print("\x1b[H\x1b[2J")
+		}
+		fmt.Println(header(o, u.Width()))
 		var choice string
 		err := one(ctx, huh.NewSelect[string]().Title("What do you want to do?").Options(
 			huh.NewOption("Download my YouTube Music library", "library"),
@@ -71,17 +79,26 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 		default:
 			return nil
 		}
-		if errors.Is(err, errBack) {
+		switch {
+		case errors.Is(err, errBack):
 			continue
-		}
-		if err != nil {
-			return err
-		}
-		if choice == "library" || choice == "link" {
+		case ctx.Err() != nil || errors.Is(err, context.Canceled):
+			return err // Ctrl-C: leave
+		case err != nil:
+			// A tool that failed shouldn't take the whole app with it: say why, and offer
+			// the menu again.
+			fmt.Printf("\n  %s✗%s %s\n", red, reset, ui.Sanitize(err.Error()))
+		case choice == "library" || choice == "link":
 			return nil // a download ran; we're done
 		}
 		back := true
-		if one(ctx, huh.NewConfirm().Title("Back to the menu?").Affirmative("Menu").Negative("Quit").Value(&back)) != nil || !back {
+		if err := one(ctx, huh.NewConfirm().Title("Back to the menu?").Affirmative("Menu").Negative("Quit").Value(&back)); err != nil {
+			if !errors.Is(err, errBack) {
+				return nil
+			}
+			back = true // Esc: the menu
+		}
+		if !back {
 			return nil
 		}
 	}
@@ -123,13 +140,24 @@ func toolsMenu(ctx context.Context, u *ui.UI, o opts) error {
 // refreshOpts re-reads saved settings after setup, keeping flags the user passed.
 func refreshOpts(o opts) opts {
 	cfg := config.Load()
-	if cfg.Out != "" {
+	if cfg.Out != "" && !o.given["o"] {
 		o.out = config.ExpandPath(cfg.Out)
 	}
-	if cfg.Format != "" {
+	if cfg.Format != "" && !o.given["f"] {
 		o.format = cfg.Format
 	}
-	o.albums, o.retry, o.tagAfter, o.premiumAfter = !cfg.NoAlbums, !cfg.NoRetry, !cfg.NoTagAfter, !cfg.NoPremiumAfter
+	if !o.given["j"] {
+		o.jobs = cfg.Jobs
+	}
+	set := func(flag string, dst *bool, saved bool) {
+		if !o.given[flag] {
+			*dst = saved
+		}
+	}
+	set("albums", &o.albums, !cfg.NoAlbums)
+	set("retry", &o.retry, !cfg.NoRetry)
+	set("tag-after", &o.tagAfter, !cfg.NoTagAfter)
+	set("premium-after", &o.premiumAfter, !cfg.NoPremiumAfter)
 	return o
 }
 
@@ -158,14 +186,35 @@ func extras(o opts) string {
 	return "also: " + strings.Join(on, ", ") + "  (change in settings)"
 }
 
-func header(o opts) string {
+func header(o opts, width int) string {
 	pc := protonClient()
 	cfg := config.Load()
-	vpn := "VPN off"
-	if pc.SignedIn() && !cfg.NoVPN {
-		vpn = "Proton VPN, " + connectionsLabel(cfg, pc) + " connections"
+	vpn, vpnShort := "VPN off", "no VPN"
+	if pc.SignedIn() && !cfg.NoVPN && !o.noVPN {
+		n := connectionsLabel(cfg, pc)
+		if o.conns > 0 { // --connections for this run
+			n = fmt.Sprint(min(o.conns, maxConns))
+		}
+		vpn, vpnShort = "Proton VPN, "+n+" connections", "VPN ×"+n
+		if n == "1" {
+			vpn = "Proton VPN, 1 connection"
+		}
 	}
-	return fmt.Sprintf("\n  \x1b[1mytm\x1b[0m  \x1b[2m%s  ·  %s  ·  %s\x1b[0m\n", tilde(o.out), o.format, vpn)
+	// Never wrap: on a narrow terminal shorten the VPN part, then the folder.
+	folder := tilde(o.out)
+	line := func() string { return "  ytm  " + folder + "  ·  " + o.format + "  ·  " + vpn }
+	if len([]rune(line())) > width-1 {
+		vpn = vpnShort
+	}
+	if over := len([]rune(line())) - (width - 1); over > 0 {
+		r := []rune(folder)
+		if keep := len(r) - over - 1; keep > 3 {
+			folder = "…" + string(r[len(r)-keep:])
+		} else {
+			folder = filepath.Base(o.out)
+		}
+	}
+	return fmt.Sprintf("\n  \x1b[1mytm\x1b[0m  \x1b[2m%s  ·  %s  ·  %s\x1b[0m\n", folder, o.format, vpn)
 }
 
 // tilde shortens a path under the home folder for display.
@@ -301,13 +350,13 @@ func askForExport(ctx context.Context) (takeout.Source, error) {
 func linkFlow(ctx context.Context, u *ui.UI, o opts) error {
 	var in string
 	var links []string
-	where := "YouTube, since you're not signed in to Apple Music"
+	where := "Not signed in to Apple Music: Apple and Spotify songs come from YouTube."
 	if appleSignedIn() {
-		where = "Apple Music (256 kbps AAC) when it has the song, else YouTube"
+		where = "Apple and Spotify songs come from Apple Music when it has them, else YouTube."
 	}
 	if err := one(ctx, huh.NewInput().Title("Paste a link").
-		Description("A video, playlist or album from YouTube or YouTube Music, or an album, song or playlist\n"+
-			"from Apple Music or Spotify (those come from "+where+").\nSeveral links separated by spaces work too.").
+		Description("A song, album or playlist from YouTube, Apple Music or Spotify.\n"+
+			"Paste several separated by spaces.\n"+where).
 		Value(&in).Validate(func(s string) error {
 		links = links[:0]
 		for _, f := range strings.Fields(s) {

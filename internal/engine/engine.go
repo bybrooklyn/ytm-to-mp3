@@ -1239,7 +1239,9 @@ func (e *engine) encodeWorker(ctx context.Context, in <-chan *job) {
 		if j.tr.Title == "" && j.res.Title != "" { // a bare link: name it from what YouTube said
 			label = ui.Sanitize(model.Track{Title: j.res.Title, Artists: j.res.Artists}.Label())
 		}
-		if j.music {
+		if j.music && model.ValidID(j.tr.ID) {
+			// a library song whose own video was gone; a song imported from Apple Music or
+			// Spotify is always found this way, so it says nothing there
 			label += "  (via YouTube Music)"
 		}
 		e.UI.Line(green+"✓"+reset, label)

@@ -96,13 +96,13 @@ func appleMatch(ctx context.Context, u *ui.UI, o opts, paths []string) error {
 			whichOpts = append(whichOpts, huh.NewOption(fmt.Sprintf("All matches, also the less certain ones (%d)", sure+maybe), "all"))
 		}
 		whichOpts = append(whichOpts, huh.NewOption("Nothing for now", "none"))
-		if err := huh.NewForm(huh.NewGroup(
+		if err := runForm(ctx, huh.NewForm(huh.NewGroup(
 			huh.NewSelect[string]().Title("Download which songs from Apple Music?").Options(whichOpts...).Value(&which),
 			huh.NewSelect[string]().Title("Where do they go?").Options(
 				huh.NewOption("Next to the YouTube copies (keep both)", "next"),
 				huh.NewOption("Instead of the YouTube copies (those move to .ytm/replaced)", "replace"),
 			).Value(&where),
-		)).RunWithContext(ctx); err != nil {
+		))); err != nil {
 			return err
 		}
 		if which == "none" {

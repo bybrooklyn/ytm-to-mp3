@@ -6,6 +6,23 @@ import (
 	"testing"
 )
 
+func TestTracksFromList(t *testing.T) {
+	list := []listItem{{URI: "spotify:track:a", Title: "One", Subtitle: "X"}, {URI: "spotify:track:b", Title: "Two", Subtitle: "X & Y"}}
+	album := &entity{Type: "album", Name: "Record", TrackList: list}
+	album.ReleaseDate.ISODate = "2015-07-17"
+	got := tracksFromList(album)
+	if got[1].TrackNo != 2 || got[1].TrackTotal != 2 || got[1].Album != "Record" || got[1].ReleaseDate != "2015-07-17" ||
+		got[1].ID != "b" || len(got[1].Artists) != 2 {
+		t.Errorf("album track = %+v", got[1])
+	}
+	// A playlist's order is not track numbers, and its songs come from many albums.
+	for _, tr := range tracksFromList(&entity{Type: "playlist", Name: "Mix", TrackList: list}) {
+		if tr.TrackNo != 0 || tr.Album != "" {
+			t.Errorf("playlist track = %+v", tr)
+		}
+	}
+}
+
 func TestParse(t *testing.T) {
 	cases := []struct {
 		link, kind, id string

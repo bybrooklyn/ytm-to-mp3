@@ -67,7 +67,7 @@ func tidyFlow(ctx context.Context, u *ui.UI, o opts) error {
 func tagFlow(ctx context.Context, u *ui.UI, o opts) error {
 	dir := tilde(o.out)
 	mode, online := "preview", true
-	err := huh.NewForm(huh.NewGroup(
+	err := runForm(ctx, huh.NewForm(huh.NewGroup(
 		huh.NewInput().Title("Which folder?").Description("Every audio file under it is checked.").
 			Value(&dir).Validate(func(s string) error {
 			if st, err := os.Stat(config.ExpandPath(s)); err != nil || !st.IsDir() {
@@ -85,7 +85,7 @@ func tagFlow(ctx context.Context, u *ui.UI, o opts) error {
 		huh.NewConfirm().Title("Look songs up on MusicBrainz?").
 			Description("Online: adds release dates, track numbers and corrects names it is sure about.\nOffline: only tidies what is already in the files.").
 			Affirmative("Online").Negative("Offline").Value(&online),
-	)).RunWithContext(ctx)
+	)))
 	if err != nil {
 		return err
 	}

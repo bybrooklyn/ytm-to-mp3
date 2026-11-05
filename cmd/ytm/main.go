@@ -70,6 +70,9 @@ func main() {
 		if errors.Is(err, context.Canceled) {
 			os.Exit(130)
 		}
+		if errors.Is(err, errBack) {
+			return // Esc on the first screen: nothing to go back to, so leave
+		}
 		fmt.Fprintln(os.Stderr, "ytm:", err)
 		os.Exit(1)
 	}
@@ -105,6 +108,9 @@ type opts struct {
 	// source forces the audio source for a unified (Spotify) import: "" = best available
 	// (Apple when signed in, else YouTube), "youtube" = always YouTube.
 	source string
+	// given is which flags were on the command line: they win over saved settings for the
+	// whole run, even after the settings screen re-reads them.
+	given map[string]bool
 }
 
 func parse(name string, args []string) (opts, []string, error) {
@@ -177,6 +183,7 @@ func parse(name string, args []string) (opts, []string, error) {
 	// ...) decides for this run only.
 	given := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	o.given = given
 	o.albumsAsked = given["albums"] && o.albums
 	if !given["albums"] {
 		o.albums = !cfg.NoAlbums
@@ -772,7 +779,7 @@ func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 	if err != nil {
 		return none, fmt.Errorf("%w (use --no-vpn to download without it)", err)
 	}
-	u.Printf("Connected through Proton VPN (%d servers so far; more join while it runs)", len(pool.Exits()))
+	u.Printf("Connected through Proton VPN (%s so far; more join while it runs)", count(len(pool.Exits()), "server"))
 	var once sync.Once
 	return exitSet{
 		Exits: pool.Exits(), Replace: pool.Replace, Healthy: pool.Healthy,

@@ -339,15 +339,24 @@ func (m *settingsModel) value(k rowKind) (val, hint string, dim bool) {
 	return "", "", false
 }
 
+// labelWidth is the label column's width: the longest label, so values line up.
+func labelWidth() int {
+	w := 0
+	for _, r := range settingsRows {
+		w = max(w, len([]rune(r.label)))
+	}
+	return w
+}
+
 func (m *settingsModel) render() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n  \x1b[1mytm settings\x1b[0m  %s%s%s\n\n", cDim, tilde(config.Path()), cReset)
 	for i, r := range settingsRows {
 		sel := i == m.cur
 		val, hint, dim := m.value(r.kind)
-		marker, label := "  ", cDim+fmt.Sprintf("%-20s", r.label)+cReset
+		marker, label := "  ", cDim+fmt.Sprintf("%-*s", labelWidth(), r.label)+cReset
 		if sel {
-			marker, label = cAccent+"› "+cReset, cAccent+fmt.Sprintf("%-20s", r.label)+cReset
+			marker, label = cAccent+"› "+cReset, cAccent+fmt.Sprintf("%-*s", labelWidth(), r.label)+cReset
 		}
 		switch {
 		case sel && m.editing && r.kind == rowFolder:
@@ -393,6 +402,13 @@ func (m *settingsModel) render() string {
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+// printErr reports a failed settings action; backing out of it (Esc, Ctrl-C) isn't one.
+func printErr(err error) {
+	if err != nil && !errors.Is(err, errBack) && !errors.Is(err, context.Canceled) {
+		fmt.Println("  ✗", err)
+	}
 }
 
 func isStepRow(k rowKind) bool {
@@ -449,26 +465,26 @@ func runSettings(ctx context.Context, u *ui.UI) error {
 		case "signin":
 			c := config.Load()
 			if err := loginFlow(ctx, pc, &c); err != nil {
-				fmt.Println("  ✗", err)
+				printErr(err)
 			}
 			if err := c.Save(); err != nil {
 				return err
 			}
 		case "premium":
 			if err := premiumSetup(ctx, u); err != nil {
-				fmt.Println("  ✗", err)
+				printErr(err)
 			}
 		case "applein":
 			if err := appleLogin(ctx, u); err != nil {
-				fmt.Println("  ✗", err)
+				printErr(err)
 			}
 		case "appleout":
 			if err := appleLogout(u); err != nil {
-				fmt.Println("  ✗", err)
+				printErr(err)
 			}
 		case "test":
 			if err := runStatus(ctx, u); err != nil {
-				fmt.Println("  ✗", err)
+				printErr(err)
 			}
 			fmt.Print("\n  press enter to go back ")
 			_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
