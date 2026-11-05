@@ -50,7 +50,18 @@ jobs:
           version: v2.19.0
           args: release --snapshot --clean --skip=publish,sign
 
-  cross-build:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64, ext: .exe }
+          - { goos: windows, goarch: arm64, ext: .exe }
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -60,12 +71,18 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
-      - name: build every release target
-        run: |
-          for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
-            GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0 go build -o /dev/null ./cmd/ytm || exit 1
-            echo "ok $t"
-          done
+      - name: build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: go build -trimpath -ldflags="-s -w -X main.version=dev-${GITHUB_SHA::7}" -o out/ytm${{ matrix.ext }} ./cmd/ytm
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ytm-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: out/ytm${{ matrix.ext }}
+          if-no-files-found: error
+          retention-days: 30
 
   govulncheck:
     runs-on: ubuntu-latest
