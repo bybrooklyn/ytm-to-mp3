@@ -338,10 +338,13 @@ const (
 // Run downloads every track in todo and records results in the store.
 func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 	// Ids end up in URLs, file names and yt-dlp templates: nothing malformed gets past here.
+	// MusicFirst tracks are the exception: they are found by a YouTube Music search and
+	// download the matched video's id, so their own id is only a key (it may be a Spotify
+	// id or another source's, which is never put in a URL or template).
 	valid := make([]model.Track, 0, len(todo))
 	dropped := 0
 	for _, t := range todo {
-		if model.ValidID(t.ID) {
+		if model.ValidID(t.ID) || o.MusicFirst[t.ID] {
 			valid = append(valid, t)
 		} else {
 			dropped++

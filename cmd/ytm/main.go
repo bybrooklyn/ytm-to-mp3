@@ -24,6 +24,7 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/export"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/spotify"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/takeout"
@@ -96,6 +97,9 @@ type opts struct {
 	tagAfter, premiumAfter bool
 	// ytm apple match: replace the YouTube copies; also take the less certain matches
 	replace, maybe bool
+	// source forces the audio source for a unified (Spotify) import: "" = best available
+	// (Apple when signed in, else YouTube), "youtube" = always YouTube.
+	source string
 }
 
 func parse(name string, args []string) (opts, []string, error) {
@@ -124,6 +128,7 @@ func parse(name string, args []string) (opts, []string, error) {
 	fs.BoolVar(&o.premiumAfter, "premium-after", false, "")
 	fs.BoolVar(&o.replace, "replace", false, "")
 	fs.BoolVar(&o.maybe, "maybe", false, "")
+	fs.StringVar(&o.source, "source", "", "")
 	// Go's flag package stops at the first positional; keep going so flags may follow it.
 	var pos []string
 	for {
@@ -183,7 +188,7 @@ func parse(name string, args []string) (opts, []string, error) {
 // commands are the words that act as subcommands when they come first (flags may precede them).
 var commands = map[string]bool{"export": true, "tag": true, "update": true, "version": true, "help": true,
 	"setup": true, "login": true, "logout": true, "status": true, "doctor": true, "completion": true,
-	"apple": true}
+	"apple": true, "spotify": true}
 
 func run(args []string) error {
 	if len(args) == 1 && (args[0] == "--version" || args[0] == "-v") {
@@ -199,7 +204,7 @@ func run(args []string) error {
 	cmd := ""
 	if len(pos) > 0 && commands[pos[0]] {
 		cmd, pos = pos[0], pos[1:]
-		if len(pos) > 0 && cmd != "tag" && cmd != "export" && cmd != "completion" && cmd != "apple" {
+		if len(pos) > 0 && cmd != "tag" && cmd != "export" && cmd != "completion" && cmd != "apple" && cmd != "spotify" {
 			return fmt.Errorf("'ytm %s' takes no arguments (got %q)", cmd, pos[0])
 		}
 	}
@@ -256,6 +261,8 @@ func run(args []string) error {
 		return runTag(ctx, u, o, pos[0])
 	case "apple":
 		return runApple(ctx, u, o, pos)
+	case "spotify":
+		return runSpotify(ctx, u, o, pos)
 	}
 	if o.premiumUpgrade {
 		return premiumUpgrade(ctx, u, o, false)
@@ -378,6 +385,26 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	logf := func(f string, a ...any) { u.Printf(f, a...) }
 	var tools deps.Tools
 	removeLegacyCookies()
+
+	// Spotify links are metadata only: the unified pipeline downloads them from the
+	// best available source (Apple Music or YouTube).
+	var spotifyLinks, rest0 []string
+	for _, in := range inputs {
+		if spotify.IsURL(strings.Trim(in, `"' `)) {
+			spotifyLinks = append(spotifyLinks, in)
+		} else {
+			rest0 = append(rest0, in)
+		}
+	}
+	if len(spotifyLinks) > 0 {
+		if err := downloadUnified(ctx, u, o, spotifyLinks); err != nil {
+			return err
+		}
+		if len(rest0) == 0 {
+			return nil
+		}
+		inputs = rest0
+	}
 
 	// Apple Music links use their own pipeline (native AAC, not the yt-dlp engine).
 	var appleLinks, rest []string

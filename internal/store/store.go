@@ -48,7 +48,7 @@ func Open(dir string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1) // single writer; the workload is tiny
-	if _, err := db.Exec(schema + appleSchema); err != nil {
+	if _, err := db.Exec(schema + appleSchema + librarySchema); err != nil {
 		db.Close()
 		return nil, err
 	}
