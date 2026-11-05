@@ -73,10 +73,11 @@ func encodeArgs(src, cover, dst, format, srcCodec string, meta map[string]string
 	if withCover {
 		a = append(a,
 			"-c:v", "mjpeg", "-q:v", "2",
-			"-vf", "crop='min(iw,ih)':'min(iw,ih)',scale='min(1000,iw)':-1",
+			"-vf", "crop='min(iw,ih)':'min(iw,ih)',scale='min(1200,iw)':-1",
 			"-disposition:v:0", "attached_pic",
 			"-metadata:s:v:0", "title=Album cover", "-metadata:s:v:0", "comment=Cover (front)")
 	}
+	meta = names.TagsFor(format, meta) // each container's own names for ytm's tags
 	keys := make([]string, 0, len(meta))
 	for k, v := range meta {
 		if v != "" {

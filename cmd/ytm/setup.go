@@ -66,7 +66,7 @@ func formKeys() *huh.KeyMap {
 // where it came from), Ctrl-C as errQuit.
 func runForm(ctx context.Context, f *huh.Form) error {
 	var esc atomic.Bool
-	err := f.WithKeyMap(formKeys()).WithProgramOptions(tea.WithFilter(func(_ tea.Model, msg tea.Msg) tea.Msg {
+	err := f.WithKeyMap(formKeys()).WithTheme(ytmTheme).WithProgramOptions(tea.WithFilter(func(_ tea.Model, msg tea.Msg) tea.Msg {
 		if k, ok := msg.(tea.KeyPressMsg); ok {
 			esc.Store(k.String() == "esc")
 		}
@@ -83,7 +83,7 @@ func runForm(ctx context.Context, f *huh.Form) error {
 
 func working(ctx context.Context, title string, f func(context.Context) error) error {
 	var err error
-	if serr := spinner.New().Title(title).Context(ctx).ActionWithErr(func(c context.Context) error {
+	if serr := spinner.New().WithTheme(ytmSpinner).Title(title).Context(ctx).ActionWithErr(func(c context.Context) error {
 		err = f(c)
 		return nil
 	}).Run(); serr != nil && err == nil {

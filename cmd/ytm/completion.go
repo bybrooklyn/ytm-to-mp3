@@ -7,7 +7,7 @@ import (
 
 // flagNames are ytm's options; everything else on the command line is a link or a file.
 var flagNames = []string{"-o", "-f", "-j", "-y", "--no-vpn", "--connections", "--dry-run", "--retry", "--all",
-	"--albums", "--albums-min", "--source", "--maybe", "--premium-upgrade", "--completion", "--version", "--help"}
+	"--albums", "--albums-min", "--song", "--source", "--maybe", "--premium-upgrade", "--completion", "--version", "--help"}
 
 // completionScript returns a tab-completion script for the given shell: options, and file
 // names (a Takeout export, a file of links).

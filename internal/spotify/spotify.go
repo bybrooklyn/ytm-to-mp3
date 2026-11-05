@@ -21,6 +21,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 )
 
 // Track is one Spotify song reduced to what ytm needs to find and tag it.
@@ -232,16 +234,7 @@ func tracksFromList(e *entity) []Track {
 }
 
 // splitArtists turns "A, B & C" into ["A","B","C"].
-func splitArtists(s string) []string {
-	s = strings.ReplaceAll(s, " & ", ", ")
-	var out []string
-	for _, p := range strings.Split(s, ", ") {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
+func splitArtists(s string) []string { return names.SplitArtists(s) }
 
 func idFromURI(uri string) string {
 	if i := strings.LastIndex(uri, ":"); i >= 0 {

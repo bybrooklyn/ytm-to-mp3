@@ -324,13 +324,19 @@ func (y ytdlp) Resolve(ctx context.Context, id string) (*Resolved, error) {
 }
 
 func resolvedFrom(in ytInfo) *Resolved {
+	// The upload date is when the video went up, not when the song came out: only a song
+	// with no release date or year at all gets it.
+	date := in.ReleaseDate
+	if date == "" && in.ReleaseYear <= 0 {
+		date = in.UploadDate
+	}
 	r := &Resolved{
 		URL: in.URL, Headers: in.Headers, Ext: in.Ext, Acodec: in.Acodec, Protocol: in.Protocol,
 		// Only an exact size is safe: an approximate one would truncate or over-read the
 		// track. Without one (and without clen in the URL) yt-dlp downloads it instead.
 		Size:  int64(in.Filesize),
 		Title: firstNonEmpty(in.Track, in.Title), Album: in.Album, Year: in.ReleaseYear, Duration: in.Duration,
-		Date: isoDate(firstNonEmpty(in.ReleaseDate, in.UploadDate)), Track: in.TrackNumber,
+		Date: isoDate(date), Track: in.TrackNumber,
 		Genre: firstNonEmpty(in.Genre, strings.Join(in.Genres, "; ")),
 		Thumb: bestThumb(in),
 	}

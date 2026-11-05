@@ -50,12 +50,19 @@ type Track struct {
 	TrackNumber    int    `json:"track"`
 	TrackCount     int    `json:"track_count,omitempty"` // tracks on the album, when known
 	DiscNumber     int    `json:"disc"`
+	DiscCount      int    `json:"disc_count,omitempty"` // discs on the album, when known
 	DurationMillis int    `json:"duration_ms"`
 	ISRC           string `json:"isrc,omitempty"`
 	ReleaseDate    string `json:"date,omitempty"`
 	Genre          string `json:"genre,omitempty"`
 	ArtworkURL     string `json:"artwork,omitempty"` // template URL containing {w}x{h}
 	Storefront     string `json:"storefront"`
+	Composer       string `json:"composer,omitempty"`
+	Explicit       bool   `json:"explicit,omitempty"`
+	// From the album, when the song came from an album link.
+	Label     string `json:"label,omitempty"`
+	Copyright string `json:"copyright,omitempty"`
+	UPC       string `json:"upc,omitempty"`
 }
 
 // URL is the song's page on music.apple.com (kept in the comment tag, like ytm keeps
@@ -288,6 +295,51 @@ func (c *Client) ResolveURL(ctx context.Context, link string) ([]Track, error) {
 	return nil, ErrNotAppleURL
 }
 
+// ResolveWholeAlbum is ResolveURL, except that a song's link (music.apple.com/…/song/ID,
+// or its place on an album, album/…?i=ID) resolves to every song on the album it is from.
+// A song Apple lists on no album comes back on its own.
+func (c *Client) ResolveWholeAlbum(ctx context.Context, link string) ([]Track, error) {
+	storefront, songID := "", ""
+	if m := urlPatterns["album"].FindStringSubmatch(link); m != nil {
+		if i := songIDParam(link); i != "" {
+			return c.resolveAlbumWithSong(ctx, m[1], m[2], i)
+		}
+	} else if m := urlPatterns["song"].FindStringSubmatch(link); m != nil {
+		storefront, songID = m[1], m[2]
+	}
+	if songID == "" {
+		return c.ResolveURL(ctx, link)
+	}
+	token, err := c.token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := ampapi.GetSongResp(ctx, storefront, songID, c.language, token)
+	if err != nil {
+		return nil, apiErr(err)
+	}
+	if len(resp.Data) > 0 {
+		if al := resp.Data[0].Relationships.Albums.Data; len(al) > 0 && al[0].ID != "" {
+			return c.resolveAlbumWithSong(ctx, storefront, al[0].ID, songID)
+		}
+	}
+	return c.resolveSong(ctx, storefront, songID, token)
+}
+
+// resolveAlbumWithSong is the album albumID, or just the song when the album can't be had.
+func (c *Client) resolveAlbumWithSong(ctx context.Context, storefront, albumID, songID string) ([]Track, error) {
+	token, err := c.token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if ts, err := c.resolveAlbum(ctx, storefront, albumID, token); err == nil && len(ts) > 0 {
+		return ts, nil
+	} else if errors.Is(err, ErrLogin) {
+		return nil, err
+	}
+	return c.resolveSong(ctx, storefront, songID, token)
+}
+
 func songIDParam(link string) string {
 	u, err := url.Parse(link)
 	if err != nil {
@@ -319,6 +371,7 @@ func (c *Client) resolveSong(ctx context.Context, storefront, songID, token stri
 		AlbumArtist: a.ArtistName, TrackNumber: a.TrackNumber, DiscNumber: a.DiscNumber,
 		DurationMillis: a.DurationInMillis, ISRC: a.Isrc, ReleaseDate: a.ReleaseDate,
 		Genre: firstGenre(a.GenreNames), ArtworkURL: a.Artwork.URL, Storefront: storefront,
+		Composer: a.ComposerName, Explicit: a.ContentRating == "explicit",
 	}
 	return []Track{t}, nil
 }
@@ -336,11 +389,16 @@ func (c *Client) resolveAlbum(ctx context.Context, storefront, albumID, token st
 	ts := tracksFrom(resp.Data[0].Relationships.Tracks.Data, storefront, albumArtist, albumName)
 	// The track total per disc, for "NN/TT" in the track tag.
 	perDisc := map[int]int{}
+	discs := 0
 	for _, t := range ts {
 		perDisc[t.DiscNumber]++
+		discs = max(discs, t.DiscNumber)
 	}
+	al := resp.Data[0].Attributes
 	for i := range ts {
 		ts[i].TrackCount = perDisc[ts[i].DiscNumber]
+		ts[i].DiscCount = discs
+		ts[i].Label, ts[i].Copyright, ts[i].UPC = al.RecordLabel, al.Copyright, al.Upc
 	}
 	return ts, nil
 }
@@ -377,6 +435,7 @@ func tracksFrom(data []ampapi.TrackRespData, storefront, albumArtist, albumName 
 			AlbumArtist: aa, TrackNumber: a.TrackNumber, DiscNumber: a.DiscNumber,
 			DurationMillis: a.DurationInMillis, ISRC: a.Isrc, ReleaseDate: a.ReleaseDate,
 			Genre: firstGenre(a.GenreNames), ArtworkURL: a.Artwork.URL, Storefront: storefront,
+			Composer: a.ComposerName, Explicit: a.ContentRating == "explicit",
 		})
 	}
 	return out

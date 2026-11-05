@@ -28,6 +28,17 @@ type Track struct {
 	// Position on its album when known (from the YouTube Music album), for the file name
 	// "NN - Title" and the track tag. 0 = unknown.
 	TrackNo, TrackTotal int
+
+	// What a catalog (Spotify, Apple Music) already knows about the song. These beat what
+	// the YouTube video says: a release date over an upload date, square album art over a
+	// video thumbnail. All optional.
+	AlbumArtist string
+	Disc        int
+	DiscTotal   int
+	Date        string // "2019" or "2019-05-31"
+	Genre       string
+	ISRC        string
+	Cover       string // https URL of the album art
 }
 
 // PrimaryArtist returns the first listed artist, or "".

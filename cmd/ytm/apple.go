@@ -416,8 +416,11 @@ func appleRun(ctx context.Context, u *ui.UI, o opts, s *appleSession, jobs []app
 	close(stopDraw)
 	<-drawn
 	u.ClearStatus()
-	u.Printf("\n%d downloaded, %d not offered, %d failed -> %s (m4a / AAC 256)",
-		done.Load(), unavailable.Load(), failed.Load(), tilde(o.out))
+	line := runSummary(int(done.Load()), int(failed.Load()), 0, 0, "Apple Music")
+	if n := unavailable.Load(); n > 0 {
+		line += "  " + ui.Warn("–") + " " + fmt.Sprint(n) + " not offered"
+	}
+	u.Styled(line + "  " + ui.Dim("· "+ui.Sanitize(tilde(o.out))+" (m4a / AAC 256)"))
 	if cause := context.Cause(ctx); cause != nil && !errors.Is(cause, context.Canceled) {
 		return cause
 	}
@@ -429,12 +432,12 @@ func appleRun(ctx context.Context, u *ui.UI, o opts, s *appleSession, jobs []app
 
 // appleRows is the live block: a summary line and one bar per song in progress.
 func appleRows(ls []*appleLive, finished, total, failed int, speed float64, width int) []string {
-	head := fmt.Sprintf("%sApple Music%s  %d/%d", cAccent, cReset, finished, total)
+	head := fmt.Sprintf("  %s %s  %s%d/%d%s", ui.Accent("♪"), ui.Bold("Apple Music"), cBold, finished, total, cReset)
 	if failed > 0 {
-		head += fmt.Sprintf("  ·  %d not downloaded", failed)
+		head += "  " + ui.Fail("✗") + " " + fmt.Sprintf("%d not downloaded", failed)
 	}
 	if speed > 0 {
-		head += "  ·  " + engine.HumanBytes(int64(speed)) + "/s"
+		head += "  " + ui.Cyan(engine.HumanBytes(int64(speed))+"/s")
 	}
 	rows := []string{head}
 	for _, l := range ls {
@@ -443,13 +446,11 @@ func appleRows(ls []*appleLive, finished, total, failed int, speed float64, widt
 			f = min(1, float64(l.got.Load())/float64(t))
 		}
 		const barW = 20
-		n := int(f * barW)
 		label := ui.Sanitize(l.label)
-		if room := width - barW - 12; room > 10 && len([]rune(label)) > room {
+		if room := width - barW - 20; room > 10 && len([]rune(label)) > room {
 			label = string([]rune(label)[:room-1]) + "…"
 		}
-		rows = append(rows, fmt.Sprintf("  %s%s%s%s %3.0f%%  %s", cGreen, strings.Repeat("█", n), cReset,
-			cDim+strings.Repeat("░", barW-n)+cReset, f*100, label))
+		rows = append(rows, fmt.Sprintf("  %s %s %s %3.0f%%  %s", ui.Cyan("↓"), ui.Badge("apple"), ui.Bar(f, barW, ""), f*100, label))
 	}
 	return rows
 }
@@ -490,20 +491,24 @@ func appleSave(ctx context.Context, s *appleSession, ffmpeg, ffprobe, root strin
 		"album_artist": names.StripControl(firstNonEmpty(t.AlbumArtist, t.Artist)),
 		"comment":      t.URL(),
 	}
-	if t.TrackNumber > 0 {
-		set["track"] = fmt.Sprint(t.TrackNumber)
-		if t.TrackCount >= t.TrackNumber {
-			set["track"] += "/" + fmt.Sprint(t.TrackCount)
+	opt := func(k, v string) {
+		if v = names.StripControl(v); v != "" {
+			set[k] = v
 		}
 	}
-	if t.DiscNumber > 0 {
-		set["disc"] = fmt.Sprint(t.DiscNumber)
-	}
-	if t.ReleaseDate != "" {
-		set["date"] = t.ReleaseDate
-	}
-	if t.Genre != "" {
-		set["genre"] = names.StripControl(t.Genre)
+	opt("track", names.TrackTag(t.TrackNumber, t.TrackCount))
+	opt("disc", names.TrackTag(t.DiscNumber, t.DiscCount))
+	opt("date", t.ReleaseDate)
+	opt("genre", t.Genre)
+	opt("composer", t.Composer)
+	opt("copyright", t.Copyright)
+	// m4a can't hold these through ffmpeg (tag.Write drops them for it), but an Apple song
+	// written to another format keeps them.
+	opt("isrc", t.ISRC)
+	opt("label", t.Label)
+	opt("barcode", t.UPC)
+	if t.Explicit {
+		set["explicit"] = "1"
 	}
 	if err := tag.Write(ctx, ffmpeg, ffprobe, tmp, set, cover); err != nil {
 		return fmt.Errorf("tag: %w", err)

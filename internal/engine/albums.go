@@ -3,12 +3,16 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/innertube"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/vpn"
 )
 
 // An album found on YouTube Music: its playlist and every track on it.
@@ -16,6 +20,19 @@ type Album struct {
 	Playlist string       `json:"playlist"`
 	Title    string       `json:"title"`
 	Tracks   []AlbumTrack `json:"tracks"`
+	// The album's own square art (up to 1200 px) and year, when YouTube Music has them:
+	// every song on it is tagged with these instead of its video's thumbnail and upload
+	// date. Albums cached before these existed have neither.
+	Cover string `json:"cover,omitempty"`
+	Year  int    `json:"year,omitempty"`
+}
+
+// Date is the album's year as a date tag ("" when unknown).
+func (a *Album) Date() string {
+	if a == nil || a.Year <= 0 {
+		return ""
+	}
+	return strconv.Itoa(a.Year)
 }
 
 // AlbumTrack is one song on a found album.
@@ -84,8 +101,14 @@ func (y ytdlp) expandAlbum(ctx context.Context, u string) (*Album, error) {
 		return nil, err
 	}
 	var pl struct {
-		ID      string `json:"id"`
-		Title   string `json:"title"`
+		ID          string `json:"id"`
+		Title       string `json:"title"`
+		ReleaseYear int    `json:"release_year"`
+		Thumbnails  []struct {
+			URL    string `json:"url"`
+			Width  int    `json:"width"`
+			Height int    `json:"height"`
+		} `json:"thumbnails"`
 		Entries []struct {
 			ID    string `json:"id"`
 			Title string `json:"title"`
@@ -94,7 +117,23 @@ func (y ytdlp) expandAlbum(ctx context.Context, u string) (*Album, error) {
 	if err := json.Unmarshal(b, &pl); err != nil {
 		return nil, &Error{kindTransient, "unreadable yt-dlp output"}
 	}
-	a := &Album{Playlist: pl.ID, Title: albumTitle(pl.Title)}
+	a := &Album{Playlist: pl.ID, Title: albumTitle(pl.Title), Year: pl.ReleaseYear}
+	// The largest square one (album art), at most 1200 px. A signed URL (with its query) is
+	// preferred over a bare one of any size: YouTube answers the bare 1200 px one with 404
+	// for many albums.
+	best := 0
+	for _, t := range pl.Thumbnails {
+		if t.Width != t.Height || t.Width > 1200 || !AlbumCoverURL(t.URL) {
+			continue
+		}
+		score := t.Width
+		if strings.Contains(t.URL, "?") {
+			score += 10000
+		}
+		if score > best {
+			a.Cover, best = t.URL, score
+		}
+	}
 	for _, e := range pl.Entries {
 		if model.ValidID(e.ID) {
 			a.Tracks = append(a.Tracks, AlbumTrack{ID: e.ID, Title: e.Title})
@@ -129,6 +168,109 @@ func albumMatches(want string, a *Album, saved []model.Track) bool {
 		}
 	}
 	return false
+}
+
+// SongAlbum is what a pasted song link downloads when albums are on: every song on the
+// album it is from, numbered, with the pasted one among them. A song that isn't on an
+// album (a single, a plain video) or can't be looked up comes back on its own, with
+// whatever was learnt about it. The song is looked up with one player API request (yt-dlp
+// when that has no album), then its album is found as FindAlbum does. proxy is the exit
+// to go through ("" = direct).
+func SongAlbum(ctx context.Context, tools deps.Tools, proxy, id string) ([]model.Track, *Album) {
+	if !model.ValidID(id) {
+		return []model.Track{{ID: id}}, nil
+	}
+	song := model.Track{ID: id}
+	if hc, err := vpn.NewClient(proxy); err == nil {
+		song = SongInfo(ctx, hc, song)
+	}
+	if song.Album == "" && ctx.Err() == nil {
+		y := ytdlp{tools: tools, proxy: proxy}
+		if r, err := y.Resolve(ctx, id); err == nil {
+			song.Title, song.Album, song.Artists = firstNonEmpty(r.Title, song.Title), r.Album, r.Artists
+		}
+	}
+	// No album: the link stays a bare id, exactly as without albums (the download looks it
+	// up and names it from YouTube's own details).
+	alone := []model.Track{{ID: id}}
+	if song.Album == "" || len(song.Artists) == 0 {
+		return alone, nil
+	}
+	a, err := FindAlbum(ctx, tools, proxy, song.Artists[0], song.Album, []model.Track{song})
+	if err != nil || a == nil || len(a.Tracks) < 2 {
+		return alone, nil
+	}
+	out := make([]model.Track, 0, len(a.Tracks))
+	for i, t := range a.Tracks {
+		mt := model.Track{ID: t.ID, Title: t.Title, Album: song.Album, Artists: []string{song.Artists[0]},
+			TrackNo: i + 1, TrackTotal: len(a.Tracks), AlbumArtist: song.Artists[0], Cover: a.Cover, Date: a.Date()}
+		if t.ID == id {
+			mt.Artists = song.Artists // the pasted song keeps its featured artists
+		}
+		out = append(out, mt)
+	}
+	return out, a
+}
+
+// FindSongAlbum finds a song known only by title and artists (a Spotify song) on YouTube
+// Music and returns the album it is on, as SongAlbum does. nil when the song isn't found
+// by that title and artist, or isn't on an album there.
+func FindSongAlbum(ctx context.Context, tools deps.Tools, proxy, title string, artists []string) []model.Track {
+	q := musicQuery(model.Track{Title: title, Artists: artists})
+	if q == "" {
+		return nil
+	}
+	y := ytdlp{tools: tools, proxy: proxy}
+	hits, err := y.SearchMusic(ctx, q, musicSearchHits)
+	if err != nil {
+		return nil
+	}
+	for _, h := range orderHits(title, "", hits) {
+		ts, a := SongAlbum(ctx, tools, proxy, h.ID)
+		if a == nil {
+			return nil // the song, but on no album: nothing more to bring
+		}
+		for _, t := range ts {
+			if t.ID == h.ID && artistMatches(artists, t.Artists) {
+				return ts
+			}
+		}
+		return nil
+	}
+	return nil
+}
+
+// SongInfo fills in t's title, artists and album from one player API request through hc
+// (about 0.2 s), when YouTube has them: songs YouTube Music distributes carry them in
+// their description. What t already has is kept; a failed lookup returns t unchanged.
+func SongInfo(ctx context.Context, hc *http.Client, t model.Track) model.Track {
+	if !model.ValidID(t.ID) {
+		return t
+	}
+	v, _ := player(ctx, hc, t.ID) // an unplayable video still has its description
+	if v == nil {
+		return t
+	}
+	if m, ok := innertube.ParseMusic(v.Description); ok {
+		t.Title = firstNonEmpty(t.Title, m.Title)
+		t.Album = firstNonEmpty(t.Album, m.Album)
+		if len(t.Artists) == 0 {
+			t.Artists = m.Artists
+		}
+	}
+	return t
+}
+
+// player is one player API request with the visitor-id retry engine.player does, for a
+// lookup outside a run (no lane yet).
+func player(ctx context.Context, hc *http.Client, id string) (*innertube.Video, error) {
+	c := innertube.Clients[0]
+	v, err := innertube.Player(ctx, hc, c, id, "")
+	var up *innertube.Unplayable
+	if v != nil && v.VisitorData != "" && errors.As(err, &up) && up.Status == "LOGIN_REQUIRED" {
+		v, err = innertube.Player(ctx, hc, c, id, v.VisitorData)
+	}
+	return v, err
 }
 
 // SameSong reports whether two track titles name the same song (ignoring case,

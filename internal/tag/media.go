@@ -19,9 +19,27 @@ import (
 // Info is what we know about an audio file.
 type Info struct {
 	Path     string
-	Tags     map[string]string // lower-case keys as ffprobe reports them
+	Tags     map[string]string // ytm's canonical names (names.CanonicalTag)
 	Duration float64
 	HasCover bool
+	// CoverW, CoverH are the embedded picture's size in pixels (0 when unknown).
+	CoverW, CoverH int
+}
+
+// coverPx is the size every cover ytm writes is squared and scaled down to (at most).
+const coverPx = 1200
+
+// GoodCover reports whether the file already has art worth keeping: a square picture of a
+// decent size. A file with a small or non-square one gets album art when there is some.
+func (i Info) GoodCover() bool {
+	if !i.HasCover {
+		return false
+	}
+	if i.CoverW == 0 || i.CoverH == 0 {
+		return true // size unknown: don't churn
+	}
+	d := i.CoverW - i.CoverH
+	return d*d <= 4 && i.CoverW >= 500
 }
 
 func (i Info) get(keys ...string) string {
@@ -46,6 +64,8 @@ func Probe(ctx context.Context, ffprobe, path string) (Info, error) {
 		} `json:"format"`
 		Streams []struct {
 			CodecType   string            `json:"codec_type"`
+			Width       int               `json:"width"`
+			Height      int               `json:"height"`
 			Disposition map[string]int    `json:"disposition"`
 			Tags        map[string]string `json:"tags"`
 		} `json:"streams"`
@@ -57,8 +77,8 @@ func Probe(ctx context.Context, ffprobe, path string) (Info, error) {
 	info.Duration, _ = strconv.ParseFloat(j.Format.Duration, 64)
 	add := func(m map[string]string) {
 		for k, v := range m {
-			if _, dup := info.Tags[strings.ToLower(k)]; !dup {
-				info.Tags[strings.ToLower(k)] = v
+			if c := names.CanonicalTag(k); info.Tags[c] == "" {
+				info.Tags[c] = v
 			}
 		}
 	}
@@ -67,8 +87,8 @@ func Probe(ctx context.Context, ffprobe, path string) (Info, error) {
 		if s.CodecType == "audio" {
 			add(s.Tags) // Ogg/Opus keep tags on the stream
 		}
-		if s.CodecType == "video" && s.Disposition["attached_pic"] == 1 {
-			info.HasCover = true
+		if s.CodecType == "video" && s.Disposition["attached_pic"] == 1 && !info.HasCover {
+			info.HasCover, info.CoverW, info.CoverH = true, s.Width, s.Height
 		}
 	}
 	return info, nil
@@ -92,11 +112,16 @@ func Write(ctx context.Context, ffmpeg, ffprobe, path string, set map[string]str
 	tf.Close()
 	defer os.Remove(tmp)
 
-	// Only jpeg/png/webp art is ever handed to ffmpeg's decoders.
+	// Only jpeg/png/webp art is ever handed to ffmpeg's decoders, and it goes in as a square
+	// JPEG of at most coverPx, like every cover ytm writes.
 	dec := ""
 	if cover != "" {
-		if dec = names.ImageDecoder(cover); dec == "" {
-			cover = "" // not a recognised image: keep the existing art
+		sq := tmp + ".cover.jpg"
+		defer os.Remove(sq)
+		if a := names.SquareCoverArgs(cover, sq, coverPx); a != nil && exec.CommandContext(ctx, ffmpeg, a...).Run() == nil {
+			cover, dec = sq, "mjpeg"
+		} else {
+			cover = "" // not a usable image: keep the existing art
 		}
 	}
 	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
@@ -105,13 +130,15 @@ func Write(ctx context.Context, ffmpeg, ffprobe, path string, set map[string]str
 		args = append(args, "-protocol_whitelist", "file,pipe", "-f", "image2", "-pattern_type", "none",
 			"-c:v", dec, "-i", names.FFPath(cover),
 			"-map", "0:a", "-map", "1:v:0", "-map_metadata", "0",
-			"-c", "copy", "-disposition:v:0", "attached_pic")
+			"-c", "copy", "-disposition:v:0", "attached_pic",
+			"-metadata:s:v:0", "title=Album cover", "-metadata:s:v:0", "comment=Cover (front)")
 	} else {
 		args = append(args, "-map", "0", "-map_metadata", "0", "-c", "copy")
 	}
 	if ext == ".mp3" {
 		args = append(args, "-id3v2_version", "3", "-write_id3v1", "1")
 	}
+	set = names.TagsFor(ext, set)
 	keys := make([]string, 0, len(set))
 	for k := range set {
 		keys = append(keys, k)
@@ -157,6 +184,7 @@ func writeOgg(ctx context.Context, ffmpeg, ffprobe, path string, set map[string]
 	for k, v := range set {
 		tags[k] = v // an empty value clears the tag (used by undo)
 	}
+	tags = names.TagsFor(filepath.Ext(path), tags)
 	work, err := os.MkdirTemp(filepath.Dir(path), ".ytm-*")
 	if err != nil {
 		return err
@@ -172,7 +200,7 @@ func writeOgg(ctx context.Context, ffmpeg, ffprobe, path string, set map[string]
 	jpeg := ""
 	if src != "" {
 		jpeg = filepath.Join(work, "cover.jpg")
-		if args := names.SquareCoverArgs(src, jpeg, 600); args == nil || exec.CommandContext(ctx, ffmpeg, args...).Run() != nil {
+		if args := names.SquareCoverArgs(src, jpeg, coverPx); args == nil || exec.CommandContext(ctx, ffmpeg, args...).Run() != nil {
 			jpeg = "" // unusable art: keep the tags, lose nothing else
 		}
 	}
@@ -223,7 +251,7 @@ func ReplaceAudio(ctx context.Context, ffmpeg, ffprobe, src, path string) error 
 		if info.HasCover {
 			old, sq := filepath.Join(work, "old.jpg"), filepath.Join(work, "cover.jpg")
 			if ExtractCover(ctx, ffmpeg, path, old) == nil {
-				if a := names.SquareCoverArgs(old, sq, 600); a != nil && exec.CommandContext(ctx, ffmpeg, a...).Run() == nil {
+				if a := names.SquareCoverArgs(old, sq, coverPx); a != nil && exec.CommandContext(ctx, ffmpeg, a...).Run() == nil {
 					jpeg = sq
 				}
 			}
@@ -235,7 +263,7 @@ func ReplaceAudio(ctx context.Context, ffmpeg, ffprobe, src, path string) error 
 			}
 		}
 		meta := filepath.Join(work, "meta.txt")
-		if err := names.WriteOggMeta(meta, tags, jpeg); err != nil {
+		if err := names.WriteOggMeta(meta, names.TagsFor(ext, tags), jpeg); err != nil {
 			return err
 		}
 		args = append(args, names.OggMetaArgs(meta)...)

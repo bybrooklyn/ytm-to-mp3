@@ -53,9 +53,19 @@ type mbRelease struct {
 		PrimaryType    string   `json:"primary-type"`
 		SecondaryTypes []string `json:"secondary-types"`
 	} `json:"release-group"`
+	// The release's own credit: set when it differs from the recording's (a compilation's
+	// "Various Artists", a soundtrack).
+	ArtistCredit []struct {
+		Name   string `json:"name"`
+		Artist struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"artist"`
+	} `json:"artist-credit"`
 	Media []struct {
-		Position int `json:"position"`
-		Track    []struct {
+		Position   int `json:"position"`
+		TrackCount int `json:"track-count"`
+		Track      []struct {
 			Number string `json:"number"`
 		} `json:"track"`
 	} `json:"media"`

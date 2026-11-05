@@ -148,6 +148,34 @@ func (u *UI) Line(prefix, text string) {
 	u.frame([]string{prefix + " " + strings.ReplaceAll(Sanitize(text), "\n", " ")})
 }
 
+// Styled prints a line of the caller's own making above the live block, colours and all
+// (dropped when not on a terminal). Any untrusted text in it must go through Sanitize first.
+func (u *UI) Styled(s string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if !u.tty {
+		s = ansi.Strip(s)
+	}
+	u.frame(strings.Split(strings.TrimSuffix(s, "\n"), "\n"))
+}
+
+// LineNote is Line with a dim note after the text ("✓ Artist - Song  · Album"). The note is
+// untrusted too and sanitized; "" leaves it out.
+func (u *UI) LineNote(prefix, text, note string) {
+	note = strings.ReplaceAll(Sanitize(note), "\n", " ")
+	if note == "" {
+		u.Line(prefix, text)
+		return
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	sep := Dim("  · " + note)
+	if !u.tty {
+		prefix, sep = ansi.Strip(prefix), "  · "+note
+	}
+	u.frame([]string{prefix + " " + strings.ReplaceAll(Sanitize(text), "\n", " ") + sep})
+}
+
 // Notice prints a message above the live block; safe to call from any goroutine (e.g. a
 // signal handler), unlike writing to the terminal directly.
 func (u *UI) Notice(msg string) { u.Printf("%s", msg) }

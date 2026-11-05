@@ -30,6 +30,7 @@ type tstate struct {
 	stage   atomic.Int32
 	got     atomic.Int64
 	total   atomic.Int64 // 0 = unknown (yt-dlp is downloading it)
+	music   atomic.Bool  // found by a YouTube Music search (its row gets a "ytm" badge)
 
 	// Stage timestamps for the YTM_DEBUG timing report. Each is written by the one stage
 	// that owns the track at that moment; channel hand-offs order them.
@@ -87,27 +88,16 @@ func (s *liveSet) snapshot() []*tstate {
 	return out
 }
 
-const (
-	dim   = "\x1b[2m"
-	bold  = "\x1b[1m"
-	green = "\x1b[32m"
-	red   = "\x1b[31m"
-	cyan  = "\x1b[36m"
-	yel   = "\x1b[33m"
-	reset = "\x1b[0m"
+// The palette is ytm's one (internal/ui); these short names keep the rows readable.
+var (
+	dim   = ui.CDim
+	bold  = ui.CBold
+	green = ui.CGreen
+	red   = ui.CRed
+	cyan  = ui.CCyan
+	yel   = ui.CYellow
+	reset = ui.CReset
 )
-
-// bar draws a progress bar of the given width at fraction f (0..1).
-func bar(f float64, width int, color string) string {
-	if f < 0 {
-		f = 0
-	}
-	if f > 1 {
-		f = 1
-	}
-	full := int(f * float64(width))
-	return color + strings.Repeat("█", full) + dim + strings.Repeat("░", width-full) + reset
-}
 
 func spin(now time.Time) string {
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -154,17 +144,19 @@ func (e *engine) liveRows(speed float64, began time.Time) []string {
 		perTrack := elapsed / time.Duration(finished)
 		eta = perTrack * time.Duration(e.total-finished)
 	}
-	barW := min(30, max(10, width-70))
+	barW := min(30, max(10, width-74))
 	left := "working out the time left"
 	if eta > 0 {
 		left = "about " + humanETA(eta) + " left"
 	}
-	head := fmt.Sprintf("  %sDownloading%s %s %s%d of %d%s  %s%s/s%s  %s%s%s",
-		bold, reset, bar(frac, barW, green), bold, finished, e.total, reset,
-		cyan, HumanBytes(int64(speed)), reset, dim, left, reset)
+	// ♪ Downloading ████░░░░  12 of 40  ✓ 11 ✗ 1  2.3 MB/s · about 3m 05s left
+	tally := ui.OK("✓") + " " + fmt.Sprint(done)
 	if failed > 0 {
-		head += fmt.Sprintf("  %s%d failed%s", red, failed, reset)
+		tally += "  " + ui.Fail("✗") + " " + red + fmt.Sprint(failed) + reset
 	}
+	head := fmt.Sprintf("  %s %sDownloading%s %s  %s%d of %d%s  %s  %s%s/s%s %s· %s%s",
+		ui.Accent("♪"), bold, reset, ui.Bar(frac, barW, green), bold, finished, e.total, reset,
+		tally, cyan, HumanBytes(int64(speed)), reset, dim, left, reset)
 	rows := []string{head}
 
 	lanes := e.snap()
@@ -203,25 +195,34 @@ func (e *engine) liveRows(speed float64, began time.Time) []string {
 	if len(shown) > room {
 		shown = shown[:room]
 	}
-	tw := max(20, width-52)
+	// "  ↓ ytm   Artist - Title …  ████░░░░░░░░  42%  1.2 MB/3.4 MB": the label column
+	// takes what the rest leaves.
+	tw := max(20, width-60)
 	for _, ts := range shown {
 		label := ansi.Truncate(ts.label, tw, "…")
 		pad := strings.Repeat(" ", max(0, tw-ansi.StringWidth(label)))
-		var state string
+		badge := ui.Badge("yt")
+		if ts.music.Load() {
+			badge = ui.Badge("ytm")
+		}
+		var mark, state string
 		switch ts.stage.Load() {
 		case stFetch:
+			mark = ui.Cyan("↓")
 			got, total := ts.got.Load(), ts.total.Load()
 			if total > 0 {
-				state = fmt.Sprintf("%s %s/%s", bar(float64(got)/float64(total), 12, cyan), HumanBytes(got), HumanBytes(total))
+				f := float64(got) / float64(total)
+				state = fmt.Sprintf("%s %s%3.0f%%%s  %s%s/%s%s", ui.Bar(f, 12, ""), bold, f*100, reset,
+					dim, HumanBytes(got), HumanBytes(total), reset)
 			} else {
-				state = dim + "downloading..." + reset
+				state = dim + "downloading" + strings.Repeat(".", 1+int(now.UnixMilli()/400)%3) + reset
 			}
-			rows = append(rows, fmt.Sprintf("  %s↓%s %s%s  %s", cyan, reset, label, pad, state))
 		case stEncode:
-			rows = append(rows, fmt.Sprintf("  %s♪%s %s%s  %ssaving%s", yel, reset, label, pad, dim, reset))
+			mark, state = ui.Yellow("♪"), dim+"saving with tags and cover"+reset
 		case stMusic:
-			rows = append(rows, fmt.Sprintf("  %s%s%s %s%s  %slooking on YouTube Music%s", yel, spin(now), reset, label, pad, dim, reset))
+			mark, badge, state = ui.Yellow(spin(now)), ui.Badge("ytm"), dim+"searching YouTube Music"+reset
 		}
+		rows = append(rows, fmt.Sprintf("  %s %s %s%s  %s", mark, badge, label, pad, state))
 	}
 	more := len(active) - len(shown)
 	if more > 0 || waiting > 0 {
@@ -232,7 +233,7 @@ func (e *engine) liveRows(speed float64, began time.Time) []string {
 		if waiting > 0 {
 			parts = append(parts, fmt.Sprintf("%d being looked up", waiting))
 		}
-		rows = append(rows, fmt.Sprintf("  %s%s %s%s", dim, spin(now), strings.Join(parts, ", "), reset))
+		rows = append(rows, fmt.Sprintf("  %s %s%s%s", ui.Accent(spin(now)), dim, strings.Join(parts, " · "), reset))
 	}
 	return rows
 }

@@ -190,7 +190,9 @@ func header(o opts, width int) string {
 	pc := protonClient()
 	cfg := config.Load()
 	vpn, vpnShort := "VPN off", "no VPN"
+	dot := ui.Dim("○")
 	if pc.SignedIn() && !cfg.NoVPN && !o.noVPN {
+		dot = ui.Green("●")
 		n := connectionsLabel(cfg, pc)
 		if o.conns > 0 { // --connections for this run
 			n = fmt.Sprint(min(o.conns, maxConns))
@@ -202,7 +204,7 @@ func header(o opts, width int) string {
 	}
 	// Never wrap: on a narrow terminal shorten the VPN part, then the folder.
 	folder := tilde(o.out)
-	line := func() string { return "  ytm  " + folder + "  ·  " + o.format + "  ·  " + vpn }
+	line := func() string { return "  ♪ ytm  " + folder + "  ·  " + o.format + "  ·  ● " + vpn }
 	if len([]rune(line())) > width-1 {
 		vpn = vpnShort
 	}
@@ -214,7 +216,9 @@ func header(o opts, width int) string {
 			folder = filepath.Base(o.out)
 		}
 	}
-	return fmt.Sprintf("\n  \x1b[1mytm\x1b[0m  \x1b[2m%s  ·  %s  ·  %s\x1b[0m\n", folder, o.format, vpn)
+	sep := ui.Dim("  ·  ")
+	return fmt.Sprintf("\n  %s %s  %s%s%s%s%s %s\n", ui.Accent("♪"), ui.Bold("ytm"),
+		ui.Dim(folder), sep, ui.Cyan(o.format), sep, dot, ui.Dim(vpn))
 }
 
 // tilde shortens a path under the home folder for display.
@@ -236,8 +240,9 @@ func libraryFlow(ctx context.Context, u *ui.UI, o opts) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("\n  \x1b[32m✓\x1b[0m %d tracks (%d with song details) in %s\n    saving to %s as %s\n\n",
-		src.Tracks, src.WithMeta, src.Name(), tilde(o.out), o.format)
+	fmt.Printf("\n  %s %s tracks %s in %s\n    %s %s %s %s\n\n", ui.OK("✓"), ui.Bold(fmt.Sprint(src.Tracks)),
+		ui.Dim(fmt.Sprintf("(%d with song details)", src.WithMeta)), src.Name(),
+		ui.Dim("saving to"), tilde(o.out), ui.Dim("as"), ui.Cyan(o.format))
 	fmt.Printf("    %s%s%s\n\n", cDim, extras(o), cReset)
 	go_ := true
 	if err := one(ctx, huh.NewConfirm().Title("Download?").Affirmative("Download").Negative("Back").Value(&go_)); err != nil {

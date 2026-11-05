@@ -262,12 +262,14 @@ func clamp(n, lo, hi int) int {
 	return max(lo, min(hi, n))
 }
 
-const (
-	cDim    = "\x1b[2m"
-	cAccent = "\x1b[1;36m"
-	cGreen  = "\x1b[32m"
-	cYellow = "\x1b[33m"
-	cReset  = "\x1b[0m"
+// ytm's palette (internal/ui), under the names the screens here use.
+var (
+	cDim    = ui.CDim
+	cBold   = ui.CBold
+	cAccent = ui.CAccent
+	cGreen  = ui.CGreen
+	cYellow = ui.CYellow
+	cReset  = ui.CReset
 )
 
 func (m *settingsModel) value(k rowKind) (val, hint string, dim bool) {
@@ -281,7 +283,7 @@ func (m *settingsModel) value(k rowKind) (val, hint string, dim bool) {
 		}
 		return f, "re-encoded from YouTube's audio; opus keeps it untouched", false
 	case rowAlbums:
-		return onOff(!m.cfg.NoAlbums), "a library download also gets the rest of every album you have a song from", false
+		return onOff(!m.cfg.NoAlbums), "a song link brings its whole album; a library or playlist the rest of every album it has a song from", false
 	case rowRetry:
 		return onOff(!m.cfg.NoRetry), "songs that were unavailable last time are tried again (incl. on YouTube Music)", false
 	case rowTagAfter:
@@ -350,7 +352,7 @@ func labelWidth() int {
 
 func (m *settingsModel) render() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n  \x1b[1mytm settings\x1b[0m  %s%s%s\n\n", cDim, tilde(config.Path()), cReset)
+	fmt.Fprintf(&b, "\n  %s %ssettings%s  %s%s%s\n\n", ui.Accent("♪"), cBold, cReset, cDim, tilde(config.Path()), cReset)
 	for i, r := range settingsRows {
 		sel := i == m.cur
 		val, hint, dim := m.value(r.kind)

@@ -11,9 +11,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -49,8 +49,10 @@ Options for one run (your defaults are in ytm's Settings):
   --connections N   VPN exits to use this run
   --dry-run    show what would happen, download nothing
   --retry      retry songs that were unavailable before
-  --albums     also download the rest of every album you have a song from
-               (--albums-min N: only albums with N or more of your songs)
+  --song       just the songs given: a song link normally brings its whole album, and a
+               playlist or library the rest of every album it has a song from
+               (--albums=false turns that off too; --albums-min N: only albums with N
+               or more of your songs; the default is in Settings)
   --source youtube  get Apple Music and Spotify songs from YouTube even when
                     signed in to Apple Music (--maybe: also less certain Apple matches)
   --premium-upgrade   re-download songs at YouTube Premium quality (experimental,
@@ -75,24 +77,24 @@ func main() {
 
 // opts are the flags shared by every command.
 type opts struct {
-	out       string
-	format    string
-	jobs      int
-	dryRun    bool
-	retry     bool
-	all       bool
-	yes       bool
-	apply     bool
-	rename    bool
-	undo      bool
-	offline   bool
-	noVPN     bool
-	conns     int  // VPN exits for this run (0 = the saved setting)
-	albums    bool // also download the rest of every album the library has a song from
+	out     string
+	format  string
+	jobs    int
+	dryRun  bool
+	retry   bool
+	all     bool
+	yes     bool
+	apply   bool
+	rename  bool
+	undo    bool
+	offline bool
+	noVPN   bool
+	conns   int // VPN exits for this run (0 = the saved setting)
+	// albums (on unless switched off in settings): a song link brings its whole album, and
+	// a library or playlist download gets the rest of every album it has a song from
+	albums    bool
 	albumsMin int  // only albums with at least this many saved songs
-	// albumsAsked: --albums was given, so links get their albums completed too (otherwise
-	// only library imports do)
-	albumsAsked bool
+	song      bool // --song: just the songs given, for this run (no albums)
 	// the YouTube Premium upgrade pass (experimental; see premium.go)
 	premiumUpgrade bool
 	premiumLimit   int
@@ -130,6 +132,7 @@ func parse(name string, args []string) (opts, []string, error) {
 	fs.IntVar(&o.conns, "connections", 0, "")
 	fs.BoolVar(&o.albums, "albums", false, "")
 	fs.IntVar(&o.albumsMin, "albums-min", 1, "")
+	fs.BoolVar(&o.song, "song", false, "")
 	fs.BoolVar(&o.premiumUpgrade, "premium-upgrade", false, "")
 	fs.IntVar(&o.premiumLimit, "premium-limit", 300, "")
 	fs.BoolVar(&o.tagAfter, "tag-after", false, "")
@@ -184,7 +187,6 @@ func parse(name string, args []string) (opts, []string, error) {
 	given := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	o.given = given
-	o.albumsAsked = given["albums"] && o.albums
 	if !given["albums"] {
 		o.albums = !cfg.NoAlbums
 	}
@@ -380,9 +382,25 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	// a pasted playlist goes out through it and not from your own address), and every part
 	// of the run shares it.
 	ex := &runExits{ctx: ctx, u: u, o: o}
+	ex.tools = sync.OnceValues(func() (deps.Tools, error) { return deps.Ensure(ctx, logf) })
 	defer ex.Close()
 	var xs exitSet
 	connect := func() (err error) { xs, err = ex.get(); return err }
+	ensure := func() (err error) {
+		if tools.YtDlp == "" {
+			tools, err = ex.tools()
+		}
+		return err
+	}
+	// A run that will go online starts connecting now, and checks yt-dlp and ffmpeg at the
+	// same time, so both are ready by the time the first link is looked up.
+	for _, in := range inputs {
+		if _, ok := asURL(strings.Trim(in, `"' `)); ok || o.albums {
+			ex.start()
+			go ex.tools()
+			break
+		}
+	}
 
 	// Spotify and Apple Music links name songs; the unified pipeline fetches each from the
 	// best source there is (Apple Music when signed in and matched, otherwise YouTube).
@@ -415,7 +433,20 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 			}
 		}
 	}
-	for _, input := range inputs {
+	// Every input gets a slot, so the songs keep the order they were given in; links that
+	// need looking up are filled in afterwards, several at a time.
+	songAlbums := o.albums && !o.song // a song link brings its whole album
+	fromList := false                 // some input was a playlist or album link
+	slots := make([][]model.Track, len(inputs))
+	var lookups []linkLookup
+	song := func(i int, id string) {
+		if songAlbums {
+			lookups = append(lookups, linkLookup{slot: i, song: id})
+		} else {
+			slots[i] = []model.Track{{ID: id}} // the download looks it up anyway
+		}
+	}
+	for i, input := range inputs {
 		input = strings.Trim(input, `"' `)
 		if _, ok := asURL(input); !ok {
 			if _, err := os.Stat(input); err != nil {
@@ -423,35 +454,15 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 			}
 		}
 		if link, ok := asURL(input); ok {
-			input = link
-			// A single video needs no lookup here: its id is in the link, and the download
-			// looks it up anyway. (Each lookup is a yt-dlp run through the VPN, one after
-			// another, so 40 pasted links used to take minutes before anything started.)
 			if id, ok := singleVideoID(link); ok {
-				add([]model.Track{{ID: id}})
-				continue
+				song(i, id)
+			} else {
+				lookups = append(lookups, linkLookup{slot: i, link: link})
+				fromList = true
 			}
-			var err error
-			if tools.YtDlp == "" {
-				if tools, err = deps.Ensure(ctx, logf); err != nil {
-					return err
-				}
-			}
-			if err := connect(); err != nil {
-				return err
-			}
-			proxy := ""
-			if len(xs.Exits) > 0 {
-				proxy = xs.Exits[0].Proxy
-			}
-			ts, err := engine.ExpandURL(ctx, tools, proxy, input)
-			if err != nil {
-				return err
-			}
-			add(ts)
 		} else if _, err := os.Stat(input); err != nil {
 			if id, ok := takeout.ExtractID(input); ok && len(input) == 11 {
-				add([]model.Track{{ID: id}})
+				song(i, id)
 				continue
 			}
 			return fmt.Errorf("%q is not a YouTube link or an existing file.\nPaste a video/playlist link (in quotes, since & and ? confuse shells) or the path to your Takeout .zip", input)
@@ -461,8 +472,22 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 				return err
 			}
 			fromExport = true
-			add(ts)
+			slots[i] = ts
 		}
+	}
+	if len(lookups) > 0 {
+		if err := ensure(); err != nil {
+			return err
+		}
+		if err := connect(); err != nil {
+			return err
+		}
+		if err := lookUpLinks(ctx, u, o, tools, exitProxies(xs), lookups, slots); err != nil {
+			return err
+		}
+	}
+	for _, s := range slots {
+		add(s)
 	}
 	u.Printf("Found %s", takeout.Describe(tracks))
 
@@ -476,14 +501,11 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		defer s.Close()
 		st = s
 	}
-	// Completing albums is for a library import (a pasted song link shouldn't quietly bring
-	// its whole album), unless --albums was given.
-	if o.albums && (fromExport || o.albumsAsked) {
-		var err error
-		if tools.YtDlp == "" {
-			if tools, err = deps.Ensure(ctx, logf); err != nil {
-				return err
-			}
+	// Completing albums: every album the library or a playlist has a song from gets its
+	// other songs too, after asking (with the size). A song link already brought its album.
+	if o.albums && !o.song && (fromExport || fromList) {
+		if err := ensure(); err != nil {
+			return err
 		}
 		if err := connect(); err != nil {
 			return err
@@ -510,7 +532,8 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	if err != nil {
 		return err
 	}
-	u.Printf("%d already downloaded, %d to go -> %s (%s)", plan.Done, len(plan.Todo), o.out, o.format)
+	u.Styled(fmt.Sprintf("  %s %s to go  %s %s %s", ui.Accent("→"), ui.Bold(fmt.Sprint(len(plan.Todo))),
+		ui.Dim(fmt.Sprintf("%d already downloaded ·", plan.Done)), ui.Sanitize(tilde(o.out)), ui.Cyan(o.format)))
 	if plan.Skipped > 0 {
 		u.Printf("%d tracks were unavailable last time and are skipped (use --retry to try again)", plan.Skipped)
 	}
@@ -528,10 +551,8 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		return afterDownload(ctx, u, o, st, began)
 	}
 
-	if tools.YtDlp == "" {
-		if tools, err = deps.Ensure(ctx, logf); err != nil {
-			return err
-		}
+	if err := ensure(); err != nil {
+		return err
 	}
 	if err := connect(); err != nil {
 		return err
@@ -543,7 +564,7 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		OnBlocked: xs.Blocked, OnGood: xs.Good, NewExits: xs.New, MusicFirst: plan.MusicFirst, Replacements: plan.Replacements,
 	}, plan.Todo)
 
-	u.Printf("\n%d downloaded, %d failed, %s in %s", sum.Done, sum.Failed, engine.HumanBytes(sum.Bytes), sum.Elapsed.Round(time.Second))
+	u.Styled(runSummary(sum.Done, sum.Failed, sum.Bytes, sum.Elapsed, ""))
 	if os.Getenv("YTM_DEBUG") != "" { // per-exit detail is for debugging, not everyday output
 		if sum.Swaps > 0 {
 			u.Printf("%d exit(s) were blocked and replaced with other locations", sum.Swaps)
@@ -566,18 +587,12 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		if dups > 0 {
 			u.Printf("%d unavailable track(s) are other versions of songs you already have", dups)
 		}
-		sort.Slice(fails, func(i, j int) bool { return fails[i].Error < fails[j].Error })
-		u.Printf("Not downloaded (%d); run ytm again to retry the temporary ones:", len(fails))
-		for i, f := range fails {
-			if i == 15 {
-				u.Printf("  ...and %d more", len(fails)-i)
-				break
+		if len(fails) > 0 {
+			u.Styled(fmt.Sprintf("\n  %s %s", ui.Bold(fmt.Sprintf("Not downloaded (%d)", len(fails))),
+				ui.Dim("· run ytm again to retry the temporary ones")))
+			for _, l := range failureLines(fails, 15) {
+				u.Styled(l)
 			}
-			name := f.Title
-			if name == "" {
-				name = f.ID
-			}
-			u.Printf("  %s: %s", name, f.Error)
 		}
 	}
 	if sum.Interrupted {
@@ -640,28 +655,54 @@ func removeLegacyCookies() {
 	}
 }
 
-// runExits connects the VPN the first time part of a run asks for it, and hands the same
-// exits to every later part, so a run mixing YouTube, Apple Music and Spotify links
-// connects once.
+// runExits connects the VPN once per run and hands the same exits to every part of it, so
+// a run mixing YouTube, Apple Music and Spotify links connects once. start begins
+// connecting in the background (as soon as a run knows it will need the network), so the
+// handshakes overlap with everything that doesn't need them: checking yt-dlp and ffmpeg,
+// reading an export, opening the database. get waits for the first tunnel.
 type runExits struct {
 	ctx context.Context
 	u   *ui.UI
 	o   opts
-	xs  exitSet
-	up  bool
-	err error
+	// tools checks (and if need be fetches) yt-dlp and ffmpeg once per run, shared by every
+	// part of it and safe to start early in the background.
+	tools func() (deps.Tools, error)
+	once  sync.Once
+	done  chan struct{}
+	xs    exitSet
+	err   error
+}
+
+func (r *runExits) start() {
+	r.once.Do(func() {
+		r.done = make(chan struct{})
+		go func() {
+			defer close(r.done)
+			r.xs, r.err = buildExits(r.ctx, r.u, r.o)
+		}()
+	})
 }
 
 func (r *runExits) get() (exitSet, error) {
-	if !r.up {
-		r.up = true
-		r.xs, r.err = buildExits(r.ctx, r.u, r.o)
-	}
+	r.start()
+	<-r.done
 	return r.xs, r.err
 }
 
+// ensureTools is r.tools, or a plain check when the run set none up.
+func (r *runExits) ensureTools(ctx context.Context, u *ui.UI) (deps.Tools, error) {
+	if r.tools != nil {
+		return r.tools()
+	}
+	return deps.Ensure(ctx, func(f string, a ...any) { u.Printf(f, a...) })
+}
+
 func (r *runExits) Close() {
-	if r.up && r.xs.Close != nil {
+	if r.done == nil {
+		return
+	}
+	<-r.done // a connect still under way stops with the run's context
+	if r.xs.Close != nil {
 		r.xs.Close()
 	}
 }
@@ -680,7 +721,7 @@ type exitSet struct {
 }
 
 // buildExits connects the Proton VPN tunnels when you're signed in (unless --no-vpn).
-// Downloads start as soon as the first two are up; the rest join while it runs. It never
+// The run goes on as soon as the first is up; the rest join while it runs. It never
 // silently falls back to your own IP: if the VPN was meant to be on and can't connect,
 // it stops.
 // connections is how many VPN exits to open: the saved number (3 when unset), or with
@@ -725,11 +766,35 @@ func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 	if o.conns > 0 {
 		n = min(o.conns, maxConns)
 	}
-	u.Status("Connecting to Proton VPN (%d servers near you)...", n)
+	// A live line while the tunnels come up: how many are up, how long it's been. The run
+	// goes on at the first one, so this is usually a few seconds.
+	var up atomic.Int32
+	began := time.Now()
+	stopStatus := make(chan struct{})
+	statusDone := make(chan struct{})
+	go func() {
+		defer close(statusDone)
+		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		tick := time.NewTicker(120 * time.Millisecond)
+		defer tick.Stop()
+		for i := 0; ; i++ {
+			u.Status("%s", fmt.Sprintf("%s Connecting to Proton VPN · %d of %d up · %ds", frames[i%len(frames)],
+				up.Load(), n, int(time.Since(began).Seconds())))
+			select {
+			case <-stopStatus:
+				return
+			case <-tick.C:
+			}
+		}
+	}()
 	debug := os.Getenv("YTM_DEBUG") != ""
 	vpnLog := func(f string, a ...any) {
 		// Each server connecting (or failing to) is detail; anything else is worth saying.
-		if s := fmt.Sprintf(f, a...); debug || !(strings.HasPrefix(s, "  ✓ ") || strings.HasPrefix(s, "  ✗ ")) {
+		s := fmt.Sprintf(f, a...)
+		if strings.HasPrefix(s, "  ✓ ") {
+			up.Add(1)
+		}
+		if debug || !(strings.HasPrefix(s, "  ✓ ") || strings.HasPrefix(s, "  ✗ ")) {
 			u.Printf("%s", s)
 		}
 	}
@@ -740,7 +805,9 @@ func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 	late := make(chan vpn.Exit, 64)
 	done := make(chan struct{})
 	pool, err := vpn.OpenWith(ctx, pc, n, vpnLog, vpn.Options{
-		MinReady:  min(n, 2),
+		// The run goes on as soon as one tunnel is up (a link is looked up through it, and
+		// downloads start on it); the rest join through New a few seconds later.
+		MinReady:  1,
 		Countries: countries,
 		OnExit: func(e vpn.Exit) {
 			select {
@@ -750,11 +817,14 @@ func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 			}
 		},
 	})
+	close(stopStatus)
+	<-statusDone
 	u.ClearStatus()
 	if err != nil {
 		return none, fmt.Errorf("%w (use --no-vpn to download without it)", err)
 	}
-	u.Printf("Connected through Proton VPN (%s so far; more join while it runs)", count(len(pool.Exits()), "server"))
+	u.Styled(fmt.Sprintf("  %s Proton VPN %s", ui.Green("●"),
+		ui.Dim(fmt.Sprintf("· %s up, %d more joining", count(len(pool.Exits()), "server"), max(0, n-len(pool.Exits()))))))
 	var once sync.Once
 	return exitSet{
 		Exits: pool.Exits(), Replace: pool.Replace, Healthy: pool.Healthy,

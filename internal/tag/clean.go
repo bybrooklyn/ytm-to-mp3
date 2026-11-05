@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 )
 
 var (
@@ -45,14 +47,4 @@ func norm(s string) string {
 }
 
 // splitArtists splits "A; B", "A, B", "A & B", "A feat. B" into names.
-func splitArtists(s string) []string {
-	s = regexp.MustCompile(`(?i)\s+(?:feat\.?|ft\.?|featuring|with|x)\s+`).ReplaceAllString(s, ";")
-	s = strings.NewReplacer(" & ", ";", ", ", ";", "/", ";").Replace(s)
-	var out []string
-	for _, p := range strings.Split(s, ";") {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
+func splitArtists(s string) []string { return names.SplitArtists(s) }

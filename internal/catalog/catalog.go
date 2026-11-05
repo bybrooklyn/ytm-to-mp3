@@ -43,6 +43,7 @@ type Track struct {
 	TrackNo        int
 	TrackTotal     int
 	DiscNo         int
+	DiscTotal      int
 	DurationMillis int
 	ISRC           string // stable cross-source id when known (Apple has it; Spotify embed does not)
 	ArtworkURL     string

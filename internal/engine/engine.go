@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -1065,21 +1067,48 @@ func (e *engine) fetchWorker(ctx context.Context, in <-chan *job, out chan<- *jo
 // startCover begins fetching j's artwork in the background; the returned channel closes
 // when it is done (j.cover is set on success). nil = nothing to fetch.
 func (e *engine) startCover(ctx context.Context, j *job) <-chan struct{} {
-	if j.res.Thumb == "" || e.Format == "opus" {
+	// The album's own square art beats a video thumbnail; the thumbnail is the fallback when
+	// the art can't be fetched, so a song never ends up with no cover because of it.
+	var urls []string
+	if catalogCover(j.tr.Cover) {
+		urls = append(urls, j.tr.Cover)
+	}
+	if j.res.Thumb != "" && j.res.Thumb != j.tr.Cover {
+		urls = append(urls, j.res.Thumb)
+	}
+	if len(urls) == 0 {
 		return nil
 	}
 	done := make(chan struct{})
-	client, thumb := j.lane.http(), j.res.Thumb
+	client := j.lane.http()
 	c := filepath.Join(e.tmp, j.tr.ID+".cover")
 	go func() {
 		defer close(done)
-		if getFile(ctx, client, thumb, c) == nil {
-			j.cover = c
-		} else {
+		for _, u := range urls {
+			if getFile(ctx, client, u, c) == nil && names.ImageDecoder(c) != "" {
+				j.cover = c
+				return
+			}
 			_ = os.Remove(c)
 		}
 	}()
 	return done
+}
+
+// catalogCover reports whether u is album art ytm may fetch for a song: from Spotify's,
+// Apple's or YouTube's image servers, the only places a song's art comes from.
+func catalogCover(u string) bool { return AlbumCoverURL(u) }
+
+// AlbumCoverURL is catalogCover for other packages.
+func AlbumCoverURL(u string) bool {
+	p, err := url.Parse(u)
+	if err != nil || p.Scheme != "https" {
+		return false
+	}
+	h := strings.ToLower(p.Hostname())
+	return h == "i.scdn.co" || h == "image-cdn-ak.spotifycdn.com" || h == "image-cdn-fa.spotifycdn.com" ||
+		strings.HasSuffix(h, ".mzstatic.com") || h == "ytimg.com" || strings.HasSuffix(h, ".ytimg.com") ||
+		strings.HasSuffix(h, ".googleusercontent.com") || strings.HasSuffix(h, ".ggpht.com")
 }
 
 func (e *engine) fetchJob(ctx context.Context, j *job) error {
@@ -1244,7 +1273,7 @@ func (e *engine) encodeWorker(ctx context.Context, in <-chan *job) {
 			// Spotify is always found this way, so it says nothing there
 			label += "  (via YouTube Music)"
 		}
-		e.UI.Line(green+"✓"+reset, label)
+		e.UI.LineNote(green+"✓"+reset, label, firstNonEmpty(j.tr.Album, j.res.Album))
 		if e.OnGood != nil && j.lane.good.CompareAndSwap(false, true) {
 			rate := j.lane.speed()
 			if rate == 0 {
@@ -1266,12 +1295,14 @@ func outputPath(root string, t model.Track, r *Resolved, format string) (path st
 	if len(artists) == 0 {
 		artists = r.Artists
 	}
+	artists = withFeatured(cleanArtists(artists), title)
 	album := firstNonEmpty(t.Album, r.Album)
 	no, total := t.TrackNo, t.TrackTotal
 	if no <= 0 {
 		no, total = r.Track, 0
 	}
-	parts := []string{root, names.Part(firstString(artists), "Unknown Artist")}
+	albumArtist := firstNonEmpty(t.AlbumArtist, firstString(artists))
+	parts := []string{root, names.Part(albumArtist, "Unknown Artist")}
 	if album != "" {
 		parts = append(parts, names.Part(album, "Unknown Album"))
 	}
@@ -1283,20 +1314,63 @@ func outputPath(root string, t model.Track, r *Resolved, format string) (path st
 	meta = map[string]string{
 		"title":        names.StripControl(title),
 		"artist":       names.StripControl(joinArtists(artists)),
-		"album_artist": names.StripControl(firstString(artists)),
+		"album_artist": names.StripControl(albumArtist),
 		"album":        names.StripControl(album),
 		"comment":      "https://music.youtube.com/watch?v=" + t.ID,
+		"isrc":         names.StripControl(t.ISRC),
 	}
-	// Keep everything YouTube knows; empty values are dropped by encodeArgs.
-	meta["date"] = firstNonEmpty(r.Date, yearString(r.Year))
-	meta["genre"] = names.StripControl(r.Genre)
-	if no > 0 {
-		meta["track"] = strconv.Itoa(no)
-		if total >= no {
-			meta["track"] += "/" + strconv.Itoa(total)
+	// What a catalog said first, then everything YouTube knows; empty values are dropped by
+	// encodeArgs. A video's upload date is only a last resort for the release date.
+	meta["date"] = names.StripControl(firstNonEmpty(t.Date, r.Date, yearString(r.Year)))
+	meta["genre"] = names.StripControl(firstNonEmpty(t.Genre, r.Genre))
+	meta["track"] = names.TrackTag(no, total)
+	meta["disc"] = names.TrackTag(t.Disc, t.DiscTotal)
+	return filepath.Join(parts...), meta
+}
+
+// cleanArtists drops the suffixes YouTube puts on channel names used as artists
+// ("Name - Topic", "NameVEVO") and repeats.
+func cleanArtists(a []string) []string {
+	out := make([]string, 0, len(a))
+	seen := map[string]bool{}
+	for _, s := range a {
+		s = strings.TrimSpace(strings.TrimSuffix(s, " - Topic"))
+		if len(s) > 4 && strings.HasSuffix(s, "VEVO") && !strings.Contains(s, " ") {
+			s = s[:len(s)-4]
+		}
+		if k := strings.ToLower(s); s != "" && !seen[k] {
+			seen[k] = true
+			out = append(out, s)
 		}
 	}
-	return filepath.Join(parts...), meta
+	return out
+}
+
+// featRe finds "(feat. A & B)" / "[ft. A]" / "featuring A" in a title.
+var (
+	featRe      = regexp.MustCompile(`(?i)[\(\[]\s*(?:feat\.?|ft\.?|featuring)\s+([^\)\]]+)[\)\]]`)
+	featSplitRe = regexp.MustCompile(`\s*(?:,|&| and | x )\s*`)
+)
+
+// withFeatured adds the artists a title credits as featured ("Song (feat. A & B)") to the
+// artist list when they aren't in it. The title keeps the credit, as stores print it.
+func withFeatured(artists []string, title string) []string {
+	m := featRe.FindStringSubmatch(title)
+	if m == nil || len(artists) == 0 {
+		return artists
+	}
+	have := map[string]bool{}
+	for _, a := range artists {
+		have[strings.ToLower(a)] = true
+	}
+	out := artists
+	for _, f := range featSplitRe.Split(m[1], -1) {
+		if f = strings.TrimSpace(f); f != "" && !have[strings.ToLower(f)] {
+			have[strings.ToLower(f)] = true
+			out = append(out[:len(out):len(out)], f)
+		}
+	}
+	return out
 }
 
 // freePath returns path, or "path (2).ext", "(3)"... if the name already belongs to a
@@ -1383,12 +1457,12 @@ func (e *engine) encodeJob(ctx context.Context, j *job) (string, error) {
 }
 
 // oggCover turns a downloaded cover into the ffmetadata file that carries it in an Ogg
-// Opus file (a square JPEG of at most 600 px, as a METADATA_BLOCK_PICTURE comment). ""
+// Opus file (a square JPEG of at most 1200 px, as a METADATA_BLOCK_PICTURE comment). ""
 // if the image is unusable: the song is still written, without art.
 func (e *engine) oggCover(ctx context.Context, id, cover string) string {
 	sq := filepath.Join(e.tmp, id+".sq.jpg")
 	meta := filepath.Join(e.tmp, id+".meta.txt")
-	args := names.SquareCoverArgs(cover, sq, 600)
+	args := names.SquareCoverArgs(cover, sq, 1200)
 	if args == nil || runFFmpeg(ctx, e.Tools.FFmpeg, args) != nil {
 		_ = os.Remove(sq)
 		return ""

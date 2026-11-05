@@ -214,6 +214,7 @@ func (e *engine) findOnMusic(ctx context.Context, t model.Track, ts *tstate) (*j
 				if check && !artistMatches(t.Artists, res.Artists) {
 					break
 				}
+				ts.music.Store(true)
 				return &job{tr: t, res: res, lane: ln, epoch: epoch, ts: ts, music: true, video: h.ID}, nil
 			}
 		}

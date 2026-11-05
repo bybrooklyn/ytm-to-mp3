@@ -8,6 +8,7 @@ require (
 	charm.land/bubbles/v2 v2.0.0
 	charm.land/bubbletea/v2 v2.0.2
 	charm.land/huh/v2 v2.0.3
+	charm.land/lipgloss/v2 v2.0.1
 	github.com/ProtonMail/go-srp v0.0.7
 	github.com/aead/cmac v0.0.0-20160719120800-7af84192f0b1
 	github.com/charmbracelet/x/ansi v0.11.6
@@ -26,7 +27,6 @@ require (
 )
 
 require (
-	charm.land/lipgloss/v2 v2.0.1 // indirect
 	github.com/Eyevinn/mp4ff v0.55.0 // indirect
 	github.com/ProtonMail/bcrypt v0.0.0-20210511135022-227b4adcab57 // indirect
 	github.com/ProtonMail/go-crypto v0.0.0-20230321155629-9a39f2531310 // indirect

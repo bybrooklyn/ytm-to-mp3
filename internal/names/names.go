@@ -88,6 +88,18 @@ func ParseTrack(s string) (no, total int) {
 	return max(no, 0), max(total, 0)
 }
 
+// TrackTag is the track (or disc) tag value: "N/T", "N" when the total is unknown or
+// doesn't fit, "" when no is unknown.
+func TrackTag(no, total int) string {
+	switch {
+	case no <= 0:
+		return ""
+	case total >= no:
+		return strconv.Itoa(no) + "/" + strconv.Itoa(total)
+	}
+	return strconv.Itoa(no)
+}
+
 // PartBetween is prefix+Part(s, fallback)+suffix, all of it within 255 bytes (only the
 // middle is ever cut). prefix and suffix are the caller's own safe text ("01 - ", ".opus").
 func PartBetween(prefix, s, fallback, suffix string) string {

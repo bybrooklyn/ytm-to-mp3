@@ -165,15 +165,25 @@ func propose(ctx context.Context, o Options, path string) (*proposal, error) {
 		} else {
 			pr.matched = true
 			enrich(pr, info, m, artist)
-			if m.Release != nil && m.Release.ID != "" {
+			// Album art only replaces a missing, small or non-square picture: a good cover
+			// (Apple's, or one ytm already put there) is never swapped on every run.
+			if m.Release != nil && m.Release.ID != "" && !info.GoodCover() {
 				pr.coverURL = CoverURL(m.Release.ID)
 			}
 		}
 	}
 
-	// Drop no-op changes so previews only show real differences.
+	// The album lookups know the place of a song whose tags have none: write it to the tag,
+	// not only to the file name.
+	if no, total := trackFallback(o, info); no > 0 && pr.set["track"] == "" {
+		pr.set["track"] = names.TrackTag(no, total)
+	}
+
+	// Drop no-op changes, and what this file's format can't hold (it would be proposed
+	// again on every run), so previews only show real differences.
+	ext := filepath.Ext(path)
 	for k, v := range pr.set {
-		if v == info.Tags[k] {
+		if v == info.Tags[k] || !names.TagSupported(ext, k) || sameTrack(k, v, info) {
 			delete(pr.set, k)
 		}
 	}
@@ -182,6 +192,19 @@ func propose(ctx context.Context, o Options, path string) (*proposal, error) {
 		pr.newPath = renameTarget(o.Dir, path, info, pr.set, no, total)
 	}
 	return pr, nil
+}
+
+// sameTrack reports whether a "track"/"disc" value "N/T" is what the file already says,
+// where a Vorbis file keeps N and T in two fields.
+func sameTrack(k, v string, info Info) bool {
+	if k != "track" && k != "disc" {
+		return false
+	}
+	cur := info.Tags[k]
+	if tt := info.Tags[k+"total"]; tt != "" && !strings.Contains(cur, "/") {
+		cur += "/" + tt
+	}
+	return cur == v
 }
 
 func firstArtist(a string) string {
@@ -197,29 +220,61 @@ func enrich(pr *proposal, info Info, m *Match, artist string) {
 	r := m.Recording
 	pr.set["title"] = r.Title
 	if len(r.ArtistCredit) > 0 {
-		pr.set["album_artist"] = r.ArtistCredit[0].Artist.Name
 		pr.set["musicbrainz_artistid"] = r.ArtistCredit[0].Artist.ID
 		if len(splitArtists(artist)) == 1 && norm(artist) == norm(r.ArtistCredit[0].Artist.Name) {
 			pr.set["artist"] = r.ArtistCredit[0].Artist.Name
 		}
 	}
-	pr.set["musicbrainz_recordingid"] = r.ID
+	// The standard name players and Picard read; ytm used to write musicbrainz_recordingid.
+	pr.set["musicbrainz_trackid"] = r.ID
+	if info.Tags["musicbrainz_recordingid"] != "" {
+		pr.set["musicbrainz_recordingid"] = ""
+	}
 	if len(r.ISRCs) > 0 {
 		pr.set["isrc"] = r.ISRCs[0]
 	}
-	if rel := m.Release; rel != nil {
+	rel := m.Release
+	// The album artist is the release's credit when it has its own (a compilation), else
+	// the recording's main artist. One already in the file is kept unless the release
+	// says otherwise: it is usually right, and a featured artist must not replace it.
+	switch {
+	case rel != nil && len(rel.ArtistCredit) > 0:
+		pr.set["album_artist"] = rel.ArtistCredit[0].Artist.Name
+		pr.set["musicbrainz_albumartistid"] = rel.ArtistCredit[0].Artist.ID
+	case len(r.ArtistCredit) > 0 && info.get("album_artist") == "":
+		pr.set["album_artist"] = r.ArtistCredit[0].Artist.Name
+		pr.set["musicbrainz_albumartistid"] = r.ArtistCredit[0].Artist.ID
+	case len(r.ArtistCredit) > 0 && norm(info.get("album_artist")) == norm(r.ArtistCredit[0].Artist.Name):
+		pr.set["album_artist"] = r.ArtistCredit[0].Artist.Name // canonical spelling
+		pr.set["musicbrainz_albumartistid"] = r.ArtistCredit[0].Artist.ID
+	}
+	if rel != nil {
 		pr.set["album"] = rel.Title
 		pr.set["musicbrainz_albumid"] = rel.ID
 		if d := rel.Date; d != "" && (info.get("date", "year") == "" || year(info.get("date", "year")) > year(d)) {
 			pr.set["date"] = d
 		}
 		if m.Track != "" && info.get("track") == "" {
-			pr.set["track"] = m.Track
+			no, _ := names.ParseTrack(m.Track)
+			pr.set["track"] = names.TrackTag(no, mediumTracks(rel, m.Disc))
+			if no <= 0 {
+				pr.set["track"] = m.Track
+			}
 		}
 		if m.Disc > 0 && info.get("disc") == "" {
 			pr.set["disc"] = fmt.Sprint(m.Disc)
 		}
 	}
+}
+
+// mediumTracks is how many tracks the disc a song is on has (0 when unknown).
+func mediumTracks(rel *mbRelease, disc int) int {
+	for _, md := range rel.Media {
+		if md.Position == disc {
+			return md.TrackCount
+		}
+	}
+	return 0
 }
 
 func year(d string) string {

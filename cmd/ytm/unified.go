@@ -4,18 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/apple"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/catalog"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/spotify"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
@@ -46,7 +49,19 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 	_ = apple.SetProxy(proxies[0])
 
 	ac := appleForUnified(ctx, u, o)
-	tracks, fromApple, err := importCatalog(ctx, u, ac, inputs)
+	var albumOf func(catalog.Track) []model.Track
+	if o.albums && !o.song {
+		// A Spotify song's link brings its album, found on YouTube Music when Apple Music
+		// can't place it (the Spotify page doesn't say which album it is).
+		albumOf = func(t catalog.Track) []model.Track {
+			tools, err := ex.ensureTools(ctx, u)
+			if err != nil {
+				return nil
+			}
+			return engine.FindSongAlbum(ctx, tools, proxies[0], t.Title, t.Artists)
+		}
+	}
+	tracks, fromApple, err := importCatalog(ctx, u, ac, inputs, albumOf)
 	if err != nil {
 		return err
 	}
@@ -58,18 +73,47 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 		u.Printf("(not signed in to Apple Music, so these come from YouTube; sign in in Settings for 256 kbps AAC)")
 	}
 
-	items := decideSources(ctx, u, ac, proxies, tracks, fromApple, o.maybe)
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-
-	// The music folder's database; a dry run in a folder with none must not create it.
+	// The music folder's database (it also remembers album lookups); a dry run in a folder
+	// with none must not create it.
 	var st *store.Store
 	if _, serr := os.Stat(filepath.Join(o.out, ".ytm")); serr == nil || !o.dryRun {
 		if st, err = store.Open(filepath.Join(o.out, ".ytm")); err != nil {
 			return err
 		}
 		defer st.Close()
+	}
+
+	// An album or playlist link gets the rest of every album it has a song from, as a
+	// library download does (asking first, with the size).
+	if o.albums && !o.song && slices.ContainsFunc(inputs, func(in string) bool { return !isSongLink(in) }) {
+		tools, err := ex.ensureTools(ctx, u)
+		if err != nil {
+			return err
+		}
+		// Spotify playlists don't say which album a song is from: look that up first, or
+		// there is nothing to group.
+		if c, err := catalogClient(ac); err == nil {
+			fillAlbums(ctx, u, c, proxies, tracks)
+		}
+		mts := make([]model.Track, len(tracks))
+		for i, t := range tracks {
+			mts[i] = model.Track{ID: synthID(t), Title: t.Title, Album: t.Album, Artists: t.Artists}
+		}
+		for _, x := range completeAlbums(ctx, u, o, tools, proxies, st, mts) {
+			tracks = append(tracks, catalog.Track{
+				Title: x.Title, Artists: x.Artists, Album: x.Album, AlbumArtist: x.AlbumArtist,
+				TrackNo: x.TrackNo, TrackTotal: x.TrackTotal, ReleaseDate: x.Date, ArtworkURL: x.Cover,
+				Origin: catalog.YouTube, OriginID: x.ID,
+			})
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+
+	items := decideSources(ctx, u, ac, proxies, tracks, fromApple, o.maybe)
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	var appleItems, ytItems []*item
 	heldN, upgrades := 0, 0
@@ -106,8 +150,14 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 		}
 	}
 	if len(ytItems) > 0 && ctx.Err() == nil {
-		if err := runYouTubeItems(ctx, u, o, st, xs, ytItems); err != nil && firstErr == nil {
+		began := time.Now()
+		if err := runYouTubeItems(ctx, u, o, st, ex, xs, ytItems); err != nil && firstErr == nil {
 			firstErr = err
+		}
+		// Songs fetched from YouTube get the same MusicBrainz pass as a library download
+		// (Apple Music songs come fully tagged).
+		if firstErr == nil && ctx.Err() == nil {
+			firstErr = afterDownload(ctx, u, o, st, began)
 		}
 	}
 	return firstErr
@@ -241,14 +291,9 @@ func splitArtists(s string) []string {
 	if s == "" {
 		return nil
 	}
-	out := []string{s}
-	joined := strings.NewReplacer(" & ", ",", " feat. ", ",", " ft. ", ",", " x ", ",").Replace(s)
-	if parts := strings.Split(joined, ","); len(parts) > 1 {
-		for _, p := range parts {
-			if p = strings.TrimSpace(p); p != "" {
-				out = append(out, p)
-			}
-		}
+	out := []string{s} // the whole credit first: it may be one act's name ("Simon & Garfunkel")
+	if parts := names.SplitArtists(s); len(parts) > 1 {
+		out = append(out, parts...)
 	}
 	return out
 }
@@ -256,18 +301,19 @@ func splitArtists(s string) []string {
 // importCatalog turns Spotify and Apple Music links into canonical tracks. Apple songs are
 // also returned by id (fromApple), so they download as themselves with no search. ac is
 // the signed-in client, if any; without one, Apple links resolve anonymously.
-func importCatalog(ctx context.Context, u *ui.UI, ac *apple.Client, inputs []string) ([]catalog.Track, map[string]apple.Track, error) {
+//
+// albumOf, when set (albums on), means a song's link brings its whole album: an Apple Music
+// song resolves to its album, and a Spotify song (its page names no album) is looked for on
+// Apple Music, then on YouTube Music through albumOf. Songs found that way on YouTube come
+// back with Origin YouTube and their video id.
+func importCatalog(ctx context.Context, u *ui.UI, ac *apple.Client, inputs []string, albumOf func(catalog.Track) []model.Track) ([]catalog.Track, map[string]apple.Track, error) {
+	whole := albumOf != nil
 	appleClient := func() (*apple.Client, error) {
-		if ac == nil {
-			// Catalog reads need only the developer token, so links resolve without a login.
-			cfg := config.Load()
-			c, err := apple.New("anonymous", "", orDefault(cfg.AppleStorefront, "us"), cfg.AppleLanguage)
-			if err != nil {
-				return nil, err
-			}
+		c, err := catalogClient(ac)
+		if err == nil {
 			ac = c
 		}
-		return ac, nil
+		return c, err
 	}
 	var out []catalog.Track
 	fromApple := map[string]apple.Track{}
@@ -306,6 +352,17 @@ func importCatalog(ctx context.Context, u *ui.UI, ac *apple.Client, inputs []str
 				u.Printf("  %s: %v", in, err)
 				continue
 			}
+			if whole && len(ts) == 1 && ts[0].Album == "" {
+				if album, byID := spotifySongAlbum(ctx, appleClient, albumOf, ts[0]); len(album) > 0 {
+					for id, at := range byID {
+						fromApple[id] = at
+					}
+					for _, t := range album {
+						add(t)
+					}
+					continue
+				}
+			}
 			for _, t := range ts {
 				add(fromSpotify(t))
 			}
@@ -314,7 +371,11 @@ func importCatalog(ctx context.Context, u *ui.UI, ac *apple.Client, inputs []str
 			if err != nil {
 				return nil, nil, err
 			}
-			ts, err := c.ResolveURL(ctx, in)
+			resolve := c.ResolveURL
+			if whole {
+				resolve = c.ResolveWholeAlbum // a song's link brings its album
+			}
+			ts, err := resolve(ctx, in)
 			if err != nil {
 				u.Printf("  %s: %v", in, err)
 				continue
@@ -328,6 +389,86 @@ func importCatalog(ctx context.Context, u *ui.UI, ac *apple.Client, inputs []str
 		}
 	}
 	return out, fromApple, nil
+}
+
+// catalogClient is ac, or without a login an anonymous Apple Music client: catalog reads
+// (links, searches) need only the developer token.
+func catalogClient(ac *apple.Client) (*apple.Client, error) {
+	if ac != nil {
+		return ac, nil
+	}
+	cfg := config.Load()
+	return apple.New("anonymous", "", orDefault(cfg.AppleStorefront, "us"), cfg.AppleLanguage)
+}
+
+// fillAlbums looks up, in Apple Music's catalog, the album of every song that came without
+// one (Spotify playlists name none), a few at a time spread over the exits. Only sure
+// matches count; the album's details fill what the song lacks.
+func fillAlbums(ctx context.Context, u *ui.UI, c *apple.Client, proxies []string, tracks []catalog.Track) {
+	var todo []int
+	for i, t := range tracks {
+		if t.Album == "" && t.Title != "" && len(t.Artists) > 0 {
+			todo = append(todo, i)
+		}
+	}
+	if len(todo) == 0 {
+		return
+	}
+	var next, finished atomic.Int64
+	var wg sync.WaitGroup
+	for w := 0; w < min(len(todo), 2*len(proxies), 6); w++ {
+		wctx := apple.WithExit(ctx, proxies[w%len(proxies)])
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for ctx.Err() == nil {
+				n := int(next.Add(1)) - 1
+				if n >= len(todo) {
+					return
+				}
+				t := &tracks[todo[n]]
+				q := apple.Query{Title: t.Title, Artists: t.Artists, DurationMillis: t.DurationMillis}
+				if m, ok, err := c.Match(wctx, q); err == nil && ok && m.Sure {
+					t.Album = m.Track.Album
+					t.AlbumArtist = firstNonEmpty(t.AlbumArtist, m.Track.AlbumArtist)
+					t.ReleaseDate = firstNonEmpty(t.ReleaseDate, m.Track.ReleaseDate)
+					t.ISRC = firstNonEmpty(t.ISRC, m.Track.ISRC)
+					t.Genre = firstNonEmpty(t.Genre, m.Track.Genre)
+				}
+				u.Status("Finding which album each song is from: %d/%d", finished.Add(1), len(todo))
+			}
+		}()
+	}
+	wg.Wait()
+	u.ClearStatus()
+}
+
+// spotifySongAlbum is the album a Spotify song is on, as catalog tracks: from Apple Music
+// when its catalog has the song for sure (full details; byID holds those songs for
+// fromApple), else from YouTube Music via albumOf. nil when neither places it.
+func spotifySongAlbum(ctx context.Context, appleClient func() (*apple.Client, error), albumOf func(catalog.Track) []model.Track,
+	s spotify.Track) (album []catalog.Track, byID map[string]apple.Track) {
+	if c, err := appleClient(); err == nil {
+		q := apple.Query{Title: s.Title, Artists: s.Artists, DurationMillis: s.DurationMillis}
+		if m, ok, err := c.Match(ctx, q); err == nil && ok && m.Sure {
+			if ts, err := c.ResolveWholeAlbum(ctx, m.Track.URL()); err == nil && len(ts) > 1 {
+				byID = map[string]apple.Track{}
+				for _, t := range ts {
+					byID[t.ID] = t
+					album = append(album, appleToCatalog(t))
+				}
+				return album, byID
+			}
+		}
+	}
+	for _, t := range albumOf(fromSpotify(s)) {
+		album = append(album, catalog.Track{
+			Title: t.Title, Artists: t.Artists, Album: t.Album, AlbumArtist: t.AlbumArtist,
+			TrackNo: t.TrackNo, TrackTotal: t.TrackTotal, ReleaseDate: t.Date, ArtworkURL: t.Cover,
+			Origin: catalog.YouTube, OriginID: t.ID,
+		})
+	}
+	return album, nil
 }
 
 // sameSong reports whether two tracks with the same title and artist are one recording:
@@ -421,9 +562,8 @@ func runAppleItems(ctx context.Context, u *ui.UI, o opts, ac *apple.Client, st *
 // runYouTubeItems downloads the rest from YouTube through the engine, finding
 // each song by a YouTube Music search (the tracks carry no video id), then
 // records them in the library.
-func runYouTubeItems(ctx context.Context, u *ui.UI, o opts, st *store.Store, xs exitSet, items []*item) error {
-	logf := func(f string, a ...any) { u.Printf(f, a...) }
-	tools, err := deps.Ensure(ctx, logf)
+func runYouTubeItems(ctx context.Context, u *ui.UI, o opts, st *store.Store, ex *runExits, xs exitSet, items []*item) error {
+	tools, err := ex.ensureTools(ctx, u)
 	if err != nil {
 		return err
 	}
@@ -432,10 +572,16 @@ func runYouTubeItems(ctx context.Context, u *ui.UI, o opts, st *store.Store, xs 
 	byID := map[string]*item{}
 	for _, it := range items {
 		id := synthID(it.t)
+		search := true
+		if it.t.Origin == catalog.YouTube && model.ValidID(it.t.OriginID) {
+			id, search = it.t.OriginID, false // found on YouTube Music already: its own video
+		}
 		_ = st.AddPending(id, it.t.Title, it.t.PrimaryArtist())
-		mt := model.Track{ID: id, Title: it.t.Title, Album: it.t.Album, Artists: it.t.Artists, TrackNo: it.t.TrackNo, TrackTotal: it.t.TrackTotal}
+		mt := catalogToModel(id, it.t)
 		todo = append(todo, mt)
-		musicFirst[id] = true
+		if search {
+			musicFirst[id] = true
+		}
 		byID[id] = it
 		if it.upgrade && fileExists(it.oldPath) {
 			_ = moveAside(o.out, it.oldPath)
@@ -452,14 +598,43 @@ func runYouTubeItems(ctx context.Context, u *ui.UI, o opts, st *store.Store, xs 
 			_ = st.LibraryPut(it.key, it.t.Title, it.t.PrimaryArtist(), string(catalog.YouTube), catalog.Rank(catalog.YouTube), path)
 		}
 	}
-	u.Printf("\nYouTube: %d downloaded, %d failed, %s", sum.Done, sum.Failed, engine.HumanBytes(sum.Bytes))
+	u.Styled(runSummary(sum.Done, sum.Failed, sum.Bytes, sum.Elapsed, "YouTube"))
 	if sum.Interrupted {
 		return context.Canceled
 	}
 	return nil
 }
 
+// isSongLink reports whether a Spotify or Apple Music link names one song (not an album or
+// playlist): a Spotify /track/, an Apple /song/, or an Apple song's place on its album.
+func isSongLink(link string) bool {
+	u, err := url.Parse(strings.Trim(link, `"' `))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(u.Path, "/track/") || strings.Contains(u.Path, "/song/") ||
+		(strings.Contains(u.Path, "/album/") && u.Query().Get("i") != "")
+}
+
 // --- conversions -----------------------------------------------------------
+
+// catalogToModel is a catalog song as the engine's track, carrying everything the catalog
+// knows (release date, album art, disc, ISRC) so the YouTube copy is tagged from it.
+func catalogToModel(id string, t catalog.Track) model.Track {
+	date, _, _ := strings.Cut(t.ReleaseDate, "T") // Spotify gives "2001-03-12T00:00:00Z"
+	return model.Track{
+		ID: id, Title: t.Title, Album: t.Album, Artists: t.Artists,
+		TrackNo: t.TrackNo, TrackTotal: t.TrackTotal,
+		AlbumArtist: t.AlbumArtist, Disc: t.DiscNo, DiscTotal: t.DiscTotal, Date: date, Genre: t.Genre,
+		ISRC: t.ISRC, Cover: artworkURL(t.ArtworkURL),
+	}
+}
+
+// artworkURL fills in an Apple artwork template ("…/{w}x{h}bb.jpg") at 1200 px; other
+// URLs are used as they are.
+func artworkURL(u string) string {
+	return strings.NewReplacer("{w}", "1200", "{h}", "1200", "{f}", "jpg").Replace(u)
+}
 
 func fromSpotify(t spotify.Track) catalog.Track {
 	return catalog.Track{
@@ -476,7 +651,7 @@ func appleToCatalog(t apple.Track) catalog.Track {
 	}
 	return catalog.Track{
 		Title: t.Title, Artists: artists, Album: t.Album, AlbumArtist: t.AlbumArtist,
-		TrackNo: t.TrackNumber, TrackTotal: t.TrackCount, DiscNo: t.DiscNumber, DurationMillis: t.DurationMillis,
+		TrackNo: t.TrackNumber, TrackTotal: t.TrackCount, DiscNo: t.DiscNumber, DiscTotal: t.DiscCount, DurationMillis: t.DurationMillis,
 		ISRC: t.ISRC, ArtworkURL: t.ArtworkURL, ReleaseDate: t.ReleaseDate, Genre: t.Genre,
 		Origin: catalog.Apple, OriginID: t.ID,
 	}

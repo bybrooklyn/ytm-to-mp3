@@ -244,15 +244,22 @@ songs:
 		u.Line(green+"✓"+reset, t.Title+"  (Premium)")
 	}
 	u.ClearStatus()
-	u.Printf("\n%d upgraded, %d have no Premium stream, %d failed.", upgraded, none, failed)
+	line := fmt.Sprintf("\n  %s  %s %s upgraded", ui.Bold("Premium"), ui.OK("✓"), ui.Bold(fmt.Sprint(upgraded)))
+	if none > 0 {
+		line += "  " + ui.Dim(fmt.Sprintf("%d have no Premium stream", none))
+	}
+	if failed > 0 {
+		line += "  " + ui.Fail("✗") + " " + ui.Red(fmt.Sprint(failed)) + " failed"
+	}
+	u.Styled(line)
 	if ctx.Err() != nil {
 		return context.Canceled
 	}
 	return nil
 }
 
-const (
-	red   = "\x1b[31m"
-	green = "\x1b[32m"
-	reset = "\x1b[0m"
+var (
+	red   = ui.CRed
+	green = ui.CGreen
+	reset = ui.CReset
 )

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,6 +14,7 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/vpn"
 )
 
 // albumGroup is one album of the library with the saved songs from it.
@@ -74,7 +77,7 @@ func albumTracks(g albumGroup, a *engine.Album, have map[string]bool) []model.Tr
 		// The album name as saved, so the new songs land in the same folder, numbered in
 		// album order.
 		out = append(out, model.Track{ID: t.ID, Title: t.Title, Album: g.title, Artists: []string{g.artist},
-			TrackNo: i + 1, TrackTotal: len(a.Tracks)})
+			TrackNo: i + 1, TrackTotal: len(a.Tracks), AlbumArtist: g.artist, Cover: a.Cover, Date: a.Date()})
 	}
 	return out
 }
@@ -83,13 +86,23 @@ func albumTracks(g albumGroup, a *engine.Album, have map[string]bool) []model.Tr
 // been found on YouTube Music before (the --albums cache), matching by video id or, for a
 // saved music video, by title.
 func numberFromAlbums(st *store.Store, tracks []model.Track) {
-	lookup := albumNumbers(st)
+	lookup := albumPlaces(st)
 	for i := range tracks {
 		t := &tracks[i]
-		if t.TrackNo > 0 {
+		a, no := lookup(t.PrimaryArtist(), t.Album, t.Title, t.ID)
+		if a == nil {
 			continue
 		}
-		t.TrackNo, t.TrackTotal = lookup(t.PrimaryArtist(), t.Album, t.Title, t.ID)
+		if t.TrackNo <= 0 && no > 0 {
+			t.TrackNo, t.TrackTotal = no, len(a.Tracks)
+		}
+		// the album's square art and year beat the video's thumbnail and upload date
+		if t.Cover == "" {
+			t.Cover = a.Cover
+		}
+		if t.Date == "" {
+			t.Date = a.Date()
+		}
 	}
 }
 
@@ -97,10 +110,22 @@ func numberFromAlbums(st *store.Store, tracks []model.Track) {
 // in st (each album read once), matching by video id or, for a saved music video, by
 // title. 0 = not known.
 func albumNumbers(st *store.Store) func(artist, album, title, id string) (no, total int) {
-	albums := map[string]*engine.Album{}
+	lookup := albumPlaces(st)
 	return func(artist, album, title, id string) (int, int) {
+		if a, no := lookup(artist, album, title, id); a != nil && no > 0 {
+			return no, len(a.Tracks)
+		}
+		return 0, 0
+	}
+}
+
+// albumPlaces returns a lookup of a song's album in st's album cache (each album read
+// once) and its place on it (0 when the album is known but the song isn't found on it).
+func albumPlaces(st *store.Store) func(artist, album, title, id string) (*engine.Album, int) {
+	albums := map[string]*engine.Album{}
+	return func(artist, album, title, id string) (*engine.Album, int) {
 		if strings.TrimSpace(album) == "" || strings.TrimSpace(artist) == "" {
-			return 0, 0
+			return nil, 0
 		}
 		k := albumKey(artist, album)
 		a, seen := albums[k]
@@ -114,14 +139,14 @@ func albumNumbers(st *store.Store) func(artist, album, title, id string) (no, to
 			albums[k] = a
 		}
 		if a == nil {
-			return 0, 0
+			return nil, 0
 		}
 		for n, at := range a.Tracks {
 			if (id != "" && at.ID == id) || engine.SameSong(title, at.Title) {
-				return n + 1, len(a.Tracks)
+				return a, n + 1
 			}
 		}
-		return 0, 0
+		return nil, 0 // a same-named album this song isn't on: its art isn't this song's
 	}
 }
 
@@ -189,6 +214,117 @@ func findAlbums(ctx context.Context, u *ui.UI, tools deps.Tools, proxies []strin
 	wg.Wait()
 	u.ClearStatus()
 	return found
+}
+
+// linkLookup is one pasted link to look up before the download: a playlist/album link to
+// expand, or a song whose album to fetch. slot is its place among the inputs.
+type linkLookup struct {
+	slot       int
+	link, song string
+}
+
+// lookUpLinks looks up every link, a few at a time spread over the exits, and puts each
+// one's songs in its slot. A song comes back with its whole album (engine.SongAlbum). With
+// albums on, a playlist's songs also get their artist and album filled in, so the album
+// completion after this knows what to look for.
+func lookUpLinks(ctx context.Context, u *ui.UI, o opts, tools deps.Tools, proxies []string, ls []linkLookup, slots [][]model.Track) error {
+	var (
+		next, finished atomic.Int64
+		wg             sync.WaitGroup
+		mu             sync.Mutex
+		firstErr       error
+		albums         int
+	)
+	status := func() {
+		u.Status("Looking up %s: %d/%d", count(len(ls), "link"), finished.Load(), len(ls))
+	}
+	status()
+	workers := min(len(ls), max(1, len(proxies)), 4)
+	for w := 0; w < workers; w++ {
+		proxy := proxies[w%len(proxies)]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for ctx.Err() == nil {
+				i := int(next.Add(1)) - 1
+				if i >= len(ls) {
+					return
+				}
+				l := ls[i]
+				var ts []model.Track
+				if l.song != "" {
+					var a *engine.Album
+					ts, a = engine.SongAlbum(ctx, tools, proxy, l.song)
+					if a != nil {
+						mu.Lock()
+						albums++
+						mu.Unlock()
+					}
+				} else {
+					var err error
+					if ts, err = engine.ExpandURL(ctx, tools, proxy, l.link); err != nil {
+						mu.Lock()
+						if firstErr == nil {
+							firstErr = err
+						}
+						mu.Unlock()
+						continue
+					}
+					if o.albums && !o.song {
+						ts = songInfos(ctx, proxies, ts)
+					}
+				}
+				slots[l.slot] = ts
+				finished.Add(1)
+				status()
+			}
+		}()
+	}
+	wg.Wait()
+	u.ClearStatus()
+	if firstErr != nil {
+		return firstErr
+	}
+	if albums > 0 {
+		u.Styled(fmt.Sprintf("  %s %s from the pasted songs %s", ui.Accent("♪"), ui.Bold(count(albums, "whole album")),
+			ui.Dim("(add --song for just the song)")))
+	}
+	return ctx.Err()
+}
+
+// songInfos fills in the artist and album of every song that lacks them, with one quick
+// player request each, many at once over the exits. Songs YouTube has no album for stay
+// as they are.
+func songInfos(ctx context.Context, proxies []string, ts []model.Track) []model.Track {
+	clients := make([]*http.Client, 0, len(proxies))
+	for _, p := range proxies {
+		if c, err := vpn.NewClient(p); err == nil {
+			clients = append(clients, c)
+		}
+	}
+	if len(clients) == 0 {
+		return ts
+	}
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for w := 0; w < min(len(ts), 4*len(clients), 16); w++ {
+		hc := clients[w%len(clients)]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for ctx.Err() == nil {
+				i := int(next.Add(1)) - 1
+				if i >= len(ts) {
+					return
+				}
+				if ts[i].Album == "" || len(ts[i].Artists) == 0 {
+					ts[i] = engine.SongInfo(ctx, hc, ts[i])
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	return ts
 }
 
 // perTrackMB is a rough size of a 4-minute song in each format, for the estimate.
