@@ -51,6 +51,10 @@ type Config struct {
 	// and lives in AppleTokenPath(), not here.
 	AppleStorefront string `json:"apple_storefront,omitempty"` // e.g. "us"; "" = us
 	AppleLanguage   string `json:"apple_language,omitempty"`   // e.g. "en-US"; "" = storefront default
+
+	// TidalQuality is "lossless" (the default, "") or "best" (tries hi-res first, takes it
+	// only when Tidal serves it as a plain file). The login itself is in tidal.Session's file.
+	TidalQuality string `json:"tidal_quality,omitempty"`
 }
 
 // AppleTokenPath is where ytm keeps the user's Apple Music media-user-token

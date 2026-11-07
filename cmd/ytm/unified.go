@@ -22,18 +22,22 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/spotify"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/tidal"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
 )
 
 // item is one imported song and the decision made for it.
 type item struct {
-	t       catalog.Track
-	key     string
-	target  catalog.Source // apple or youtube
-	match   apple.Track    // set when target == apple
-	upgrade bool           // replacing a copy we already have from a worse source
-	oldPath string         // the file to replace on upgrade
-	oldID   string         // that file's YouTube library id, when it is a library song
+	t      catalog.Track
+	key    string
+	target catalog.Source // tidal, apple or youtube
+	match  apple.Track    // set when target == apple (kept when Tidal outranks it, for fallback)
+
+	tidalTrack tidal.Track // set when target == tidal
+	upgrade    bool        // replacing a copy we already have from a worse source
+	oldPath    string      // the file to replace on upgrade
+	oldID      string      // that file's YouTube library id, when it is a library song
+	heldRank   int         // catalog.Rank of the source of that old copy
 }
 
 // downloadUnified imports songs from Spotify and Apple Music links, then downloads each
@@ -62,10 +66,25 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 			return engine.FindSongAlbum(ctx, tools, proxies[0], t.Title, t.Artists)
 		}
 	}
-	tracks, fromApple, err := importCatalog(ctx, u, ac, inputs, albumOf)
+	// Tidal links are read with the Tidal login; the rest are Spotify and Apple Music links.
+	var tidalLinks, otherLinks []string
+	for _, in := range inputs {
+		if t := strings.Trim(in, `"' `); tidal.IsURL(t) {
+			tidalLinks = append(tidalLinks, t)
+		} else {
+			otherLinks = append(otherLinks, in)
+		}
+	}
+	tc := tidalForUnified(ctx, u, o)
+	tidalTracks, fromTidal, err := importTidal(ctx, u, tc, tidalLinks, o.albums && !o.song)
 	if err != nil {
 		return err
 	}
+	tracks, fromApple, err := importCatalog(ctx, u, ac, otherLinks, albumOf)
+	if err != nil {
+		return err
+	}
+	tracks = append(tracks, tidalTracks...)
 	if len(tracks) == 0 {
 		return errors.New("nothing to import")
 	}
@@ -112,7 +131,7 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 		}
 	}
 
-	items := decideSources(ctx, u, ac, proxies, tracks, fromApple, o.maybe)
+	items := decideSources(ctx, u, ac, proxies, tracks, fromApple, o.maybe, tc, fromTidal)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -129,9 +148,18 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 			}
 		}
 	}
-	u.Styled(ui.Mark(ui.Accent("→"), sourceSummary(len(appleItems), len(ytItems), heldN, upgrades)))
+	// planUnified files everything that is not Apple under YouTube: peel the Tidal songs off.
+	var tidalItems []*item
+	ytItems = slices.DeleteFunc(ytItems, func(it *item) bool {
+		if it.target == catalog.Tidal {
+			tidalItems = append(tidalItems, it)
+			return true
+		}
+		return false
+	})
+	u.Styled(ui.Mark(ui.Accent("→"), sourceSummary(len(tidalItems), len(appleItems), len(ytItems), heldN, upgrades)))
 	if o.dryRun {
-		for _, it := range append(append([]*item{}, appleItems...), ytItems...) {
+		for _, it := range slices.Concat(tidalItems, appleItems, ytItems) {
 			note := ""
 			if it.upgrade {
 				note = "  (upgrade)"
@@ -140,12 +168,38 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 		}
 		return nil
 	}
-	if len(appleItems)+len(ytItems) == 0 {
+	if len(tidalItems)+len(appleItems)+len(ytItems) == 0 {
 		return nil
 	}
 
 	var firstErr error
-	if len(appleItems) > 0 {
+	if len(tidalItems) > 0 {
+		tools, err := ex.ensureTools(ctx, u)
+		if err != nil {
+			return err
+		}
+		failed, err := runTidalItems(ctx, u, o, st, tools.FFmpeg, tools.FFprobe, tc, tidalItems)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		// What Tidal couldn't give comes from the next best source, never dropped.
+		for _, it := range failed {
+			next := catalog.YouTube
+			if it.match.ID != "" {
+				next = catalog.Apple
+			}
+			if it.upgrade && it.heldRank >= catalog.Rank(next) {
+				continue // the copy already held is as good as the fallback
+			}
+			it.target = next
+			if next == catalog.Apple {
+				appleItems = append(appleItems, it)
+			} else {
+				ytItems = append(ytItems, it)
+			}
+		}
+	}
+	if len(appleItems) > 0 && ctx.Err() == nil {
 		if err := runAppleItems(ctx, u, o, ac, st, proxies, appleItems); err != nil && firstErr == nil {
 			firstErr = err
 		}
@@ -191,16 +245,23 @@ func appleForUnified(ctx context.Context, u *ui.UI, o opts) *apple.Client {
 // decideSources picks each track's source: Apple Music when there is a working login and
 // a match (an Apple Music link's own songs need no search), YouTube otherwise.
 func decideSources(ctx context.Context, u *ui.UI, ac *apple.Client, proxies []string, tracks []catalog.Track,
-	fromApple map[string]apple.Track, includeMaybe bool) []item {
+	fromApple map[string]apple.Track, includeMaybe bool, tc *tidal.Client, fromTidal map[string]tidal.Track) []item {
 	items := make([]item, len(tracks))
 	for i, t := range tracks {
 		items[i] = item{t: t, key: t.Key(), target: catalog.YouTube}
 		if at, ok := fromApple[t.OriginID]; ok && ac != nil && t.Origin == catalog.Apple {
 			items[i].target, items[i].match = catalog.Apple, at
 		}
+		if tt, ok := fromTidal[t.OriginID]; ok && t.Origin == catalog.Tidal {
+			items[i].target, items[i].tidalTrack = catalog.Tidal, tt
+		}
 	}
 	if ac != nil {
 		matchAppleAll(ctx, u, ac, proxies, items, includeMaybe)
+	}
+	// Tidal's lossless FLAC outranks Apple's AAC: songs it has (by ISRC, then name) go there.
+	if tc != nil && ctx.Err() == nil {
+		matchTidalAll(ctx, u, tc, items)
 	}
 	return items
 }
@@ -221,7 +282,7 @@ func planUnified(st *store.Store, items []item, remember bool) (appleItems, ytIt
 			continue
 		}
 		if ok {
-			it.upgrade, it.oldPath, it.oldID = true, h.path, h.ytID
+			it.upgrade, it.oldPath, it.oldID, it.heldRank = true, h.path, h.ytID, h.quality
 			upgrades++
 		}
 		if it.target == catalog.Apple {
@@ -241,11 +302,22 @@ type held struct {
 	indirect     bool   // found by Apple id or by name, not under the song's key
 }
 
+// libRank is the quality of a library entry, from its source's name; the number stored
+// with it is only a fallback for an entry with no source.
+func libRank(lib store.LibraryState) int {
+	if lib.Source != "" {
+		return catalog.Rank(catalog.Source(lib.Source))
+	}
+	return lib.Quality
+}
+
 // heldCopy finds the copy of it already on disk, if any: under its key, then as the Apple
 // song it was matched to, then by title and artist.
 func heldCopy(st *store.Store, byName map[string]store.HeldCopy, it *item) (held, bool) {
 	if lib := st.Library(it.key); lib.Done && fileExists(lib.Path) {
-		return held{path: lib.Path, source: lib.Source, quality: lib.Quality}, true
+		// Rank by the source's name: the number stored with the song may be from before
+		// sources were added or reordered.
+		return held{path: lib.Path, source: lib.Source, quality: libRank(lib)}, true
 	}
 	if it.target == catalog.Apple {
 		if a := st.Apple(it.match.ID); a.Done && fileExists(a.Path) {
@@ -503,7 +575,7 @@ func crossAlbumKey(s string) string {
 func matchAppleAll(ctx context.Context, u *ui.UI, ac *apple.Client, proxies []string, items []item, includeMaybe bool) {
 	var need []*item
 	for i := range items {
-		if items[i].target != catalog.Apple {
+		if items[i].target != catalog.Apple && items[i].target != catalog.Tidal {
 			need = append(need, &items[i])
 		}
 	}
@@ -627,6 +699,9 @@ func isSongLink(link string) bool {
 	if err != nil {
 		return false
 	}
+	if t, ok := tidal.ParseURL(link); ok {
+		return t.Kind == "track" || t.Track != 0
+	}
 	return strings.Contains(u.Path, "/track/") || strings.Contains(u.Path, "/song/") ||
 		(strings.Contains(u.Path, "/album/") && u.Query().Get("i") != "")
 }
@@ -715,8 +790,11 @@ func count(n int, noun string) string {
 
 // sourceSummary is the plan in one line, leaving out what is zero:
 // "12 from Apple Music, 1 from YouTube, 3 already held (2 to upgrade)".
-func sourceSummary(fromApple, fromYouTube, held, upgrades int) string {
+func sourceSummary(fromTidal, fromApple, fromYouTube, held, upgrades int) string {
 	var parts []string
+	if fromTidal > 0 {
+		parts = append(parts, fmt.Sprintf("%d from Tidal", fromTidal))
+	}
 	if fromApple > 0 {
 		parts = append(parts, fmt.Sprintf("%d from Apple Music", fromApple))
 	}

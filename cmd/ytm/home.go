@@ -19,6 +19,7 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/screen"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/spotify"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/takeout"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/tidal"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
 )
 
@@ -387,19 +388,19 @@ func linkFlow(ctx context.Context, u *ui.UI, o opts) error {
 		where = "Apple and Spotify songs come from Apple Music when it has them, else YouTube."
 	}
 	if err := one(ctx, huh.NewInput().Title("Paste a link").
-		Description("A song, album or playlist from YouTube, Apple Music, Spotify, SoundCloud or Bandcamp.\n"+
+		Description("A song, album or playlist from YouTube, Apple Music, Spotify, Tidal, SoundCloud or Bandcamp.\n"+
 			"Paste several separated by spaces.\n"+where).
 		Value(&in).Validate(func(s string) error {
 		links = links[:0]
 		for _, f := range strings.Fields(s) {
 			f = strings.Trim(f, `"'`)
-			if apple.IsURL(f) || spotify.IsURL(f) || engine.WebSite(f) != "" {
+			if apple.IsURL(f) || spotify.IsURL(f) || tidal.IsURL(f) || engine.WebSite(f) != "" {
 				links = append(links, f)
 				continue
 			}
 			l, ok := asURL(f)
 			if !ok {
-				return fmt.Errorf("%q isn't a YouTube, Apple Music, Spotify, SoundCloud or Bandcamp link", f)
+				return fmt.Errorf("%q isn't a YouTube, Apple Music, Spotify, Tidal, SoundCloud or Bandcamp link", f)
 			}
 			links = append(links, l)
 		}

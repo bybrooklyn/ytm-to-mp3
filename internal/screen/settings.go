@@ -21,6 +21,7 @@ type Settings struct {
 	cfg      config.Config
 	signedIn bool
 	appleIn  bool   // an Apple Music login is saved
+	tidalIn  bool   // a Tidal login is saved
 	provider string // the VPN provider's name for the account row ("" = Proton VPN)
 	user     string
 	cur      int
@@ -48,6 +49,9 @@ func (m *Settings) SetProvider(name string) { m.provider = name }
 
 // SetApple tells the screen whether an Apple Music login is saved.
 func (m *Settings) SetApple(in bool) { m.appleIn = in }
+
+// SetTidal tells the screen whether a Tidal login is saved.
+func (m *Settings) SetTidal(in bool) { m.tidalIn = in }
 
 // Cursor is the highlighted row (to come back to after an action).
 func (m *Settings) Cursor() int { return m.cur }
@@ -183,6 +187,11 @@ func (m *Settings) activate() {
 		if m.appleIn {
 			m.action = "appleout"
 		}
+	case rowTidal:
+		m.action = "tidalin"
+		if m.tidalIn {
+			m.action = "tidalout"
+		}
 	}
 }
 
@@ -226,6 +235,8 @@ func (m *Settings) change(d int) {
 		m.cfg.Jobs = clamp(m.cfg.Jobs+d, 0, MaxJobs)
 	case rowCountries:
 		m.cfg.Countries = cycle(countryChoices, m.cfg.Countries, d)
+	case rowTidalQuality:
+		m.cfg.TidalQuality = cycle([]string{"", "best"}, m.cfg.TidalQuality, d)
 	default:
 		return
 	}
@@ -265,6 +276,8 @@ const (
 	rowCountries
 	rowPremium
 	rowApple
+	rowTidal
+	rowTidalQuality
 	rowPrivate
 	rowTest
 )
@@ -297,6 +310,8 @@ var settingsRows = []struct {
 	{rowCountries, "Exit countries"},
 	{rowPremium, "YouTube Premium"},
 	{rowApple, "Apple Music"},
+	{rowTidal, "Tidal"},
+	{rowTidalQuality, "Tidal quality"},
 	{rowPrivate, "Private mode"},
 	{rowTest, "Test VPN"},
 }
@@ -407,6 +422,16 @@ func (m *Settings) value(k rowKind) (val, hint string, dim bool) {
 		return "not signed in", "optional: 256 kbps AAC with your Apple Music subscription; enter to sign in", false
 	case rowPrivate:
 		return onOff(m.cfg.Private), "no MusicBrainz tag or cover lookups at all (see PRIVACY.md); downloading still contacts your music source", false
+	case rowTidal:
+		if m.tidalIn {
+			return "signed in", "lossless FLAC with your own subscription; enter to sign out", false
+		}
+		return "not signed in", "optional: lossless FLAC with your own Tidal subscription (their terms don't allow it: you'll read the warning first); enter to sign in", false
+	case rowTidalQuality:
+		if m.cfg.TidalQuality == "best" {
+			return "best plain tier", "hi-res only when Tidal serves it as a plain file, else lossless; nothing encrypted is ever fetched", !m.tidalIn
+		}
+		return "lossless", "16-bit/44.1 kHz FLAC only; a song Tidal won't serve that way comes from Apple Music or YouTube", !m.tidalIn
 	case rowTest:
 		if !m.signedIn {
 			return "", "sign in first", true
@@ -521,6 +546,15 @@ func (m *Settings) describe(row *Row, k rowKind) {
 			row.Button = "Sign out"
 		}
 		row.Help = "Optional. 256 kbps AAC with your own Apple Music subscription."
+	case rowTidal:
+		row.Kind, row.Button = KindAction, "Sign in"
+		if m.tidalIn {
+			row.Button = "Sign out"
+		}
+		row.Help = "Optional. Lossless FLAC with your own Tidal subscription. Tidal's terms don't allow downloading: you read the warning first."
+	case rowTidalQuality:
+		row.Kind, row.Options = KindChoice, []string{"lossless", "best plain tier"}
+		row.Help = "Hi-res only when Tidal serves it as a plain file, else lossless. Nothing encrypted is ever fetched."
 	case rowPrivate:
 		toggle("No MusicBrainz tag or cover lookups at all. Downloading still contacts your music source. See PRIVACY.md.")
 	case rowTest:
@@ -545,7 +579,7 @@ func (m *Settings) SelectIndex(i int) {
 
 func isStepRow(k rowKind) bool {
 	switch k {
-	case rowFormat, rowAlbums, rowRetry, rowTagAfter, rowPremiumAfter, rowLyricsAfter, rowLyricsLRCLIB, rowLyricsNetEase, rowVPN, rowConns, rowJobs, rowCountries, rowPrivate:
+	case rowFormat, rowAlbums, rowRetry, rowTagAfter, rowPremiumAfter, rowLyricsAfter, rowLyricsLRCLIB, rowLyricsNetEase, rowVPN, rowConns, rowJobs, rowCountries, rowPrivate, rowTidalQuality:
 		return true
 	}
 	return false

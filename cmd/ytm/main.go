@@ -28,6 +28,7 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/takeout"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/tidal"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/vpn"
 )
@@ -430,7 +431,7 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	// best source there is (Apple Music when signed in and matched, otherwise YouTube).
 	var catalogLinks, webLinks, rest []string
 	for _, in := range inputs {
-		if t := strings.Trim(in, `"' `); spotify.IsURL(t) || apple.IsURL(t) {
+		if t := strings.Trim(in, `"' `); spotify.IsURL(t) || apple.IsURL(t) || tidal.IsURL(t) {
 			catalogLinks = append(catalogLinks, t)
 		} else if engine.WebSite(t) != "" {
 			webLinks = append(webLinks, t)

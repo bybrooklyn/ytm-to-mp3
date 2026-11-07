@@ -24,14 +24,22 @@ const (
 	Bandcamp   Source = "bandcamp"   // stream quality (128 kbps MP3), via yt-dlp
 
 	BandcampPurchase Source = "bandcamp-purchase" // the original files of music the user bought (FLAC when offered)
+
+	Tidal Source = "tidal" // 16-bit/44.1 kHz FLAC, with the user's own subscription
 )
 
 // Rank orders audio sources by quality for best-source selection (higher is
 // better). Spotify is metadata only, so it is not a download source.
+//
+// Ranks are always computed from a source's name, never read back from a number stored in
+// a music folder's database: the numbers change as sources are added (the store keeps the
+// name too), so a stored rank may be stale.
 func Rank(s Source) int {
 	switch s {
 	case BandcampPurchase:
-		return 4 // lossless or 320 kbps originals beat every stream
+		return 5 // lossless or 320 kbps originals beat every stream
+	case Tidal:
+		return 4 // lossless FLAC
 	case Apple:
 		return 3
 	case YouTube:
