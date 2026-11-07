@@ -925,9 +925,25 @@ func TestTagFlowFormAndBackingOut(t *testing.T) {
 	}
 }
 
+// caseInsensitiveDir reports whether dir's file system treats names that differ only by
+// capitals as the same (the default on macOS and Windows): then "Daft Punk" and "daft punk"
+// can't exist side by side and there is nothing to merge.
+func caseInsensitiveDir(t *testing.T, dir string) bool {
+	t.Helper()
+	if err := os.Mkdir(filepath.Join(dir, "CaseProbe"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := os.Stat(filepath.Join(dir, "caseprobe"))
+	_ = os.Remove(filepath.Join(dir, "CaseProbe"))
+	return err == nil
+}
+
 func TestTidyFlowMergesDuplicateFoldersAfterConfirmation(t *testing.T) {
 	sandbox(t)
 	root := t.TempDir()
+	if caseInsensitiveDir(t, root) {
+		t.Skip("this file system treats Daft Punk and daft punk as one folder: nothing to merge")
+	}
 	write := func(rel string) {
 		p := filepath.Join(root, rel)
 		_ = os.MkdirAll(filepath.Dir(p), 0o755)

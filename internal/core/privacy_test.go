@@ -15,6 +15,7 @@ func sandbox(t *testing.T) string {
 	d := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", d)
 	t.Setenv("HOME", d)
+	t.Setenv("USERPROFILE", d) // Windows finds the home folder through this, not HOME
 	t.Setenv("AppData", d)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(d, "cache"))
 	return d
