@@ -56,6 +56,7 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 		var choice string
 		err := one(ctx, huh.NewSelect[string]().Title("What do you want to do?").Options(
 			huh.NewOption("Download my YouTube Music library", "library"),
+			huh.NewOption("Download from all my accounts", "all"),
 			huh.NewOption("Download a link (YouTube, Apple Music, Spotify, SoundCloud, Bandcamp)", "link"),
 			huh.NewOption("Apple Music...", "apple"),
 			huh.NewOption("Connections (accounts and sources)", "connections"),
@@ -69,6 +70,8 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 		switch choice {
 		case "library":
 			err = libraryFlow(ctx, u, o)
+		case "all":
+			err = allAccountsFlow(ctx, u, o)
 		case "link":
 			err = linkFlow(ctx, u, o)
 		case "connections":
@@ -94,7 +97,7 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 			// A tool that failed shouldn't take the whole app with it: say why, and offer
 			// the menu again.
 			fmt.Println("\n" + ui.Mark(ui.Fail("✗"), ui.Sanitize(err.Error())))
-		case choice == "library" || choice == "link":
+		case choice == "library" || choice == "link" || choice == "all":
 			return nil // a download ran; we're done
 		}
 		back := true

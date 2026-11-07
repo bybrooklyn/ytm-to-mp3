@@ -1,0 +1,287 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"charm.land/huh/v2"
+
+	"github.com/bybrooklyn/ytm-to-mp3/internal/apple"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/bandcamp"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/catalog"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/library"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+)
+
+// albumMarkSource is the library_tracks source of the marker recorded for a Bandcamp album
+// purchase that has been downloaded. The album's songs are not known until it is fetched, so
+// the marker is how a later run knows the purchase is done. Store.Held lists no such source,
+// so it never shows up as a song.
+const albumMarkSource = "bandcamp-album"
+
+func albumMarkKey(url string) string { return "bcalbum:" + url }
+
+// allAccountsFlow reads the library of every account that is set up, merges them into one,
+// shows what is missing from the music folder and downloads it from the best source each
+// song has: a Bandcamp purchase's original files, then Apple Music, then YouTube.
+func allAccountsFlow(ctx context.Context, u *ui.UI, o opts) error {
+	srcs := library.Sources()
+	fmt.Println()
+	setUp := 0
+	for _, s := range srcs {
+		if st := s.Detect(); st.SetUp {
+			setUp++
+			fmt.Printf("  %s %s %s\n", ui.OK("✓"), ui.Bold(s.Name()), ui.Dim(st.Detail))
+		} else {
+			fmt.Printf("  %s %s %s\n", ui.Dim("–"), s.Name(), ui.Dim("skipped: "+st.Hint))
+		}
+	}
+	fmt.Println()
+	if setUp == 0 {
+		return errors.New("no account is set up yet: pick a browser or sign in under Connections")
+	}
+	ok := true
+	if err := one(ctx, huh.NewConfirm().Title("Read the library of "+count(setUp, "account")+"?").
+		Description("Each account is read only from its own service, from your own connection (not the VPN).\nBrowser sign-ins are read once, stay in memory and are never saved.").
+		Affirmative("Read").Negative("Back").Value(&ok)); err != nil {
+		return err
+	}
+	if !ok {
+		return errBack
+	}
+
+	var songs []library.Song
+	var results []library.SourceResult
+	if err := working(ctx, "Reading your accounts...", func(ctx context.Context) error {
+		songs, results = library.ReadAll(ctx, srcs, nil)
+		return ctx.Err()
+	}); err != nil {
+		return err
+	}
+	read := 0
+	for _, r := range results {
+		switch {
+		case r.Skipped:
+		case r.Err != nil:
+			u.Bad("%s · %v", r.Name, r.Err)
+		default:
+			read++
+			fmt.Printf("  %s %s %s\n", ui.OK("✓"), r.Name, ui.Dim(count(r.Songs, "song")))
+		}
+	}
+	if read == 0 {
+		return errors.New("none of the accounts could be read")
+	}
+
+	entries := library.Combine(songs)
+	if len(entries) == 0 {
+		return errors.New("the accounts have no songs")
+	}
+
+	// The music folder's database; a dry run in a folder with none must not create it.
+	var st *store.Store
+	if _, serr := os.Stat(filepath.Join(o.out, ".ytm")); serr == nil || !o.dryRun {
+		var err error
+		if st, err = store.Open(filepath.Join(o.out, ".ytm")); err != nil {
+			return err
+		}
+		defer st.Close()
+	}
+	plan := library.MakePlan(entries, heldForPlan(st))
+	printPlan(plan, o)
+
+	todo := plan.Todo()
+	if o.dryRun {
+		for _, it := range todo {
+			note := ""
+			if it.State == library.Upgrade {
+				note = "  (upgrade)"
+			}
+			u.Item(fmt.Sprintf("%-8s", sourceLabel(it.Best.Supply)), "%s%s", it.Entry.Track.Label(), note)
+		}
+		return nil
+	}
+	if len(todo) == 0 {
+		return nil
+	}
+	ok = true
+	if err := one(ctx, huh.NewConfirm().Title("Download?").Affirmative("Download").Negative("Back").Value(&ok)); err != nil {
+		return err
+	}
+	if !ok {
+		return errBack
+	}
+	return downloadPlan(ctx, u, o, st, srcs, todo)
+}
+
+// sourceLabel is a short name of an audio source for the preview.
+func sourceLabel(s catalog.Source) string {
+	switch s {
+	case catalog.BandcampPurchase:
+		return "bought"
+	case catalog.Apple:
+		return "apple"
+	}
+	return "youtube"
+}
+
+// printPlan shows the counts: songs per account, how many are new, how many would be
+// upgrades, where the downloads come from and roughly how big they are.
+func printPlan(p library.Plan, o opts) {
+	c := p.Counts()
+	fmt.Printf("\n  %s %s %s\n", ui.OK("✓"), ui.Bold(count(c.Total, "song")+" in all your accounts"),
+		ui.Dim("(merged, duplicates removed)"))
+	for _, a := range c.Accounts() {
+		only := ""
+		if n := c.OnlyOn[a]; n > 0 {
+			only = fmt.Sprintf(", %d only here", n)
+		}
+		fmt.Printf("    %s %s%s\n", ui.Dim("·"), fmt.Sprintf("%-14s %d", a, c.PerAccount[a]), ui.Dim(only))
+	}
+	fmt.Printf("\n    %s already in %s · %s new · %s to upgrade\n", ui.Bold(fmt.Sprint(c.Held)), tilde(o.out),
+		ui.Bold(fmt.Sprint(c.New)), ui.Bold(fmt.Sprint(c.Upgrades)))
+	var from []string
+	for _, s := range []catalog.Source{catalog.BandcampPurchase, catalog.Apple, catalog.YouTube} {
+		if n := c.Download[s]; n > 0 {
+			from = append(from, fmt.Sprintf("%d from %s", n, map[catalog.Source]string{
+				catalog.BandcampPurchase: "your Bandcamp purchases (original files)", catalog.Apple: "Apple Music", catalog.YouTube: "YouTube"}[s]))
+		}
+	}
+	if len(from) > 0 {
+		fmt.Printf("    %s%s%s\n", cDim, strings.Join(from, " · "), cReset)
+		if c.EstimateOf > 0 {
+			fmt.Printf("    %sabout %s (estimated from %s with a known length)%s\n", cDim,
+				engine.HumanBytes(c.EstimateBytes), count(c.EstimateOf, "song"), cReset)
+		}
+		fmt.Printf("    %s%s%s\n\n", cDim, extras(o), cReset)
+	} else {
+		fmt.Printf("    %sNothing to download.%s\n\n", cDim, cReset)
+	}
+}
+
+// heldForPlan looks entries up in the music folder: under their key, as the Apple song they
+// are, by title and artist, and (for a Bandcamp album purchase) by the marker saved when the
+// purchase was downloaded. st may be nil (a dry run with no database yet): nothing is held.
+func heldForPlan(st *store.Store) library.HeldFunc {
+	if st == nil {
+		return nil
+	}
+	byName := heldByName(st)
+	return func(e library.Entry, best library.Song) (library.HeldCopy, bool) {
+		if best.Whole {
+			if m := st.Library(albumMarkKey(best.OriginID)); m.Done && fileExists(m.Path) {
+				return library.HeldCopy{Source: catalog.BandcampPurchase, Rank: catalog.Rank(catalog.BandcampPurchase)}, true
+			}
+			if e.Whole {
+				return library.HeldCopy{}, false // the songs of an album we haven't fetched aren't known
+			}
+		}
+		it := &item{t: e.Track, key: e.Key, target: best.Supply}
+		if at, ok := best.Ref.(apple.Track); ok {
+			it.match = at
+		}
+		h, ok := heldCopy(st, byName, it)
+		if !ok {
+			return library.HeldCopy{}, false
+		}
+		return library.HeldCopy{Source: catalog.Source(h.source), Rank: h.quality}, true
+	}
+}
+
+// downloadPlan downloads the planned songs through the existing pipelines: purchases as the
+// original files (saveOwned), Apple Music songs through appleRun, the rest through the
+// YouTube engine.
+func downloadPlan(ctx context.Context, u *ui.UI, o opts, st *store.Store, srcs []library.LibrarySource, todo []library.Item) error {
+	var owned []bandcamp.Item
+	seen := map[string]bool{}
+	var tracks []catalog.Track
+	fromApple := map[string]apple.Track{}
+	for _, it := range todo {
+		best := it.Best
+		if best.Supply == catalog.BandcampPurchase {
+			if bi, ok := best.Ref.(bandcamp.Item); ok {
+				if k := bandcamp.Normalize(bi.URL); !seen[k] {
+					seen[k] = true
+					owned = append(owned, bi)
+				}
+				continue
+			}
+		}
+		t := it.Entry.Track
+		t.Origin, t.OriginID = best.Origin, best.OriginID
+		if at, ok := best.Ref.(apple.Track); ok && best.Supply == catalog.Apple {
+			fromApple[at.ID] = at
+		}
+		tracks = append(tracks, t)
+	}
+
+	ex := &runExits{ctx: ctx, u: u, o: o}
+	ex.tools = sync.OnceValues(func() (deps.Tools, error) { return deps.Ensure(ctx, u.Logf) })
+	defer ex.Close()
+	setCurrentRun(ex) // the tag fixing that follows reuses these exits
+	defer setCurrentRun(nil)
+
+	var firstErr error
+	if len(owned) > 0 {
+		var bc *library.Bandcamp
+		for _, s := range srcs {
+			if b, ok := s.(*library.Bandcamp); ok && b.Client != nil {
+				bc = b
+			}
+		}
+		if bc == nil {
+			u.Bad("Bandcamp purchases: the account was not read")
+		} else if tools, err := ex.ensureTools(ctx, u); err != nil {
+			return err
+		} else {
+			u.Head("Downloading %s in their original quality", count(len(owned), "Bandcamp purchase"))
+			err := saveOwnedAll(ctx, u, bc.Client, tools, st, o.out, owned, func(it bandcamp.Item) {
+				_ = st.LibraryPut(albumMarkKey(bandcamp.Normalize(it.URL)), it.Title, it.Artist, albumMarkSource,
+					catalog.Rank(catalog.BandcampPurchase), o.out)
+			})
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if len(tracks) == 0 || ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	xs, err := ex.get()
+	if err != nil {
+		return err
+	}
+	proxies := exitProxies(xs)
+	_ = apple.SetProxy(proxies[0])
+	ac := appleForUnified(ctx, u, o)
+	items := decideSources(ctx, u, ac, proxies, tracks, fromApple, o.maybe)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	appleItems, ytItems, _, _ := planUnified(st, items, true)
+	if len(appleItems) > 0 {
+		if err := runAppleItems(ctx, u, o, ac, st, proxies, appleItems); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if len(ytItems) > 0 && ctx.Err() == nil {
+		began := time.Now()
+		if err := runYouTubeItems(ctx, u, o, st, ex, xs, ytItems); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if firstErr == nil && ctx.Err() == nil {
+			firstErr = afterDownload(ctx, u, o, st, began)
+		}
+	}
+	return firstErr
+}

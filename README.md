@@ -97,6 +97,15 @@ Paste a SoundCloud or Bandcamp link (a song, an album or playlist, or an artist'
 
 Otherwise they serve music at stream quality (Bandcamp 128 kbps MP3, SoundCloud 128 kbps MP3 or AAC/Opus), so files keep the format the site serves rather than being re-encoded. These downloads go out from your own connection, not the VPN. SoundCloud's terms don't allow copying tracks whose uploader hasn't enabled downloads: the same applies here as to any yt-dlp use, so only download what you have the right to.
 
+## All my accounts at once
+
+**Download from all my accounts** (main menu) reads the library of every account you have set up, merges them into one list and downloads what your music folder is missing, each song from the best source any of your accounts can give: a Bandcamp purchase's original files, then Apple Music (256 kbps AAC), then YouTube. First it shows which accounts it will use (YouTube Music and Bandcamp via the browser chosen under **Connections**, Apple Music via your Apple sign-in; accounts not set up are skipped with a hint), asks before reading, then previews: songs per account, how many are already held, how many are new, how many would be upgrades (say, a YouTube copy of an album you bought on Bandcamp) and a rough size.
+
+- **One song, many accounts:** songs match by ISRC when both sides have one, otherwise by title, artist and album (editions like "Deluxe" are one album, "feat." credits don't split a song). The merged song keeps the best of each field (the same rules as tag merging). A Bandcamp album purchase supplies every song of that album found in your other accounts; Bandcamp doesn't list an album's tracks, so one you haven't downloaded yet is fetched as the album.
+- **Apple Music** reads your library's songs that have an Apple Music version (songs you uploaded yourself are left out).
+- **What it sends:** each account is read only from its own service (YouTube Music from music.youtube.com, Bandcamp from bandcamp.com, Apple from amp-api.music.apple.com), from your own connection, not the VPN. Browser sign-ins are read once, kept in memory and never saved or sent elsewhere; nothing is read for an account you haven't set up. Downloads then work as everywhere else in ytm.
+- Running it again right after plans nothing new.
+
 ## Metadata
 
 Everything YouTube knows is kept: title, artist(s), album, release or upload date, genre, track number, a link back to the video, and square cover art. The CSV from Google takes priority over what YouTube reports.
