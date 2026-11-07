@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"strconv"
 	"strings"
+	"sync"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -32,6 +33,12 @@ type view struct {
 	header, shell    *fyne.Container
 	scroll           *container.Scroll
 	selected         fyne.CanvasObject // the cursor row, kept in view
+
+	mu sync.Mutex // draw
+
+	// The Downloads page (see downloads.go).
+	dl    *screen.Downloads
+	entry *widget.Entry
 }
 
 // minWindow is the smallest the window can be made.
@@ -502,6 +509,10 @@ func (v *view) section(heading string, rows []fyne.CanvasObject) fyne.CanvasObje
 }
 
 func (v *view) draw(st screen.View) {
+	// Fyne runs this on its one UI thread; the lock is for a test driver, which runs
+	// callbacks on whichever goroutine made them.
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.selected = nil
 	v.bgRect.FillColor = pal(theme.ColorNameBackground)
 	v.sideRect.FillColor = pal(colSidebar)
@@ -549,6 +560,11 @@ func (v *view) draw(st screen.View) {
 	v.top.Refresh()
 	v.header.Refresh()
 	v.shell.Refresh() // the header's height changes with its notice
+
+	if s.Downloads != nil && v.dl != nil {
+		v.drawDownloads(*s.Downloads)
+		return
+	}
 
 	// Sections.
 	var secs []fyne.CanvasObject

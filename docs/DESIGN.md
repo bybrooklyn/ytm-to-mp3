@@ -60,8 +60,11 @@ settings layouts, and the common thread of all three:
    The model decides; the window draws. No window-only features.
 6. **Honest copy.** "Sign-in happens in the terminal" is a banner next to the thing you
    clicked, stating what to run. No exclamation marks, no emoji, no "oops".
-7. **Room to grow.** The sidebar is built from the list of tabs; Library, Downloads and
-   Lyrics later are another tab each, not a redesign. (They are not built yet.)
+7. **Room to grow.** The sidebar is built from the list of tabs; Library and Lyrics later
+   are another tab each, not a redesign. Downloads is the first of them: an input section,
+   a live queue (one grouped list per source, progress as a flat bar, a status word beside
+   every dot) and, once a run is over, a summary above the queue. Questions a run asks are
+   native dialogs. The queue shows at most 40 songs per source and counts the rest.
 
 ## Palette
 

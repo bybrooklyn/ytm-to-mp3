@@ -43,6 +43,7 @@ type Downloads struct {
 	// events are coalesced: it is called at most about four times a second for them.
 	OnChange func()
 	lastPing time.Time
+	trailing bool // a delayed OnChange is already scheduled
 }
 
 // RunFunc runs one download: inputs as typed or dropped, events to sink. It returns how the
@@ -369,6 +370,9 @@ func (d *Downloads) Emit(e jobs.Event) {
 	case jobs.Progress:
 		if it.State != DLDone && it.State != DLUpgraded {
 			it.State = DLWorking
+			if it.Stage == "" {
+				it.Stage = "downloading"
+			}
 			if e.Bytes > it.Bytes {
 				d.addBytes(e.Bytes - it.Bytes)
 			}
@@ -412,11 +416,25 @@ func (d *Downloads) addBytes(n int64) {
 	}
 }
 
-// changed tells the window. Progress-only changes are coalesced.
+// changed tells the window. Progress-only changes are coalesced: one that comes too soon
+// after the last is sent a moment later instead of being dropped.
 func (d *Downloads) changed(now bool) {
 	d.mu.Lock()
 	f := d.OnChange
-	if f == nil || (!now && time.Since(d.lastPing) < 250*time.Millisecond) {
+	if f == nil {
+		d.mu.Unlock()
+		return
+	}
+	if wait := 250*time.Millisecond - time.Since(d.lastPing); !now && wait > 0 {
+		if !d.trailing {
+			d.trailing = true
+			time.AfterFunc(wait, func() {
+				d.mu.Lock()
+				d.trailing = false
+				d.mu.Unlock()
+				d.changed(true)
+			})
+		}
 		d.mu.Unlock()
 		return
 	}
