@@ -112,6 +112,7 @@ type opts struct {
 	premiumLimit   int
 	// after a download: fix the new songs' tags, and run the Premium upgrade if signed in
 	tagAfter, premiumAfter bool
+	lyricsAfter            bool // fetch lyrics (a .lrc beside each song and a tag in it) for the new songs
 	// ytm apple match: replace the YouTube copies; also take the less certain matches
 	replace, maybe bool
 	// source forces the audio source for a unified (Spotify) import: "" = best available
@@ -149,6 +150,7 @@ func parse(name string, args []string) (opts, []string, error) {
 	fs.IntVar(&o.premiumLimit, "premium-limit", 300, "")
 	fs.BoolVar(&o.tagAfter, "tag-after", false, "")
 	fs.BoolVar(&o.premiumAfter, "premium-after", false, "")
+	fs.BoolVar(&o.lyricsAfter, "lyrics-after", false, "")
 	fs.BoolVar(&o.replace, "replace", false, "")
 	fs.BoolVar(&o.maybe, "maybe", false, "")
 	fs.StringVar(&o.source, "source", "", "")
@@ -210,6 +212,9 @@ func parse(name string, args []string) (opts, []string, error) {
 	}
 	if !given["premium-after"] {
 		o.premiumAfter = !cfg.NoPremiumAfter
+	}
+	if !given["lyrics-after"] {
+		o.lyricsAfter = !cfg.NoLyricsAfter
 	}
 	return o, pos, nil
 }
@@ -630,6 +635,17 @@ func afterDownload(ctx context.Context, u *ui.UI, o opts, st *store.Store, since
 					return context.Canceled
 				}
 				u.Bad("tags: %v", err)
+			}
+		}
+	}
+	if o.lyricsAfter {
+		if files := st.DoneSince(since); len(files) > 0 {
+			u.Head("Fetching lyrics for %s · turn off in settings", count(len(files), "new song"))
+			if err := fetchLyrics(ctx, u, o.out, files); err != nil {
+				if ctx.Err() != nil {
+					return context.Canceled
+				}
+				u.Bad("lyrics: %v", err)
 			}
 		}
 	}

@@ -99,6 +99,7 @@ var mp3Keys = map[string]string{
 	"label":                     "publisher", // TPUB
 	"barcode":                   "BARCODE",
 	"explicit":                  "",
+	"lyrics":                    "lyrics-eng", // a USLT frame (plain "lyrics" would be a TXXX most players ignore)
 	"musicbrainz_trackid":       "MusicBrainz Track Id",
 	"musicbrainz_albumid":       "MusicBrainz Album Id",
 	"musicbrainz_artistid":      "MusicBrainz Artist Id",
@@ -110,7 +111,7 @@ var mp3Keys = map[string]string{
 var m4aKeys = map[string]bool{
 	"title": true, "artist": true, "album": true, "album_artist": true, "date": true,
 	"genre": true, "comment": true, "composer": true, "copyright": true,
-	"track": true, "disc": true,
+	"track": true, "disc": true, "lyrics": true,
 }
 
 // readKeys: names ffprobe may report (lower-cased) -> canonical name.
@@ -129,4 +130,5 @@ var readKeys = map[string]string{
 	"musicbrainz artist id":       "musicbrainz_artistid",
 	"musicbrainz album artist id": "musicbrainz_albumartistid",
 	"itunesadvisory":              "explicit",
+	"lyrics-eng":                  "lyrics", // ID3 USLT as ffprobe reports it
 }

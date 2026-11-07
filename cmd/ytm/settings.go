@@ -24,6 +24,9 @@ const (
 	rowRetry
 	rowTagAfter
 	rowPremiumAfter
+	rowLyricsAfter
+	rowLyricsLRCLIB
+	rowLyricsNetEase
 	rowVPN
 	rowAccount
 	rowConns
@@ -52,6 +55,9 @@ var settingsRows = []struct {
 	{rowRetry, "Retry unavailable"},
 	{rowTagAfter, "Fix tags after"},
 	{rowPremiumAfter, "Premium upgrade after"},
+	{rowLyricsAfter, "Fetch lyrics after"},
+	{rowLyricsLRCLIB, "Lyrics from LRCLIB"},
+	{rowLyricsNetEase, "Lyrics from NetEase"},
 	{rowVPN, "VPN"},
 	{rowAccount, "Proton account"},
 	{rowConns, "VPN connections"},
@@ -213,6 +219,12 @@ func (m *settingsModel) change(d int) {
 		m.cfg.NoTagAfter = !m.cfg.NoTagAfter
 	case rowPremiumAfter:
 		m.cfg.NoPremiumAfter = !m.cfg.NoPremiumAfter
+	case rowLyricsAfter:
+		m.cfg.NoLyricsAfter = !m.cfg.NoLyricsAfter
+	case rowLyricsLRCLIB:
+		m.cfg.NoLyricsLRCLIB = !m.cfg.NoLyricsLRCLIB
+	case rowLyricsNetEase:
+		m.cfg.LyricsNetEase = !m.cfg.LyricsNetEase
 	case rowVPN:
 		if !m.vpnUsable() {
 			m.err = "sign in to Proton first"
@@ -294,6 +306,12 @@ func (m *settingsModel) value(k rowKind) (val, hint string, dim bool) {
 			hint = "needs a YouTube Premium sign-in: set it up in the YouTube Premium row below"
 		}
 		return onOff(!m.cfg.NoPremiumAfter), hint, !m.cfg.Premium
+	case rowLyricsAfter:
+		return onOff(!m.cfg.NoLyricsAfter), "new songs get line-synced lyrics (a .lrc beside the file and a tag in it), plain ones if that is all there is", false
+	case rowLyricsLRCLIB:
+		return onOff(!m.cfg.NoLyricsLRCLIB), "lrclib.net: free, community lyrics; it is told a song's title, artist, album and length, nothing else", false
+	case rowLyricsNetEase:
+		return onOff(m.cfg.LyricsNetEase), "unofficial: music.163.com, asked only if LRCLIB has nothing; it is told the title and artist", false
 	case rowVPN:
 		if !m.signedIn {
 			return "off", "sign in to Proton below to use it", true
@@ -415,7 +433,7 @@ func printErr(err error) {
 
 func isStepRow(k rowKind) bool {
 	switch k {
-	case rowFormat, rowAlbums, rowRetry, rowTagAfter, rowPremiumAfter, rowVPN, rowConns, rowJobs, rowCountries:
+	case rowFormat, rowAlbums, rowRetry, rowTagAfter, rowPremiumAfter, rowLyricsAfter, rowLyricsLRCLIB, rowLyricsNetEase, rowVPN, rowConns, rowJobs, rowCountries:
 		return true
 	}
 	return false
