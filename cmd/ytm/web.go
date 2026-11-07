@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -16,10 +18,13 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/catalog"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/httpfetch"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/jobs"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/verify"
 )
 
 // webCatalog is a site track in the shared song identity.
@@ -69,15 +74,19 @@ func downloadWeb(ctx context.Context, u *ui.UI, o opts, ex *runExits, links []st
 	var tracks []engine.WebTrack
 	seen := map[string]bool{}
 	for _, l := range links {
+		// A status row, not a full-screen spinner: other sources may be drawing at the same time.
 		var ts []engine.WebTrack
-		if err := working(ctx, "Looking up "+truncURL(l)+"...", func(c context.Context) (e error) {
-			ts, e = engine.ListWeb(c, tools, "", l)
+		u.Status("Looking up %s", truncURL(l))
+		err := jobs.Retry(ctx, 2, 2*time.Second, func() (e error) {
+			ts, e = engine.ListWeb(ctx, tools, "", l)
 			return
-		}); err != nil {
+		})
+		u.ClearStatus()
+		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			u.Bad("%s · %v", truncURL(l), err)
+			u.Bad("%s · %s", truncURL(l), jobs.Human(err))
 			continue
 		}
 		for _, t := range ts {
@@ -126,26 +135,52 @@ func downloadWeb(ctx context.Context, u *ui.UI, o opts, ex *runExits, links []st
 		return nil
 	}
 
-	jobs := make(chan engine.WebTrack)
+	ex.led.NoteHeld(held)
+	httpfetch.Sweep(filepath.Join(o.out, ".ytm", "partial"), 3*24*time.Hour)
+	queue := make(chan engine.WebTrack)
 	var wg sync.WaitGroup
 	var ok, failed atomic.Int32
 	var mu sync.Mutex
+	br := jobs.NewBreaker(4) // SoundCloud/Bandcamp refusing again and again: stop, say so once
 	for i := 0; i < 3; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for t := range jobs {
+			for t := range queue {
 				if ctx.Err() != nil {
 					return
 				}
-				err := saveWeb(ctx, tools, st, o.out, t)
-				mu.Lock()
-				if err != nil {
+				ct := ct0(t)
+				ev := jobs.Event{ID: ct.Key(), Label: ct.Label(), Source: string(ct.Origin)}
+				if br.Open() {
+					ev.Kind, ev.Reason, ev.Class, ev.Retryable = jobs.Failed, "skipped: "+br.Why(), jobs.ClassThrottle, true
 					failed.Add(1)
-					u.Bad("%s · %v", ct0(t).Label(), err)
-				} else {
+					ex.record(ev) // counted in the summary; the one message was already printed
+					continue
+				}
+				path, err := saveWeb(ctx, tools, st, o.out, t)
+				mu.Lock()
+				switch {
+				case ctx.Err() != nil:
+				case err != nil:
+					failed.Add(1)
+					if br.Record(err) {
+						u.Warn("%s keeps refusing · %s", sourceName(ev.Source), br.Why())
+						u.Hint("the rest of its songs are skipped for this run · run ytm again later to continue")
+					}
+					ev.Kind, ev.Reason = jobs.Failed, jobs.Human(err)
+					ev.Class = jobs.Classify(err)
+					ev.Retryable = ev.Class.Retryable()
+					if br.Open() {
+						ex.record(ev)
+					} else {
+						ex.emit(ev)
+					}
+				default:
+					br.Record(nil)
 					ok.Add(1)
-					u.Good("%s", ct0(t).Label())
+					ev.Kind, ev.Path = jobs.Done, path
+					ex.emit(ev)
 				}
 				mu.Unlock()
 			}
@@ -154,12 +189,12 @@ func downloadWeb(ctx context.Context, u *ui.UI, o opts, ex *runExits, links []st
 loop:
 	for _, t := range todo {
 		select {
-		case jobs <- t:
+		case queue <- t:
 		case <-ctx.Done():
 			break loop
 		}
 	}
-	close(jobs)
+	close(queue)
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
 		return err
@@ -179,15 +214,25 @@ func truncURL(s string) string {
 }
 
 // saveWeb fetches one song, tags it, moves it into place and records it.
-func saveWeb(ctx context.Context, tools deps.Tools, st *store.Store, root string, t engine.WebTrack) error {
-	tmpDir, err := os.MkdirTemp(root, ".ytm-web-")
-	if err != nil {
-		return err
+func saveWeb(ctx context.Context, tools deps.Tools, st *store.Store, root string, t engine.WebTrack) (string, error) {
+	// A work folder named after the link, inside .ytm (the library's own disk, so the final
+	// rename is atomic). It is kept when the fetch is cut short, so the next run resumes the
+	// partial download, and removed once the song is filed or failed for good.
+	sum := sha1.Sum([]byte(t.URL))
+	tmpDir := filepath.Join(root, ".ytm", "partial", "web-"+hex.EncodeToString(sum[:6]))
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		return "", err
 	}
-	defer os.RemoveAll(tmpDir)
+	keep := false
+	defer func() {
+		if !keep {
+			os.RemoveAll(tmpDir)
+		}
+	}()
 	got, err := engine.FetchWeb(ctx, tools, "", t, tmpDir, nil)
 	if err != nil {
-		return err
+		keep = ctx.Err() != nil || jobs.Classify(err).Retryable()
+		return "", err
 	}
 	cover := ""
 	if t.Cover != "" {
@@ -216,20 +261,27 @@ func saveWeb(ctx context.Context, tools deps.Tools, st *store.Store, root string
 	opt("date", t.Date)
 	opt("genre", t.Genre)
 	if err := tag.Write(ctx, tools.FFmpeg, tools.FFprobe, got, set, cover); err != nil {
-		return fmt.Errorf("tag: %w", err)
+		return "", fmt.Errorf("tag: %w", err)
 	}
-	dest := webPath(root, t, strings.ToLower(filepath.Ext(got)))
+	ext := strings.ToLower(filepath.Ext(got))
+	// Never file a damaged or cut-short download (a stream that ended early).
+	if err := verify.File(ctx, tools.FFprobe, got, verify.Want{Ext: ext, Duration: t.Duration}); err != nil {
+		return "", err
+	}
+	dest := webPath(root, t, ext)
+	ct := webCatalog(t)
 	if fileExists(dest) {
-		return nil // same name already there (another copy of the song): keep it
+		// The same name is already there (another copy of the song): keep it, and remember it
+		// under this song's key so the next run doesn't fetch it again.
+		return dest, st.LibraryPut(ct.Key(), t.Title, t.Artist, string(ct.Origin), catalog.Rank(ct.Origin), dest)
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return err
+		return "", err
 	}
 	if err := os.Rename(got, dest); err != nil {
-		return err
+		return "", err
 	}
-	ct := webCatalog(t)
-	return st.LibraryPut(ct.Key(), t.Title, t.Artist, string(ct.Origin), catalog.Rank(ct.Origin), dest)
+	return dest, st.LibraryPut(ct.Key(), t.Title, t.Artist, string(ct.Origin), catalog.Rank(ct.Origin), dest)
 }
 
 // fetchCover downloads a cover image (https only, at most 10 MB) to dst.

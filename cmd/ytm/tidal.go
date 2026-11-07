@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,11 +18,13 @@ import (
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/catalog"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/jobs"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/tidal"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/verify"
 )
 
 // tidalWarning is shown before every Tidal sign-in.
@@ -188,39 +191,93 @@ func tidalPath(root string, t tidal.Track) string {
 // runTidalItems downloads the Tidal items one at a time (gentle on the account), filing and
 // tagging each, and records them in the library. It returns the items that could not come
 // from Tidal (no plain lossless stream, an error), for the caller to fetch elsewhere.
-func runTidalItems(ctx context.Context, u *ui.UI, o opts, st *store.Store, ffmpeg, ffprobe string, tc *tidal.Client, items []*item) (failed []*item, err error) {
+func runTidalItems(ctx context.Context, u *ui.UI, o opts, ex *runExits, st *store.Store, ffmpeg, ffprobe string, tc *tidal.Client, items []*item) (failed []*item, err error) {
 	q := tidalQuality()
-	var okN, heldN int
-	for i, it := range items {
-		if ctx.Err() != nil {
-			return append(failed, items[i:]...), ctx.Err()
-		}
-		label := it.t.Label()
-		var last atomic.Int64
-		res, err := tidalSave(ctx, tc, st, ffmpeg, ffprobe, o.out, it, q, func(done, total int64) {
-			if total > 0 && time.Now().UnixMilli()-last.Load() > 200 {
-				last.Store(time.Now().UnixMilli())
-				u.Status("Tidal %d/%d · %s · %d%%", i+1, len(items), label, done*100/total)
+	// Two at a time: enough to keep the line busy while one song is being tagged, still
+	// gentle on the account. If Tidal keeps refusing (login, rate limit) the breaker stops
+	// using it for the rest of the run with one message, and the remaining songs go on to
+	// the next best source.
+	const workers = 2
+	br := jobs.NewBreaker(3)
+	var mu sync.Mutex
+	var okN, heldN, finished int
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= len(items) {
+					return
+				}
+				it := items[i]
+				mu.Lock()
+				stop := br.Open() || ctx.Err() != nil
+				if stop {
+					failed = append(failed, it)
+				}
+				mu.Unlock()
+				if stop {
+					continue
+				}
+				label := it.t.Label()
+				id := it.key
+				var last atomic.Int64
+				var res string
+				err := jobs.Retry(ctx, 2, 2*time.Second, func() (e error) {
+					res, e = tidalSave(ctx, tc, st, ffmpeg, ffprobe, o.out, it, q, func(done, total int64) {
+						if total > 0 && time.Now().UnixMilli()-last.Load() > 200 {
+							last.Store(time.Now().UnixMilli())
+							u.Status("Tidal %d/%d · %s · %d%%", finished+1, len(items), label, done*100/total)
+						}
+					})
+					if errors.Is(e, errTidalExists) {
+						return nil
+					}
+					return e
+				})
+				mu.Lock()
+				finished++
+				switch {
+				case ctx.Err() != nil:
+					failed = append(failed, it)
+				case err == nil && res == "":
+					heldN++
+					ex.emit(jobs.Event{Kind: jobs.Skipped, ID: id, Label: label, Source: "tidal", Reason: "already on disk"})
+				case err != nil:
+					opened := br.Record(err)
+					u.Warn("%s · Tidal: %s", label, jobs.Human(err))
+					if opened {
+						u.Warn("Tidal keeps refusing · %s", br.Why())
+						u.Hint("the rest of this run's Tidal songs come from the next best source")
+					} else if !br.Open() {
+						u.Hint("getting it from %s instead", map[bool]string{true: "Apple Music", false: "YouTube"}[it.match.ID != ""])
+					}
+					failed = append(failed, it)
+				default:
+					br.Record(nil)
+					okN++
+					kind := jobs.Done
+					if it.upgrade {
+						kind = jobs.Upgraded
+					}
+					dest := st.Library(it.key).Path
+					ex.emit(jobs.Event{Kind: kind, ID: id, Label: label, Source: "tidal", Path: dest, Quality: "Tidal " + res})
+				}
+				mu.Unlock()
 			}
-		})
-		u.ClearStatus()
-		switch {
-		case ctx.Err() != nil:
-			return append(failed, items[i:]...), ctx.Err()
-		case errors.Is(err, errTidalExists):
-			heldN++
-		case err != nil:
-			u.Warn("%s · Tidal: %v", label, err)
-			u.Hint("getting it from %s instead", map[bool]string{true: "Apple Music", false: "YouTube"}[it.match.ID != ""])
-			failed = append(failed, it)
-		default:
-			okN++
-			u.Good("%s · Tidal %s", label, res)
-		}
+		}()
+	}
+	wg.Wait()
+	u.ClearStatus()
+	if ctx.Err() != nil {
+		return failed, ctx.Err()
 	}
 	u.Styled(runSummary(okN, 0, 0, 0, "Tidal"))
 	if len(failed) > 0 {
-		u.Note("%s not available as plain lossless: fetched from another source", count(len(failed), "song"))
+		u.Note("%s not available from Tidal: fetched from another source", count(len(failed), "song"))
 	}
 	if heldN > 0 {
 		u.Note("%s already on disk", count(heldN, "song"))
@@ -247,7 +304,14 @@ func tidalSave(ctx context.Context, tc *tidal.Client, st *store.Store, ffmpeg, f
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return "", err
 	}
-	tmp := filepath.Join(filepath.Dir(dest), ".ytm-tidal-"+strconv.FormatInt(t.ID, 10)+".flac")
+	// Work happens in .ytm/partial (the same disk as the library, so the final rename is
+	// atomic): an interrupted download leaves a resumable ".part" there, never a half file
+	// in the album folder.
+	partDir := filepath.Join(root, ".ytm", "partial")
+	if err := os.MkdirAll(partDir, 0o755); err != nil {
+		return "", err
+	}
+	tmp := filepath.Join(partDir, "tidal-"+strconv.FormatInt(t.ID, 10)+".flac")
 	_ = os.Remove(tmp)
 	defer os.Remove(tmp)
 	if err := tc.Download(ctx, s, tmp, progress); err != nil {
@@ -280,6 +344,10 @@ func tidalSave(ctx context.Context, tc *tidal.Client, st *store.Store, ffmpeg, f
 	}
 	if err := tag.Write(ctx, ffmpeg, ffprobe, tmp, set, cover); err != nil {
 		return "", fmt.Errorf("tag: %w", err)
+	}
+	// Never file a damaged or cut-short download.
+	if err := verify.File(ctx, ffprobe, tmp, verify.Want{Ext: ".flac", Duration: float64(t.DurationSec)}); err != nil {
+		return "", err
 	}
 	var backup string
 	if it.upgrade && fileExists(it.oldPath) {

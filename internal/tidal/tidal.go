@@ -73,6 +73,9 @@ type APIError struct {
 	Message string
 }
 
+// HTTPStatus lets jobs.Classify tell a refused login from a missing song.
+func (e *APIError) HTTPStatus() int { return e.Status }
+
 func (e *APIError) Error() string {
 	m := e.Message
 	if m == "" {

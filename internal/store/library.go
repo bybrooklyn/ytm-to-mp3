@@ -105,6 +105,16 @@ func (s *Store) TrackStatus(id string) (done bool, path string) {
 	return status == "done", path
 }
 
+// TrackOutcome is how a YouTube library track stands: its status ("done", "failed",
+// "pending"), whether a failure is permanent, and the error text.
+func (s *Store) TrackOutcome(id string) (status string, permanent bool, errText string) {
+	var perm int
+	if err := s.db.QueryRow(`SELECT status, permanent, error FROM tracks WHERE id=?`, id).Scan(&status, &perm, &errText); err != nil {
+		return "", false, ""
+	}
+	return status, perm == 1, errText
+}
+
 // HeldCopy is one downloaded song as the database knows it, from any source.
 type HeldCopy struct {
 	ID     string // YouTube video id (or a synthetic id) for youtube; Apple catalog id for apple

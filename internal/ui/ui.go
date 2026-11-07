@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,58 @@ type UI struct {
 	last   string   // the last frame written, to skip identical redraws
 	hidden bool     // the cursor is hidden while the block is up
 	in     *bufio.Reader
+
+	// Lanes let several things draw their own live rows at once (a run with Tidal, Apple
+	// Music and YouTube downloading side by side). A lane is a view of the UI made by Lane:
+	// it prints through the same terminal, and its Status/Block/ClearStatus set only its
+	// own rows, which the base UI stacks in the order the lanes first drew. With one lane
+	// the output is exactly what it always was.
+	parent    *UI
+	lane      string
+	laneOrder []string
+	laneRows  map[string][]string
+}
+
+// Lane returns a view of u whose live rows are its own. Every other method behaves as on u.
+func (u *UI) Lane(name string) *UI {
+	b := u.base()
+	return &UI{parent: b, lane: "lane:" + name}
+}
+
+func (u *UI) base() *UI {
+	if u.parent != nil {
+		return u.parent
+	}
+	return u
+}
+
+// setLane sets a lane's rows (nil removes it) and redraws the stacked block.
+func (u *UI) setLane(lane string, rows []string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.laneRows == nil {
+		u.laneRows = map[string][]string{}
+	}
+	if rows == nil {
+		delete(u.laneRows, lane)
+		u.laneOrder = slices.DeleteFunc(u.laneOrder, func(s string) bool { return s == lane })
+	} else {
+		if _, ok := u.laneRows[lane]; !ok {
+			u.laneOrder = append(u.laneOrder, lane)
+		}
+		u.laneRows[lane] = rows
+	}
+	var block []string
+	for _, l := range u.laneOrder {
+		block = append(block, u.laneRows[l]...)
+	}
+	if len(block) == 0 {
+		u.erase()
+		u.block = nil
+		return
+	}
+	u.block = block
+	u.frame(nil)
 }
 
 // Terminal control sequences used to draw the live block.
@@ -39,6 +92,7 @@ const (
 
 // Width is the terminal width in columns (80 when unknown).
 func (u *UI) Width() int {
+	u = u.base()
 	if f, ok := u.out.(*os.File); ok {
 		if w, _, err := term.GetSize(f.Fd()); err == nil && w > 0 {
 			return w
@@ -49,6 +103,7 @@ func (u *UI) Width() int {
 
 // Height is the terminal height in rows (24 when unknown).
 func (u *UI) Height() int {
+	u = u.base()
 	if f, ok := u.out.(*os.File); ok {
 		if _, h, err := term.GetSize(f.Fd()); err == nil && h > 0 {
 			return h
@@ -65,6 +120,7 @@ func New() *UI {
 
 // Interactive reports whether both ends are a terminal, so prompting makes sense.
 func (u *UI) Interactive() bool {
+	u = u.base()
 	st, err := os.Stdin.Stat()
 	return u.tty && err == nil && st.Mode()&os.ModeCharDevice != 0
 }
@@ -131,6 +187,7 @@ func (u *UI) frame(lines []string) {
 
 // Printf prints a line above the status line.
 func (u *UI) Printf(format string, a ...any) {
+	u = u.base()
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	msg := Sanitize(fmt.Sprintf(format, a...))
@@ -141,6 +198,7 @@ func (u *UI) Printf(format string, a ...any) {
 // Line prints "prefix text" above the live block. The prefix is the caller's own (it may
 // carry colour codes, dropped when not on a terminal); the text is untrusted and sanitized.
 func (u *UI) Line(prefix, text string) {
+	u = u.base()
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if !u.tty {
@@ -152,6 +210,7 @@ func (u *UI) Line(prefix, text string) {
 // Styled prints a line of the caller's own making above the live block, colours and all
 // (dropped when not on a terminal). Any untrusted text in it must go through Sanitize first.
 func (u *UI) Styled(s string) {
+	u = u.base()
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if !u.tty {
@@ -163,6 +222,7 @@ func (u *UI) Styled(s string) {
 // LineNote is Line with a dim note after the text ("✓ Artist - Song  · Album"). The note is
 // untrusted too and sanitized; "" leaves it out.
 func (u *UI) LineNote(prefix, text, note string) {
+	u = u.base()
 	note = strings.ReplaceAll(Sanitize(note), "\n", " ")
 	if note == "" {
 		u.Line(prefix, text)
@@ -189,15 +249,13 @@ func Sanitize(s string) string { return names.StripControl(s) }
 // "  ⠹ text" with a cyan spinner that turns each time it is updated, and the part after
 // " · " dimmed, like ytm's other lines.
 func (u *UI) Status(format string, a ...any) {
-	if !u.tty {
+	b := u.base()
+	if !b.tty {
 		return
 	}
 	text := strings.NewReplacer("\n", " ", "\t", " ").Replace(Sanitize(fmt.Sprintf(format, a...)))
 	frame := spinFrames[int(time.Now().UnixMilli()/100)%len(spinFrames)]
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.block = []string{Mark(Accent(frame), text)}
-	u.frame(nil)
+	b.setLane(u.lane, []string{Mark(Accent(frame), text)})
 }
 
 var spinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -206,13 +264,14 @@ var spinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"
 // colour codes; any untrusted text in them (titles, errors) must go through Sanitize first.
 // Ignored when not on a terminal.
 func (u *UI) Block(rows []string) {
-	if !u.tty {
+	b := u.base()
+	if !b.tty {
 		return
 	}
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.block = rows
-	u.frame(nil)
+	if rows == nil {
+		rows = []string{}
+	}
+	b.setLane(u.lane, rows)
 }
 
 // erase wipes the block from the screen (it stays remembered) and shows the cursor again.
@@ -235,6 +294,7 @@ func (u *UI) erase() {
 // RestoreCursor shows the cursor again without taking the lock, for a hard exit that may
 // happen while another goroutine is mid-draw.
 func (u *UI) RestoreCursor() {
+	u = u.base()
 	if u.tty {
 		io.WriteString(u.out, "\n"+showCursor)
 	}
@@ -242,14 +302,12 @@ func (u *UI) RestoreCursor() {
 
 // ClearStatus removes the live block for good.
 func (u *UI) ClearStatus() {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.erase()
-	u.block = nil
+	u.base().setLane(u.lane, nil)
 }
 
 // Ask prompts for a line of input; empty input returns def.
 func (u *UI) Ask(prompt, def string) string {
+	u = u.base()
 	u.mu.Lock()
 	u.erase()
 	p := Sanitize(prompt)
@@ -269,6 +327,7 @@ func (u *UI) Ask(prompt, def string) string {
 
 // Confirm asks a yes/no question. def is returned on empty input or when not interactive.
 func (u *UI) Confirm(prompt string, def bool) bool {
+	u = u.base()
 	if !u.Interactive() {
 		return def
 	}

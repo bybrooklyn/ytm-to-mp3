@@ -17,6 +17,7 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/catalog"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/jobs"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/lyrics"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
@@ -157,6 +158,7 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 		}
 		return false
 	})
+	ex.led.NoteHeld(heldN)
 	u.Styled(ui.Mark(ui.Accent("→"), sourceSummary(len(tidalItems), len(appleItems), len(ytItems), heldN, upgrades)))
 	if o.dryRun {
 		for _, it := range slices.Concat(tidalItems, appleItems, ytItems) {
@@ -172,48 +174,81 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 		return nil
 	}
 
+	// Each source works at its own pace in its own lane: a slow Tidal download doesn't hold
+	// up YouTube and the other way round. What Tidal can't give is the one dependency: those
+	// songs go to the next best source once Tidal is done, never dropped.
 	var firstErr error
+	var errMu sync.Mutex
+	setErr := func(err error) {
+		errMu.Lock()
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		errMu.Unlock()
+	}
+	began := time.Now()
+	var failedTidal []*item
+	var wg sync.WaitGroup
 	if len(tidalItems) > 0 {
 		tools, err := ex.ensureTools(ctx, u)
 		if err != nil {
 			return err
 		}
-		failed, err := runTidalItems(ctx, u, o, st, tools.FFmpeg, tools.FFprobe, tc, tidalItems)
-		if err != nil && firstErr == nil {
-			firstErr = err
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			failed, err := runTidalItems(ctx, u.Lane("Tidal"), o, ex, st, tools.FFmpeg, tools.FFprobe, tc, tidalItems)
+			setErr(err)
+			failedTidal = failed
+		}()
+	}
+	if len(appleItems) > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			setErr(runAppleItems(ctx, u.Lane("Apple Music"), o, ex, ac, st, proxies, appleItems))
+		}()
+	}
+	ytRan := false
+	if len(ytItems) > 0 {
+		ytRan = true
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			setErr(runYouTubeItems(ctx, u.Lane("YouTube"), o, st, ex, xs, ytItems))
+		}()
+	}
+	wg.Wait()
+
+	// The second pass: songs Tidal couldn't give (no plain lossless, an error, or Tidal
+	// stopped for the rest of the run) from Apple Music or YouTube.
+	var appleMore, ytMore []*item
+	for _, it := range failedTidal {
+		next := catalog.YouTube
+		if it.match.ID != "" {
+			next = catalog.Apple
 		}
-		// What Tidal couldn't give comes from the next best source, never dropped.
-		for _, it := range failed {
-			next := catalog.YouTube
-			if it.match.ID != "" {
-				next = catalog.Apple
-			}
-			if it.upgrade && it.heldRank >= catalog.Rank(next) {
-				continue // the copy already held is as good as the fallback
-			}
-			it.target = next
-			if next == catalog.Apple {
-				appleItems = append(appleItems, it)
-			} else {
-				ytItems = append(ytItems, it)
-			}
+		if it.upgrade && it.heldRank >= catalog.Rank(next) {
+			continue // the copy already held is as good as the fallback
+		}
+		it.target = next
+		if next == catalog.Apple {
+			appleMore = append(appleMore, it)
+		} else {
+			ytMore = append(ytMore, it)
 		}
 	}
-	if len(appleItems) > 0 && ctx.Err() == nil {
-		if err := runAppleItems(ctx, u, o, ac, st, proxies, appleItems); err != nil && firstErr == nil {
-			firstErr = err
-		}
+	if len(appleMore) > 0 && ctx.Err() == nil {
+		setErr(runAppleItems(ctx, u, o, ex, ac, st, proxies, appleMore))
 	}
-	if len(ytItems) > 0 && ctx.Err() == nil {
-		began := time.Now()
-		if err := runYouTubeItems(ctx, u, o, st, ex, xs, ytItems); err != nil && firstErr == nil {
-			firstErr = err
-		}
-		// Songs fetched from YouTube get the same MusicBrainz pass as a library download
-		// (Apple Music songs come fully tagged).
-		if firstErr == nil && ctx.Err() == nil {
-			firstErr = afterDownload(ctx, u, o, st, began)
-		}
+	if len(ytMore) > 0 && ctx.Err() == nil {
+		ytRan = true
+		setErr(runYouTubeItems(ctx, u, o, st, ex, xs, ytMore))
+	}
+	// Songs fetched from YouTube get the same MusicBrainz pass as a library download
+	// (Apple Music songs come fully tagged).
+	if ytRan && firstErr == nil && ctx.Err() == nil {
+		firstErr = afterDownload(ctx, u, o, st, began)
 	}
 	return firstErr
 }
@@ -612,24 +647,36 @@ func matchAppleAll(ctx context.Context, u *ui.UI, ac *apple.Client, proxies []st
 
 // runAppleItems downloads the Apple-matched items via the Apple pipeline and
 // records them in the library.
-func runAppleItems(ctx context.Context, u *ui.UI, o opts, ac *apple.Client, st *store.Store, proxies []string, items []*item) error {
+func runAppleItems(ctx context.Context, u *ui.UI, o opts, ex *runExits, ac *apple.Client, st *store.Store, proxies []string, items []*item) error {
 	s := &appleSession{c: ac, st: st, exits: proxies, close: func() {}}
-	jobs := make([]appleJob, len(items))
+	ajobs := make([]appleJob, len(items))
 	for i, it := range items {
-		jobs[i] = appleJob{t: it.match, dest: applePath(o.out, it.match)}
+		ajobs[i] = appleJob{t: it.match, dest: applePath(o.out, it.match)}
 		if it.upgrade {
 			// The old copy moves to .ytm/replaced; a library song stays counted as done,
 			// so a library download won't fetch it from YouTube again.
-			jobs[i].ytID, jobs[i].ytPath, jobs[i].replace = it.oldID, it.oldPath, true
+			ajobs[i].ytID, ajobs[i].ytPath, ajobs[i].replace = it.oldID, it.oldPath, true
 		}
 	}
-	err := appleRun(ctx, u, o, s, jobs)
+	err := appleRun(ctx, u, o, s, ajobs)
 	var fresh []string
 	for _, it := range items {
+		ev := jobs.Event{ID: it.key, Label: it.t.Label(), Source: "apple"}
 		if ast := st.Apple(it.match.ID); ast.Done && fileExists(ast.Path) {
 			_ = st.LibraryPut(it.key, it.t.Title, it.t.PrimaryArtist(), string(catalog.Apple), catalog.Rank(catalog.Apple), ast.Path)
 			fresh = append(fresh, ast.Path)
+			ev.Kind, ev.Path, ev.Quality = jobs.Done, ast.Path, "256 kbps AAC"
+			if it.upgrade {
+				ev.Kind = jobs.Upgraded
+			}
+		} else if ast.Permanent {
+			ev.Kind, ev.Reason, ev.Class = jobs.Failed, "Apple Music doesn't offer it to your account", jobs.ClassUnavailable
+		} else if ctx.Err() != nil {
+			ev.Kind = jobs.Queued
+		} else {
+			ev.Kind, ev.Reason, ev.Class, ev.Retryable = jobs.Failed, "Apple Music download didn't finish", jobs.ClassNetwork, true
 		}
+		ex.record(ev)
 	}
 	if o.lyricsAfter && err == nil && len(fresh) > 0 {
 		u.Head("Fetching lyrics for %s · turn off in settings", count(len(fresh), "Apple Music song"))
@@ -677,6 +724,11 @@ func runYouTubeItems(ctx context.Context, u *ui.UI, o opts, st *store.Store, ex 
 		Store: st, UI: u, CacheDir: filepath.Join(cache, "yt-dlp"), Exits: xs.Exits, Replace: xs.Replace, Healthy: xs.Healthy,
 		OnBlocked: xs.Blocked, OnGood: xs.Good, NewExits: xs.New, MusicFirst: musicFirst,
 	}, todo)
+	upgraded := map[string]bool{}
+	for id, it := range byID {
+		upgraded[id] = it.upgrade
+	}
+	ex.recordYouTube(st, todo, upgraded)
 	for id, it := range byID {
 		if done, path := st.TrackStatus(id); done && path != "" {
 			if it.upgrade {

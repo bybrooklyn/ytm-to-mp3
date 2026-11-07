@@ -190,7 +190,9 @@ func FetchWeb(ctx context.Context, tools deps.Tools, proxy string, t WebTrack, d
 	sum := sha1.Sum([]byte(t.URL))
 	name := "web-" + hex.EncodeToString(sum[:6])
 	args := []string{"--ignore-config", "--no-plugin-dirs", "--no-warnings", "--no-playlist", "--socket-timeout", "20",
-		"-f", "bestaudio/best", "--no-part", "--quiet",
+		// yt-dlp writes name.ext.part and renames it only when complete, and continues a
+		// leftover part when called again in the same dir: an interrupted fetch resumes.
+		"-f", "bestaudio/best", "--continue", "--quiet",
 		"--progress", "--newline", "--progress-template", progTemplate,
 		"-o", strings.ReplaceAll(filepath.Join(dir, name), "%", "%%") + ".%(ext)s",
 		"--print", "after_move:filepath", "--", t.URL}
