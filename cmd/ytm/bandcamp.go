@@ -15,10 +15,12 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/jobs"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/verify"
 )
 
 // chooseBandcampBrowser asks which browser is signed in to Bandcamp and remembers it.
@@ -159,12 +161,19 @@ func saveOwned(ctx context.Context, c *bandcamp.Client, tools deps.Tools, st *st
 		return 0, err
 	}
 	defer os.RemoveAll(tmp)
-	files, err := c.Fetch(ctx, formats[0], tmp)
-	if err != nil {
+	var files []string
+	if err := jobs.Retry(ctx, 2, 3*time.Second, func() (e error) {
+		files, e = c.Fetch(ctx, formats[0], tmp)
+		return e
+	}); err != nil {
 		return 0, err
 	}
 	added := 0
 	for _, f := range files {
+		// A damaged or empty extracted file is never filed.
+		if err := verify.File(ctx, "", f, verify.Want{Ext: strings.ToLower(filepath.Ext(f))}); err != nil {
+			return added, fmt.Errorf("%s: %w", filepath.Base(f), err)
+		}
 		info, err := tag.Probe(ctx, tools.FFprobe, f)
 		if err != nil {
 			return added, fmt.Errorf("reading %s: %w", filepath.Base(f), err)

@@ -18,10 +18,14 @@ import (
 	"time"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/apple"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/catalog"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/export"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/httpfetch"
+	batch "github.com/bybrooklyn/ytm-to-mp3/internal/inputs"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/jobs"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/screen"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/spotify"
@@ -393,15 +397,55 @@ func asURL(s string) (string, bool) {
 	return "", false
 }
 
+// download runs one batch of inputs of any mix. When songs failed for a reason that may pass
+// (a connection drop, a rate limit) it offers, on a terminal, to try just those again: the
+// state database already holds what arrived, so a second pass only redoes the rest.
 func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
+	for round := 0; ; round++ {
+		led := &jobs.Ledger{}
+		err := downloadOnce(ctx, u, o, led, inputs)
+		c := led.Counts()
+		if ctx.Err() != nil || c.Retryable == 0 || round >= 2 || !u.Interactive() {
+			return err
+		}
+		if !u.Confirm(fmt.Sprintf("%s failed for a reason that may pass. Try those again now?", count(c.Retryable, "song")), false) {
+			return err
+		}
+	}
+}
+
+func downloadOnce(ctx context.Context, u *ui.UI, o opts, led *jobs.Ledger, inputs []string) (rerr error) {
 	logf := u.Logf
 	var tools deps.Tools
 	removeLegacyCookies()
 
+	// One clean list from whatever was given: pasted blocks and lists of links are split,
+	// links normalised, duplicates dropped; lines that are no use are named, the rest goes on.
+	if len(inputs) > 0 {
+		res := batch.Parse(inputs)
+		for _, b := range res.Bad {
+			u.Warn("%s", b.String())
+		}
+		if res.Dups > 0 {
+			u.Note("%s dropped (the same link or file given twice)", count(res.Dups, "duplicate"))
+		}
+		if len(res.Items) == 0 {
+			if len(res.Bad) > 0 {
+				return fmt.Errorf("nothing to download: none of the %s could be used.\nPaste YouTube, Apple Music, Spotify, Tidal, SoundCloud or Bandcamp links (one per line is fine) or the path to a Takeout .zip or a text file of links", count(len(res.Bad), "line"))
+			}
+			if len(o.preset) == 0 {
+				return errors.New("nothing to download")
+			}
+		}
+		inputs = res.Values()
+	}
+
 	// The VPN is brought up the first time anything needs the network (so even looking up
 	// a pasted playlist goes out through it and not from your own address), and every part
 	// of the run shares it.
-	ex := &runExits{ctx: ctx, u: u, o: o}
+	ex := &runExits{ctx: ctx, u: u, o: o, led: led, sink: jobs.Multi{led, u.Sink()}}
+	// However the run ends (finished, failed, Ctrl-C), say what happened to each song.
+	defer func() { printRunSummary(u, led, ctx.Err() != nil) }()
 	ex.tools = sync.OnceValues(func() (deps.Tools, error) { return deps.Ensure(ctx, logf) })
 	defer ex.Close()
 	setCurrentRun(ex) // the tag fixing that follows reuses these exits
@@ -440,26 +484,32 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		}
 	}
 	// SoundCloud and Bandcamp links: yt-dlp finds the songs, ytm files and tags them.
+	// They run alongside the Spotify/Apple/Tidal part (which has its own lanes): the two
+	// don't share a source, so neither waits for the other.
+	var webErr error
+	var webDone sync.WaitGroup
 	if len(webLinks) > 0 {
-		if err := downloadWeb(ctx, u, o, ex, webLinks); err != nil {
-			return err
-		}
-		if len(catalogLinks) == 0 && len(rest) == 0 {
-			return nil
-		}
-		if len(catalogLinks) == 0 {
-			inputs = rest
-		}
+		webDone.Add(1)
+		go func() {
+			defer webDone.Done()
+			webErr = downloadWeb(ctx, u.Lane("web"), o, ex, webLinks)
+		}()
 	}
+	var catErr error
 	if len(catalogLinks) > 0 {
-		if err := downloadUnified(ctx, u, o, ex, catalogLinks); err != nil {
-			return err
-		}
-		if len(rest) == 0 {
-			return nil
-		}
-		inputs = rest
+		catErr = downloadUnified(ctx, u, o, ex, catalogLinks)
 	}
+	webDone.Wait()
+	if len(rest) == 0 || ctx.Err() != nil {
+		return errors.Join(catErr, webErr)
+	}
+	// A failed part is reported and the rest of the batch goes on.
+	for _, e := range []error{catErr, webErr} {
+		if e != nil {
+			u.Bad("%v", e)
+		}
+	}
+	inputs = rest
 
 	var tracks []model.Track
 	fromExport := false // some input was a Takeout export (a library import)
@@ -571,10 +621,33 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	if n, _ := st.ImportDisk(o.out, idFromTags(ctx, logf)); n > 0 {
 		u.Note("Recognised %d files already in %s", n, tilde(o.out))
 	}
+	// A song this run (or an earlier one) already fetched from a better source than YouTube,
+	// under another link, is not fetched again.
+	if byName := heldByName(st); len(byName) > 0 {
+		kept := tracks[:0:0]
+		better := 0
+		for _, t := range tracks {
+			if t.Title != "" {
+				if h, ok := byName[catalog.NameKey(t.Title, t.PrimaryArtist())]; ok && h.Source != "" &&
+					catalog.Rank(catalog.Source(h.Source)) > catalog.Rank(catalog.YouTube) && fileExists(h.Path) {
+					better++
+					continue
+				}
+			}
+			kept = append(kept, t)
+		}
+		if better > 0 {
+			u.Note("%s already held from a better source than YouTube, left alone", count(better, "song"))
+			led.NoteHeld(better)
+		}
+		tracks = kept
+	}
 	plan, err := st.Plan(tracks, o.retry)
 	if err != nil {
 		return err
 	}
+	led.NoteHeld(plan.Done)
+	httpfetch.Sweep(filepath.Join(o.out, ".ytm", "partial"), 3*24*time.Hour)
 	u.Styled(planLine(len(plan.Todo), plan.Done, o.out, o.format))
 	if plan.Skipped > 0 {
 		u.Note("%d tracks were unavailable last time and are skipped · --retry tries them again", plan.Skipped)
@@ -590,7 +663,7 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	}
 	began := time.Now()
 	if len(plan.Todo) == 0 {
-		return afterDownload(ctx, u, o, st, began)
+		return afterDownload(ctx, u, o, st, began, nil)
 	}
 
 	if err := ensure(); err != nil {
@@ -600,12 +673,14 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		return err
 	}
 	cache, _ := config.CacheDir()
+	pr := startPost(ctx, u, o, st, began) // tags and lyrics follow the downloads as songs arrive
 	sum := engine.Run(ctx, engine.Options{
 		Out: o.out, Format: o.format, Jobs: o.jobs, Tools: tools,
 		Store: st, UI: u, CacheDir: filepath.Join(cache, "yt-dlp"), Exits: xs.Exits, Replace: xs.Replace, Healthy: xs.Healthy,
 		OnBlocked: xs.Blocked, OnGood: xs.Good, NewExits: xs.New, MusicFirst: plan.MusicFirst, Replacements: plan.Replacements,
 	}, plan.Todo)
 
+	ex.recordYouTube(st, plan.Todo, nil)
 	u.Styled(runSummary(sum.Done, sum.Failed, sum.Bytes, sum.Elapsed, ""))
 	if os.Getenv("YTM_DEBUG") != "" { // per-exit detail is for debugging, not everyday output
 		if sum.Swaps > 0 {
@@ -638,39 +713,23 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 		}
 	}
 	if sum.Interrupted {
+		pr.Stop()
 		return context.Canceled
 	}
-	return afterDownload(ctx, u, o, st, began)
+	return afterDownload(ctx, u, o, st, began, pr)
 }
 
 // afterDownload runs the extras that follow a download (each on unless switched off in
 // settings): MusicBrainz tags for the songs just downloaded (not the whole library, which
 // would take an hour at MusicBrainz's one request a second), then the Premium upgrade if
 // a sign-in is set up.
-func afterDownload(ctx context.Context, u *ui.UI, o opts, st *store.Store, since time.Time) error {
-	if o.tagAfter && !config.Load().Private {
-		if files := st.DoneSince(since); len(files) > 0 {
-			u.Head("Fixing the tags of %s with MusicBrainz · turn off in settings", count(len(files), "new song"))
-			t := o
-			t.apply, t.rename, t.undo, t.offline = true, false, false, false
-			if err := runTag(ctx, u, t, o.out, files...); err != nil {
-				if ctx.Err() != nil {
-					return context.Canceled
-				}
-				u.Bad("tags: %v", err)
-			}
-		}
+func afterDownload(ctx context.Context, u *ui.UI, o opts, st *store.Store, since time.Time, pr *postRunner) error {
+	if pr == nil {
+		pr = startPost(ctx, u, o, st, since)
 	}
-	if o.lyricsAfter {
-		if files := st.DoneSince(since); len(files) > 0 {
-			u.Head("Fetching lyrics for %s · turn off in settings", count(len(files), "new song"))
-			if err := fetchLyrics(ctx, u, o.out, files); err != nil {
-				if ctx.Err() != nil {
-					return context.Canceled
-				}
-				u.Bad("lyrics: %v", err)
-			}
-		}
+	// The tag and lyrics passes have been following the downloads; this does what is left.
+	if err := pr.Finish(); err != nil {
+		return err
 	}
 	if files := st.DoneSince(since); len(files) > 0 {
 		writeSidecars(ctx, u, o.out, files)
@@ -723,10 +782,14 @@ type runExits struct {
 	// tools checks (and if need be fetches) yt-dlp and ffmpeg once per run, shared by every
 	// part of it and safe to start early in the background.
 	tools func() (deps.Tools, error)
-	once  sync.Once
-	done  chan struct{}
-	xs    exitSet
-	err   error
+	// led remembers how every song of the run ended (for the summary and the retry offer);
+	// sink is led plus the terminal, for sources that report through events.
+	led  *jobs.Ledger
+	sink jobs.Sink
+	once sync.Once
+	done chan struct{}
+	xs   exitSet
+	err  error
 }
 
 func (r *runExits) start() {

@@ -1,16 +1,17 @@
 package tidal
 
 import (
+	"time"
+
 	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/httpfetch"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/jobs"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 )
@@ -143,67 +144,32 @@ func (c *Client) Stream(ctx context.Context, id int64, q Quality) (Stream, error
 	return Stream{}, &NoStreamError{Reasons: reasons}
 }
 
-// Download fetches the stream to dst. The file is removed again if anything goes wrong
-// (including cancellation), so a partial file is never left looking finished.
+// fetchBackoff is the first delay between download retries (tests make it tiny).
+var fetchBackoff = time.Second
+
+// Download fetches the stream to dst through a resumable ".part" file next to it: a dropped
+// connection continues where it stopped (the CDN supports Range), a download that is
+// cancelled keeps its part for the next run, and dst only appears once the whole file has
+// arrived and looks like FLAC. A download that fails for good leaves nothing at dst.
 // progress, when set, gets bytes done and the total (0 if unknown).
-func (c *Client) Download(ctx context.Context, s Stream, dst string, progress func(done, total int64)) (err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.URL, nil)
-	if err != nil {
-		return err
-	}
+func (c *Client) Download(ctx context.Context, s Stream, dst string, progress func(done, total int64)) error {
 	// The address is a signed CDN link: no Authorization header goes to it.
 	hc := *c.HTTP
 	hc.Timeout = 0 // a lossless song takes longer than the API timeout; ctx bounds it
-	resp, err := hc.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return &APIError{Status: resp.StatusCode, Message: "the audio download was refused"}
-	}
-	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if cerr := f.Close(); err == nil {
-			err = cerr
-		}
-		if err != nil {
-			_ = os.Remove(dst)
-		}
-	}()
-	total := resp.ContentLength
-	var done int64
-	buf := make([]byte, 128<<10)
-	first := true
-	for {
-		n, rerr := resp.Body.Read(buf)
-		if n > 0 {
-			if first {
-				first = false
-				if !bytes.HasPrefix(buf[:n], []byte("fLaC")) && !bytes.HasPrefix(buf[:n], []byte("ID3")) {
-					return errors.New("the download isn't a FLAC file")
-				}
+	err := httpfetch.Download(ctx, s.URL, dst, httpfetch.Options{
+		Client:   &hc,
+		Progress: progress,
+		Backoff:  fetchBackoff,
+		Check: func(first []byte) error {
+			if !bytes.HasPrefix(first, []byte("fLaC")) && !bytes.HasPrefix(first, []byte("ID3")) {
+				return errors.New("the download isn't a FLAC file")
 			}
-			if _, werr := f.Write(buf[:n]); werr != nil {
-				return werr
-			}
-			done += int64(n)
-			if progress != nil {
-				progress(done, total)
-			}
-		}
-		if rerr == io.EOF {
-			break
-		}
-		if rerr != nil {
-			return rerr
-		}
+			return nil
+		},
+	})
+	var se *jobs.StatusError
+	if errors.As(err, &se) {
+		return &APIError{Status: se.Status, Message: "the audio download was refused"}
 	}
-	if total > 0 && done != total {
-		return fmt.Errorf("the download stopped early (%d of %d bytes)", done, total)
-	}
-	return ctx.Err()
+	return err
 }

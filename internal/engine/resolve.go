@@ -39,6 +39,17 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Msg }
 
+// JobClass names the failure for jobs.Classify: "throttle", "permanent" or "transient".
+func (e *Error) JobClass() string {
+	switch e.Kind {
+	case kindThrottled:
+		return "throttle"
+	case kindPermanent:
+		return "permanent"
+	}
+	return "transient"
+}
+
 func kindOf(err error) kind {
 	var e *Error
 	if errors.As(err, &e) {

@@ -25,6 +25,7 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/verify"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/vpn"
 )
 
@@ -1446,6 +1447,11 @@ func (e *engine) encodeJob(ctx context.Context, j *job) (string, error) {
 		err = runFFmpeg(ctx, e.Tools.FFmpeg, encodeArgs(j.src, "", tmpOut, e.Format, j.res.Acodec, meta))
 	}
 	if err != nil {
+		return "", err
+	}
+	// A cut-short or empty encode is never filed: it fails here (and is retried) rather than
+	// sitting in the library looking finished.
+	if err := verify.File(ctx, e.Tools.FFprobe, tmpOut, verify.Want{Ext: "." + e.Format, Duration: j.res.Duration, Loose: true}); err != nil {
 		return "", err
 	}
 	if err := store.Replace(tmpOut, final); err != nil { // atomic replace on unix

@@ -480,6 +480,7 @@ func TestDownload(t *testing.T) {
 		}
 	}))
 	defer cdn.Close()
+	fetchBackoff = time.Millisecond
 	_, c := newFake(t)
 	signedIn(c, time.Now().Add(time.Hour))
 	dir := t.TempDir()
@@ -508,6 +509,6 @@ func TestDownload(t *testing.T) {
 		t.Error("cancelled download reported success")
 	}
 	if _, err := os.Stat(d); !os.IsNotExist(err) {
-		t.Error("cancelled download left a file")
+		t.Error("cancelled download left a file at the destination")
 	}
 }
