@@ -52,6 +52,9 @@ type Screen struct {
 	Rows     []Row  `json:"rows"`
 	Footer   string `json:"footer,omitempty"`
 	Saved    bool   `json:"saved,omitempty"`
+	// Downloads is the page of the Downloads tab. Only graphical hosts draw it; a screen that
+	// has it has no rows.
+	Downloads *DownloadsView `json:"downloads,omitempty"`
 }
 
 // ANSI draws the screen for a terminal.

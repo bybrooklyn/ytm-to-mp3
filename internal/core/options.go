@@ -46,6 +46,18 @@ type Options struct {
 	Apply, Rename, Undo bool
 }
 
+// OptionsFromConfig are the options a run has when nothing is said on the command line: the
+// saved settings, with the defaults filled in.
+func OptionsFromConfig(cfg config.Config) Options {
+	o := Options{
+		Out: config.ExpandPath(orDefault(cfg.Out, config.DefaultOut())), Format: orDefault(cfg.Format, config.DefaultFormat),
+		Jobs: cfg.Jobs, Albums: !cfg.NoAlbums, AlbumsMin: 1, Retry: !cfg.NoRetry,
+		TagAfter: !cfg.NoTagAfter, PremiumAfter: !cfg.NoPremiumAfter, LyricsAfter: !cfg.NoLyricsAfter,
+		PremiumLimit: 300,
+	}
+	return o
+}
+
 // Extras says, in one line, what a download does besides downloading.
 func (o Options) Extras() string { return extras(o.internal(nil)) }
 
