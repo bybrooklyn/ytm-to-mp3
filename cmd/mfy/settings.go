@@ -14,7 +14,7 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
 
-// ytm's palette (internal/ui), under the names the screens here use.
+// mfetchy's palette (internal/ui), under the names the screens here use.
 var (
 	cDim    = ui.CDim
 	cBold   = ui.CBold

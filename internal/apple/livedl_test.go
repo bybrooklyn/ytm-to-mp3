@@ -12,10 +12,10 @@ import (
 )
 
 // TestLiveDownload performs one real Apple Music download using the
-// media-user-token found in a browser. Skipped unless YTM_APPLE_DL=1.
+// media-user-token found in a browser. Skipped unless MFY_APPLE_DL=1.
 func TestLiveDownload(t *testing.T) {
 	if appname.Getenv("APPLE_DL") != "1" {
-		t.Skip("set YTM_APPLE_DL=1 to run the live Apple download test")
+		t.Skip("set MFY_APPLE_DL=1 to run the live Apple download test")
 	}
 	if err := SetProxy(appname.Getenv("APPLE_PROXY")); err != nil {
 		t.Fatalf("SetProxy: %v", err)

@@ -32,7 +32,7 @@ type tstate struct {
 	total   atomic.Int64 // 0 = unknown (yt-dlp is downloading it)
 	music   atomic.Bool  // found by a YouTube Music search (its row gets a "ytm" badge)
 
-	// Stage timestamps for the YTM_DEBUG timing report. Each is written by the one stage
+	// Stage timestamps for the MFY_DEBUG timing report. Each is written by the one stage
 	// that owns the track at that moment; channel hand-offs order them.
 	resolvedAt, fetchStart, encodeStart time.Time
 	via                                 string // "direct", "yt-dlp", or with " (YT Music)"
@@ -88,7 +88,7 @@ func (s *liveSet) snapshot() []*tstate {
 	return out
 }
 
-// The palette is ytm's one (internal/ui); these short names keep the rows readable.
+// The palette is mfetchy's one (internal/ui); these short names keep the rows readable.
 var (
 	dim   = ui.CDim
 	bold  = ui.CBold
@@ -195,7 +195,7 @@ func (e *engine) liveRows(speed float64, began time.Time) []string {
 	if len(shown) > room {
 		shown = shown[:room]
 	}
-	// "  ↓ ytm   Artist - Title …  ████░░░░░░░░  42%  1.2 MB/3.4 MB": the label column
+	// "  ↓ mfetchy   Artist - Title …  ████░░░░░░░░  42%  1.2 MB/3.4 MB": the label column
 	// takes what the rest leaves.
 	tw := max(20, width-60)
 	for _, ts := range shown {

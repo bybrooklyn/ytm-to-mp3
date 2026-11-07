@@ -11,7 +11,7 @@
 //
 // An account holds at most 5 devices (WireGuard keys). Each simultaneous tunnel gets its
 // own key (so tunnels never share one), registered on first use; the limit therefore caps
-// how many tunnels ytm opens, counting devices other apps already hold.
+// how many tunnels mfetchy opens, counting devices other apps already hold.
 //
 // The account number is a secret: it is kept in a mode-0600 file, sent only in the body of
 // requests to api.mullvad.net, and never written to logs or error messages.
@@ -89,7 +89,7 @@ func (e *APIError) Error() string {
 	return s
 }
 
-// device is one key ytm registered (or is about to register) on the account.
+// device is one key mfetchy registered (or is about to register) on the account.
 type device struct {
 	Slot    int    `json:"slot"`
 	ID      string `json:"id,omitempty"` // empty until Mullvad has accepted the key
@@ -200,7 +200,7 @@ func (p *Provider) Login(ctx context.Context, account string) error {
 	return p.saveLocked()
 }
 
-// Logout removes ytm's devices from the account (best effort; a device slot is precious,
+// Logout removes mfetchy's devices from the account (best effort; a device slot is precious,
 // there are only 5) and forgets the account number and keys locally.
 func (p *Provider) Logout(ctx context.Context) {
 	p.mu.Lock()
@@ -241,7 +241,7 @@ func (p *Provider) do(ctx context.Context, method, path string, authed bool, in,
 			return err
 		}
 		req.Header.Set("Accept", "application/json")
-		req.Header.Set("User-Agent", "ytm") // nothing about this machine
+		req.Header.Set("User-Agent", "mfetchy") // nothing about this machine
 		if in != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
@@ -299,7 +299,7 @@ func (p *Provider) accessToken(ctx context.Context) (string, error) {
 	account := p.st.Account
 	p.mu.Unlock()
 	if account == "" {
-		return "", errors.New("not signed in to Mullvad: sign in in ytm's Settings")
+		return "", errors.New("not signed in to Mullvad: sign in in mfetchy's Settings")
 	}
 	var r struct {
 		AccessToken string    `json:"access_token"`
@@ -383,7 +383,7 @@ func (p *Provider) IdentityAt(ctx context.Context, slot int) (*vpnprovider.Key, 
 	p.mu.Lock()
 	if p.st.Account == "" {
 		p.mu.Unlock()
-		return nil, errors.New("not signed in to Mullvad: sign in in ytm's Settings")
+		return nil, errors.New("not signed in to Mullvad: sign in in mfetchy's Settings")
 	}
 	idx := -1
 	for i, d := range p.st.Devices {
@@ -439,7 +439,7 @@ func (p *Provider) IdentityAt(ctx context.Context, slot int) (*vpnprovider.Key, 
 func keyOf(d device) (*vpnprovider.Key, error) {
 	priv, err := base64.StdEncoding.DecodeString(d.Private)
 	if err != nil || len(priv) != 32 {
-		return nil, errors.New("the saved Mullvad key is damaged: sign out and in again in ytm's Settings")
+		return nil, errors.New("the saved Mullvad key is damaged: sign out and in again in mfetchy's Settings")
 	}
 	pfx, err := netip.ParsePrefix(d.IPv4)
 	if err != nil {
@@ -474,13 +474,13 @@ func (p *Provider) Tunnel(s vpnprovider.Server, k *vpnprovider.Key) (vpnprovider
 }
 
 // Location asks Mullvad where this connection is (a single request to am.i.mullvad.net,
-// which only sees the address ytm is about to hide).
+// which only sees the address mfetchy is about to hide).
 func (p *Provider) Location(ctx context.Context) (vpnprovider.Location, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Meta+"/json", nil)
 	if err != nil {
 		return vpnprovider.Location{}, err
 	}
-	req.Header.Set("User-Agent", "ytm")
+	req.Header.Set("User-Agent", "mfetchy")
 	resp, err := p.HTTP.Do(req)
 	if err != nil {
 		return vpnprovider.Location{}, err
@@ -557,7 +557,7 @@ func (p *Provider) ServersInfo(ctx context.Context) (vpnprovider.ServerList, err
 	if err != nil {
 		return out, err
 	}
-	req.Header.Set("User-Agent", "ytm")
+	req.Header.Set("User-Agent", "mfetchy")
 	resp, err := p.HTTP.Do(req)
 	if err != nil {
 		return out, scrub(err)

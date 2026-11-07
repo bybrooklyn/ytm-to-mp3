@@ -112,8 +112,8 @@ func TestControlsSetValues(t *testing.T) {
 	if last.Jobs != 1 {
 		t.Fatalf("jobs = %d", last.Jobs)
 	}
-	v.send(screen.Event{Set: &screen.Set{Row: 0, Value: "/tmp/ytm-music"}}) // Browse result
-	if !strings.HasSuffix(last.Out, "ytm-music") {
+	v.send(screen.Event{Set: &screen.Set{Row: 0, Value: "/tmp/mfetchy-music"}}) // Browse result
+	if !strings.HasSuffix(last.Out, "mfetchy-music") {
 		t.Fatalf("folder = %q", last.Out)
 	}
 }
@@ -128,7 +128,7 @@ func TestTabShortcutAndNotice(t *testing.T) {
 	}
 }
 
-// YTM_SHOT=/path.png writes what the window looks like; YTM_SHOT_DIR=/dir writes a set
+// MFY_SHOT=/path.png writes what the window looks like; MFY_SHOT_DIR=/dir writes a set
 // (light and dark, wide and narrow, settings and connections) for a look.
 func TestScreenshot(t *testing.T) {
 	if p := appname.Getenv("SHOT"); p != "" {
@@ -138,7 +138,7 @@ func TestScreenshot(t *testing.T) {
 	}
 	dir := appname.Getenv("SHOT_DIR")
 	if dir == "" {
-		t.Skip("set YTM_SHOT_DIR=/dir")
+		t.Skip("set MFY_SHOT_DIR=/dir")
 	}
 	for _, c := range []struct {
 		name    string

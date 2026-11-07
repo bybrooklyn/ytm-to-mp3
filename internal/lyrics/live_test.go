@@ -8,10 +8,10 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/appname"
 )
 
-// TestLiveLRCLIB asks the real lrclib.net about a few songs. Off unless YTM_LIVE=1.
+// TestLiveLRCLIB asks the real lrclib.net about a few songs. Off unless MFY_LIVE=1.
 func TestLiveLRCLIB(t *testing.T) {
 	if appname.Getenv("LIVE") != "1" {
-		t.Skip("set YTM_LIVE=1 to ask lrclib.net")
+		t.Skip("set MFY_LIVE=1 to ask lrclib.net")
 	}
 	f := &Fetcher{Providers: []Provider{&LRCLIB{}}}
 	for _, q := range []Query{

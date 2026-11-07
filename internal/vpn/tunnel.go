@@ -127,8 +127,8 @@ func openTunnel(ctx context.Context, cfg vpnprovider.TunnelConfig, s Server, pro
 	tok := make([]byte, 16)
 	rand.Read(tok)
 	token := hex.EncodeToString(tok)
-	go ServeSOCKS5(tctx, l, "ytm", token, tnet.DialContext)
-	t.Exit = Exit{Name: fmt.Sprintf("%s %s", s.Name, s.Country), Proxy: "socks5h://ytm:" + token + "@" + l.Addr().String()}
+	go ServeSOCKS5(tctx, l, "mfy", token, tnet.DialContext)
+	t.Exit = Exit{Name: fmt.Sprintf("%s %s", s.Name, s.Country), Proxy: "socks5h://mfy:" + token + "@" + l.Addr().String()}
 
 	// The first packet triggers the handshake. A timeout means the server is dead (it
 	// already had a retransmission); another error (reset, DNS) deserves one more go.

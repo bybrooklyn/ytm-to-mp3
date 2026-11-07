@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// ytm's one palette: plain ANSI colours, so it follows the terminal's own theme. Cyan is
+// mfetchy's one palette: plain ANSI colours, so it follows the terminal's own theme. Cyan is
 // the accent (what's selected, what's moving), green is done or on, yellow is a warning or
 // something waiting, red is a failure, dim is detail. NO_COLOR (https://no-color.org)
 // turns all of it off.

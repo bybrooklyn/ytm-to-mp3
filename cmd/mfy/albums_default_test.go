@@ -21,17 +21,17 @@ func sandboxConfig(t *testing.T) {
 
 func TestAlbumsOnByDefault(t *testing.T) {
 	sandboxConfig(t)
-	o, _, err := parse("ytm", []string{"https://youtu.be/dQw4w9WgXcQ"})
+	o, _, err := parse("mfy", []string{"https://youtu.be/dQw4w9WgXcQ"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !o.albums || o.song {
 		t.Errorf("albums should be on and --song off by default: albums=%v song=%v", o.albums, o.song)
 	}
-	if o, _, _ = parse("ytm", []string{"--song", "x"}); !o.song || !o.albums {
+	if o, _, _ = parse("mfy", []string{"--song", "x"}); !o.song || !o.albums {
 		t.Errorf("--song is for this run only and leaves the setting alone: %+v", o.song)
 	}
-	if o, _, _ = parse("ytm", []string{"--albums=false", "x"}); o.albums {
+	if o, _, _ = parse("mfy", []string{"--albums=false", "x"}); o.albums {
 		t.Error("--albums=false turns albums off")
 	}
 
@@ -40,7 +40,7 @@ func TestAlbumsOnByDefault(t *testing.T) {
 	if err := cfg.Save(); err != nil {
 		t.Fatal(err)
 	}
-	if o, _, _ = parse("ytm", []string{"x"}); o.albums {
+	if o, _, _ = parse("mfy", []string{"x"}); o.albums {
 		t.Error("the Complete albums setting turns it off")
 	}
 }

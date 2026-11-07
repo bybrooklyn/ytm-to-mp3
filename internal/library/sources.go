@@ -194,7 +194,7 @@ func fetchBandcamp(ctx context.Context, b browsercookies.Browser) (*bandcamp.Cli
 
 // --- Apple Music ------------------------------------------------------------
 
-// Apple reads the songs in the Apple Music library of the account ytm is signed in to
+// Apple reads the songs in the Apple Music library of the account mfetchy is signed in to
 // (Connections > Apple Music), with the media-user-token already stored there.
 type Apple struct {
 	Token func() string // the stored login ("" = not signed in)

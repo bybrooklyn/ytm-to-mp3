@@ -66,7 +66,7 @@ func printUsage() {
 			l = ui.Dim(l)
 		case strings.HasSuffix(l, ":") && !strings.HasPrefix(l, " "):
 			l = ui.Bold(l)
-		case strings.HasPrefix(strings.TrimSpace(l), "ytm"):
+		case strings.HasPrefix(strings.TrimSpace(l), "mfy"):
 			cmd, rest, _ := strings.Cut(strings.TrimSpace(l), "   ")
 			l = "  " + ui.Cyan(cmd) + "   " + rest
 		default:

@@ -167,7 +167,7 @@ func downloadWeb(ctx context.Context, u *ui.UI, o opts, ex *runExits, links []st
 					failed.Add(1)
 					if br.Record(err) {
 						u.Warn("%s keeps refusing · %s", sourceName(ev.Source), br.Why())
-						u.Hint("the rest of its songs are skipped for this run · run ytm again later to continue")
+						u.Hint("the rest of its songs are skipped for this run · run mfy again later to continue")
 					}
 					ev.Kind, ev.Reason = jobs.Failed, jobs.Human(err)
 					ev.Class = jobs.Classify(err)

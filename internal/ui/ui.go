@@ -247,7 +247,7 @@ func Sanitize(s string) string { return names.StripControl(s) }
 
 // Status replaces the pinned status line (ignored when not on a terminal). It is shown as
 // "  ⠹ text" with a cyan spinner that turns each time it is updated, and the part after
-// " · " dimmed, like ytm's other lines.
+// " · " dimmed, like mfetchy's other lines.
 func (u *UI) Status(format string, a ...any) {
 	b := u.base()
 	if !b.tty {
@@ -311,7 +311,7 @@ func (u *UI) Ask(prompt, def string) string {
 	u.mu.Lock()
 	u.erase()
 	p := Sanitize(prompt)
-	if u.tty { // "  ? question [Y/n] " with the question marked like ytm's other lines
+	if u.tty { // "  ? question [Y/n] " with the question marked like mfetchy's other lines
 		p = Mark(Accent("?"), strings.ReplaceAll(p, "\n", "\n    "))
 		p = strings.NewReplacer("[Y/n]", Dim("[Y/n]"), "[y/N]", Dim("[y/N]")).Replace(p)
 	}

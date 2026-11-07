@@ -14,10 +14,10 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/deps"
 )
 
-// Sites other than YouTube that ytm can take music from. yt-dlp does the extraction (these
+// Sites other than YouTube that mfetchy can take music from. yt-dlp does the extraction (these
 // sites change often, and Bandcamp shows non-browser clients a bot check that only yt-dlp
 // keeps up with); everything about the music library (what you already have, tags, file
-// names) is ytm's own.
+// names) is mfetchy's own.
 //
 // SoundCloud and Bandcamp serve music at stream quality: Bandcamp 128 kbps MP3, SoundCloud
 // 128 kbps MP3 or 64 kbps Opus/AAC. Files keep the format the site serves (a lossy-to-lossy

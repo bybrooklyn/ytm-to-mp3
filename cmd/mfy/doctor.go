@@ -14,7 +14,7 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
 
-// runDoctor checks everything ytm depends on and says what to do about each problem.
+// runDoctor checks everything mfetchy depends on and says what to do about each problem.
 func runDoctor(ctx context.Context, u *ui.UI, o opts) error {
 	problems := 0
 	ok := func(f string, a ...any) { u.Good(f, a...) }
@@ -25,7 +25,7 @@ func runDoctor(ctx context.Context, u *ui.UI, o opts) error {
 	}
 	note := func(f string, a ...any) { u.Note(f, a...) }
 
-	u.Head("ytm %s · %s/%s", version, runtime.GOOS, runtime.GOARCH)
+	u.Head("mfetchy %s · %s/%s", version, runtime.GOOS, runtime.GOARCH)
 
 	u.Head("Settings")
 	if _, err := config.LoadChecked(); err != nil {
@@ -41,9 +41,9 @@ func runDoctor(ctx context.Context, u *ui.UI, o opts) error {
 		ok("music folder %s is writable", o.out)
 	}
 
-	u.Head("Tools · ytm downloads any that are missing on first use")
+	u.Head("Tools · mfetchy downloads any that are missing on first use")
 	for _, t := range []struct{ name, why string }{
-		{"yt-dlp", "fallback for videos ytm's own client can't open, and Premium downloads"},
+		{"yt-dlp", "fallback for videos mfetchy's own client can't open, and Premium downloads"},
 		{"ffmpeg", "remuxes downloads and writes tags and cover art; makes mp3/flac"},
 		{"ffprobe", "reads the tags and cover art of files you already have"},
 		{"deno", "optional: helps yt-dlp with YouTube's JavaScript challenges"},

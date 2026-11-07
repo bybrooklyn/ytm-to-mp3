@@ -1,4 +1,4 @@
-// Package screen holds ytm's screens as plain state machines that know nothing about how
+// Package screen holds mfetchy's screens as plain state machines that know nothing about how
 // they are drawn: they take key names ("up", "enter", "esc", ...) and produce a Screen (rows
 // of labels, values and hints). The terminal UI draws a Screen with ANSI colours and the
 // desktop app draws the same Screen in a window, so both look and behave the same.
@@ -352,7 +352,7 @@ func clamp(n, lo, hi int) int {
 	return max(lo, min(hi, n))
 }
 
-// ytm's palette (internal/ui), under the names the screens here use.
+// mfetchy's palette (internal/ui), under the names the screens here use.
 var (
 	cDim    = ui.CDim
 	cBold   = ui.CBold
@@ -545,7 +545,7 @@ func (m *Settings) describe(row *Row, k rowKind) {
 	case rowConns:
 		row.Kind, row.Help = KindNumber, "Servers used at once. Auto uses all your plan allows, minus one kept spare."
 	case rowJobs:
-		row.Kind, row.Help = KindNumber, "Songs downloaded at the same time. Auto lets ytm decide."
+		row.Kind, row.Help = KindNumber, "Songs downloaded at the same time. Auto lets mfetchy decide."
 	case rowCountries:
 		row.Kind, row.Help = KindChoice, "Where downloads appear to come from."
 		row.Options = nil

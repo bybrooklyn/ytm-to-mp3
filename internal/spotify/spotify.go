@@ -2,7 +2,7 @@
 // canonical track metadata, with no login and no API key.
 //
 // Spotify's own audio is DRM-encrypted and is not downloaded here; Spotify is
-// used only as a source of truth for what a release contains, and ytm then
+// used only as a source of truth for what a release contains, and mfetchy then
 // fetches the audio from the best available source (Apple Music, YouTube).
 //
 // The metadata comes from Spotify's public embed pages
@@ -25,7 +25,7 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/names"
 )
 
-// Track is one Spotify song reduced to what ytm needs to find and tag it.
+// Track is one Spotify song reduced to what mfetchy needs to find and tag it.
 // Spotify embed data has no ISRC, and playlist entries carry no per-track
 // album, so those fields may be empty.
 type Track struct {

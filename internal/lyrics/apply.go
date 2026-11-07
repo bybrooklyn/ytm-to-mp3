@@ -127,7 +127,7 @@ func (s *Service) Process(ctx context.Context, path string) (Outcome, error) {
 func Text(q Query, r Result) string {
 	if r.Kind == KindSynced {
 		return FormatLRC(Header{Title: q.Title, Artist: q.Artist, Album: q.Album, Length: q.Duration,
-			By: "ytm · " + r.Source}, r.Synced)
+			By: "mfetchy · " + r.Source}, r.Synced)
 	}
 	return strings.TrimSpace(r.Plain) + "\n"
 }

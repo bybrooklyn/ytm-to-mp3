@@ -16,10 +16,10 @@ import (
 )
 
 // Downloads ONE real purchase (a single track if there is one) from the signed-in browser into
-// a temp folder and reports counts and formats only. YTM_LIVE_ACCOUNT=1 go test ./cmd/ytm -run LiveBandcamp -v
+// a temp folder and reports counts and formats only. MFY_LIVE_ACCOUNT=1 go test ./cmd/mfy -run LiveBandcamp -v
 func TestLiveBandcampPurchase(t *testing.T) {
 	if appname.Getenv("LIVE_ACCOUNT") == "" {
-		t.Skip("set YTM_LIVE_ACCOUNT=1")
+		t.Skip("set MFY_LIVE_ACCOUNT=1")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()

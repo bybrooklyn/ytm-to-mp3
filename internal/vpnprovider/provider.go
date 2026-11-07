@@ -72,7 +72,7 @@ type TunnelConfig struct {
 	MTU        int          // 0 = 1380
 }
 
-// Provider is a VPN service ytm can build a tunnel pool from.
+// Provider is a VPN service mfetchy can build a tunnel pool from.
 type Provider interface {
 	// ID is the stable short name used in settings: "proton", "mullvad", "wireguard".
 	ID() string

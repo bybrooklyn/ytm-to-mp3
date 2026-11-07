@@ -9,7 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// ytm's look for huh's menus and prompts: the same plain ANSI colours as the settings
+// mfetchy's look for huh's menus and prompts: the same plain ANSI colours as the settings
 // screen and the download display (internal/ui), so everything follows the terminal's own
 // palette. Cyan is the accent (titles, the cursor, the chosen button), green what's picked,
 // dim the help. NO_COLOR keeps huh's plain base look.
@@ -75,10 +75,10 @@ var ytmSpinner = spinner.ThemeFunc(func(bool) *spinner.Styles {
 // init keeps Bubble Tea from probing the terminal for modes 2026/2027 on Windows consoles
 // that don't answer properly (plain conhost, Wine). There the probe's reply comes back as
 // typed text, and its trailing "y" answers a y/n prompt by itself. Bubble Tea skips the
-// probe when it thinks it is on SSH, and nothing else in ytm reads this variable. It has
+// probe when it thinks it is on SSH, and nothing else in mfetchy reads this variable. It has
 // to be the process environment, because huh's spinner takes no per-program options.
 func init() {
 	if runtime.GOOS == "windows" && os.Getenv("WT_SESSION") == "" && os.Getenv("SSH_TTY") == "" {
-		os.Setenv("SSH_TTY", "ytm")
+		os.Setenv("SSH_TTY", "mfy")
 	}
 }

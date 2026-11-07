@@ -1,9 +1,9 @@
 // Package wgconf is the "bring your own WireGuard config" provider: it reads standard
 // wg-quick .conf files, so any provider that hands out one (IVPN, Windscribe, AirVPN, a
-// self-hosted server, ...) works without ytm knowing anything about its API.
+// self-hosted server, ...) works without mfetchy knowing anything about its API.
 //
 // Only the parts of the format that describe the tunnel are used. Script hooks (PostUp,
-// PreDown, ...), Table, FwMark and SaveConfig are ignored: ytm never runs commands from a
+// PreDown, ...), Table, FwMark and SaveConfig are ignored: mfetchy never runs commands from a
 // config file and never touches the system's network setup.
 package wgconf
 
@@ -58,7 +58,7 @@ func Parse(r io.Reader) (*Config, error) {
 			return fmt.Errorf("a [Peer] has no PublicKey")
 		}
 		if !fullTunnel(peer.AllowedIPs) {
-			return fmt.Errorf("peer %s:%d: AllowedIPs must include 0.0.0.0/0 (ytm sends everything through the VPN)", peer.Host, peer.Port)
+			return fmt.Errorf("peer %s:%d: AllowedIPs must include 0.0.0.0/0 (mfetchy sends everything through the VPN)", peer.Host, peer.Port)
 		}
 		cfg.Peers = append(cfg.Peers, *peer)
 		peer = nil

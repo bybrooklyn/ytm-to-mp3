@@ -2,7 +2,7 @@ package ui
 
 import "github.com/bybrooklyn/mfetchy/internal/jobs"
 
-// Sink returns a jobs.Sink that shows events the way ytm always has: a finished song is a
+// Sink returns a jobs.Sink that shows events the way mfetchy always has: a finished song is a
 // "✓ Artist - Title · detail" line, a failed one "✗ Artist - Title · reason". Other events
 // (queued, progress, skipped, ...) are counted by the run summary rather than printed one
 // by one, so they print nothing here.

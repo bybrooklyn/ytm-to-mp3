@@ -126,7 +126,7 @@ type HeldCopy struct {
 
 // Held lists every downloaded song: Apple Music downloads first, then YouTube ones, then
 // SoundCloud and Bandcamp ones. A
-// YouTube row whose file is now an Apple copy (ytm apple match --replace) is reported
+// YouTube row whose file is now an Apple copy (mfy apple match --replace) is reported
 // once, as apple.
 func (s *Store) Held() ([]HeldCopy, error) {
 	var out []HeldCopy

@@ -14,7 +14,7 @@ import (
 	"github.com/grafov/m3u8"
 )
 
-// choice is a transcoding ytm can take, with the file extension it produces.
+// choice is a transcoding mfetchy can take, with the file extension it produces.
 type choice struct {
 	t    transcoding
 	ext  string

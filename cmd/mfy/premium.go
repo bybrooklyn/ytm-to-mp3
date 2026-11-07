@@ -41,7 +41,7 @@ func premiumSetup(ctx context.Context, u *ui.UI) error {
 	if cfg.Premium {
 		off := false
 		if err := one(ctx, huh.NewConfirm().Title("Turn off the YouTube Premium upgrade?").
-			Description("ytm deletes its copy of your cookies.").Affirmative("Turn off").Negative("Keep").Value(&off)); err != nil || !off {
+			Description("mfetchy deletes its copy of your cookies.").Affirmative("Turn off").Negative("Keep").Value(&off)); err != nil || !off {
 			return err
 		}
 		_ = os.Remove(config.PremiumCookiesPath())
@@ -63,7 +63,7 @@ func premiumSetup(ctx context.Context, u *ui.UI) error {
 	err := runForm(ctx, huh.NewForm(
 		huh.NewGroup(huh.NewNote().Title("YouTube Premium upgrade").Description(premiumWarning),
 			huh.NewConfirm().Title("Turn it on anyway?").Affirmative("Yes, I understand").Negative("No").Value(&accept)),
-		huh.NewGroup(huh.NewSelect[string]().Title("Where should ytm get your YouTube sign-in from?").
+		huh.NewGroup(huh.NewSelect[string]().Title("Where should mfetchy get your YouTube sign-in from?").
 			Description("Sign in to music.youtube.com in that browser first (with the Premium account).\nImporting copies its current session: YouTube rotates those cookies while the browser\nhas YouTube open, so you may have to import again now and then. A cookies.txt exported\nfrom a private window you then close lasts longer (yt-dlp's advice).").
 			Options(sources...).Value(&source)).
 			WithHideFunc(func() bool { return !accept }),
@@ -103,7 +103,7 @@ func premiumSetup(ctx context.Context, u *ui.UI) error {
 	if err := cfg.Save(); err != nil {
 		return err
 	}
-	fmt.Println(ui.Mark(ui.OK("✓"), "Premium upgrade on · run it from the menu or with: ytm --premium-upgrade"))
+	fmt.Println(ui.Mark(ui.OK("✓"), "Premium upgrade on · run it from the menu or with: mfy --premium-upgrade"))
 	return nil
 }
 

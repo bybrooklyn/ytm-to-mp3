@@ -10,7 +10,7 @@ var joinWordRe = regexp.MustCompile(`(?i)\s+(?:feat\.?|ft\.?|featuring|with|x|vs
 
 // SplitArtists splits a credit like "A; B", "A, B", "A & B", "A feat. B", "A x B" or
 // "A / B" into the artists' names, in order, without repeats and without YouTube's
-// " - Topic" channel suffix. It is the one splitter ytm uses for every source (YouTube
+// " - Topic" channel suffix. It is the one splitter mfetchy uses for every source (YouTube
 // tags, Spotify's comma-joined credits, Apple's "A & B feat. C").
 func SplitArtists(s string) []string {
 	s = joinWordRe.ReplaceAllString(s, ";")

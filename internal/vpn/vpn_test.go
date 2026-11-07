@@ -20,9 +20,9 @@ func TestSOCKS(t *testing.T) {
 		t.Fatal(err)
 	}
 	var d net.Dialer
-	go ServeSOCKS5(ctx, l, "ytm", "secret", d.DialContext)
+	go ServeSOCKS5(ctx, l, "mfy", "secret", d.DialContext)
 	get := func(pass string) (string, error) {
-		c, err := NewClient("socks5h://ytm:" + pass + "@" + l.Addr().String())
+		c, err := NewClient("socks5h://mfy:" + pass + "@" + l.Addr().String())
 		if err != nil {
 			return "", err
 		}

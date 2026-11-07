@@ -77,7 +77,7 @@ func get(ctx context.Context, url string, overall time.Duration) (*http.Response
 		cancel()
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "ytm-to-mp3")
+	req.Header.Set("User-Agent", "mfetchy (https://github.com/bybrooklyn/mfetchy)")
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		cancel()

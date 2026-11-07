@@ -10,11 +10,11 @@ import (
 
 // TestLiveCatalog hits real Apple Music servers to validate the account-free
 // half of the pipeline (developer-token fetch, URL resolution, library match).
-// It is skipped unless YTM_APPLE_LIVE=1. Set YTM_APPLE_PROXY to a socks5 URL to
+// It is skipped unless MFY_APPLE_LIVE=1. Set MFY_APPLE_PROXY to a socks5 URL to
 // route through a VPN exit.
 func TestLiveCatalog(t *testing.T) {
 	if appname.Getenv("APPLE_LIVE") != "1" {
-		t.Skip("set YTM_APPLE_LIVE=1 to run the live Apple catalog test")
+		t.Skip("set MFY_APPLE_LIVE=1 to run the live Apple catalog test")
 	}
 	if err := SetProxy(appname.Getenv("APPLE_PROXY")); err != nil {
 		t.Fatalf("SetProxy: %v", err)

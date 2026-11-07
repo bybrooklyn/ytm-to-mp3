@@ -121,7 +121,7 @@ func Guide(ctx context.Context, u *ui.UI) (string, error) {
 	} {
 		u.Styled(fmt.Sprintf("    %s %s", ui.Cyan(fmt.Sprintf("%d.", i+1)), step))
 	}
-	u.Hint("ytm notices the zip and carries on by itself. (Ctrl-C to stop waiting.)")
+	u.Hint("mfetchy notices the zip and carries on by itself. (Ctrl-C to stop waiting.)")
 	started := time.Now().Add(-2 * time.Minute) // tolerate a clock/mtime skew
 	if err := OpenBrowser(takeoutURL); err != nil {
 		u.Note("Open this page in your browser: %s", takeoutURL)

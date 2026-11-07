@@ -308,7 +308,7 @@ func writeAppleReport(path string, res []appleFound) error {
 	}
 	sort.Strings(missing)
 	var b strings.Builder
-	fmt.Fprintf(&b, "ytm: library on Apple Music, %s\n\n", time.Now().Format("2006-01-02 15:04"))
+	fmt.Fprintf(&b, "mfy: library on Apple Music, %s\n\n", time.Now().Format("2006-01-02 15:04"))
 	fmt.Fprintf(&b, "Less certain matches (%d): downloaded only when you choose \"all matches\" (or --maybe)\n", len(maybe))
 	b.WriteString(strings.Join(maybe, "\n"))
 	fmt.Fprintf(&b, "\n\nNot found on Apple Music (%d)\n", len(missing))

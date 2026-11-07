@@ -268,7 +268,7 @@ func requireLogin(cs []Cookie) error {
 // WriteNetscape writes cs as a Netscape cookies.txt at path, readable only by the owner.
 func WriteNetscape(path string, cs []Cookie) error {
 	var b strings.Builder
-	b.WriteString("# Netscape HTTP Cookie File\n# Written by ytm from a browser import. Keep it private.\n\n")
+	b.WriteString("# Netscape HTTP Cookie File\n# Written by mfetchy from a browser import. Keep it private.\n\n")
 	for _, c := range cs {
 		if !safeField(c.Domain) || !safeField(c.Path) || !safeField(c.Name) || !safeField(c.Value) || c.Name == "" {
 			continue // a tab or newline would corrupt the file (and could forge other lines)
@@ -312,7 +312,7 @@ func safeField(s string) bool {
 // the original locked, and the copy holds secrets.
 func withPrivateCopy[T any](src string, f func(*sql.DB) (T, error)) (T, error) {
 	var zero T
-	dir, err := os.MkdirTemp("", "ytm-cookies-*") // 0700
+	dir, err := os.MkdirTemp("", "mfetchy-cookies-*") // 0700
 	if err != nil {
 		return zero, err
 	}

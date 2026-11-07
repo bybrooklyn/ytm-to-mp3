@@ -11,10 +11,10 @@ import (
 )
 
 // TestLive resolves one public track against the real SoundCloud and reads the first 64 KiB
-// of its audio. Opt-in: YTM_LIVE=1.
+// of its audio. Opt-in: MFY_LIVE=1.
 func TestLive(t *testing.T) {
 	if appname.Getenv("LIVE") != "1" {
-		t.Skip("set YTM_LIVE=1")
+		t.Skip("set MFY_LIVE=1")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()

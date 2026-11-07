@@ -16,7 +16,7 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/config"
 )
 
-// Tools are absolute paths to the external programs ytm drives.
+// Tools are absolute paths to the external programs mfetchy drives.
 type Tools struct {
 	YtDlp   string
 	FFmpeg  string
@@ -31,7 +31,7 @@ type Logger func(format string, a ...any)
 // maxPathYtDlpAge is how old a PATH-provided yt-dlp may be before we prefer a fresh managed copy.
 const maxPathYtDlpAge = 30 * 24 * time.Hour
 
-// Ensure locates or installs everything ytm needs.
+// Ensure locates or installs everything mfetchy needs.
 func Ensure(ctx context.Context, logf Logger) (Tools, error) {
 	cache, err := config.CacheDir()
 	if err != nil {

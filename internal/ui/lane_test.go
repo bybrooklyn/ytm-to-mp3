@@ -67,7 +67,7 @@ func TestLanesConcurrent(t *testing.T) {
 	}
 }
 
-// The terminal sink prints finished and failed songs the way ytm always has.
+// The terminal sink prints finished and failed songs the way mfetchy always has.
 func TestSinkLines(t *testing.T) {
 	var buf bytes.Buffer
 	u := &UI{out: &buf}

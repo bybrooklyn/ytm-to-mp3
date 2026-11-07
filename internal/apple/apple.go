@@ -7,7 +7,7 @@
 // authorises but does not itself decrypt; the vendored path uses a built-in
 // Widevine L3 CDM to acquire the content key from Apple's own license server
 // and decrypts locally. Lossless (ALAC) is FairPlay-only and is NOT available
-// on this path — it needs the wrapper-lite backend, which ytm does not run.
+// on this path — it needs the wrapper-lite backend, which mfetchy does not run.
 package apple
 
 import (
@@ -37,7 +37,7 @@ var ErrUnavailable = widevinerip.ErrUnavailable
 
 // ErrLogin reports that Apple rejected the saved login: nothing else will work until
 // the user signs in again.
-var ErrLogin = errors.New("Apple rejected the login; sign in again at music.apple.com and sign in again in ytm's Settings (Apple Music)")
+var ErrLogin = errors.New("Apple rejected the login; sign in again at music.apple.com and sign in again in mfetchy's Settings (Apple Music)")
 
 // Track is one Apple Music song: its catalog adamID plus the metadata needed
 // to name and tag the output file.
@@ -65,7 +65,7 @@ type Track struct {
 	UPC       string `json:"upc,omitempty"`
 }
 
-// URL is the song's page on music.apple.com (kept in the comment tag, like ytm keeps
+// URL is the song's page on music.apple.com (kept in the comment tag, like mfetchy keeps
 // the YouTube link).
 func (t Track) URL() string {
 	sf := t.Storefront
@@ -95,7 +95,7 @@ type Client struct {
 func New(mediaUserToken, cookie, storefront, language string) (*Client, error) {
 	mediaUserToken = strings.TrimSpace(mediaUserToken)
 	if mediaUserToken == "" {
-		return nil, errors.New("no Apple Music login: sign in in ytm's Settings (Apple Music)")
+		return nil, errors.New("no Apple Music login: sign in in mfetchy's Settings (Apple Music)")
 	}
 	if storefront == "" {
 		storefront = "us"

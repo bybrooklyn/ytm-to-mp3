@@ -74,7 +74,7 @@ func TestEnrichAlbumArtistAndIDs(t *testing.T) {
 }
 
 // TestWriteStandardKeys writes ISRC and MusicBrainz ids to an mp3 and reads them back
-// under ytm's names: ISRC as the real TSRC frame, the ids as Picard's TXXX names.
+// under mfetchy's names: ISRC as the real TSRC frame, the ids as Picard's TXXX names.
 func TestWriteStandardKeys(t *testing.T) {
 	ffmpeg, err1 := exec.LookPath("ffmpeg")
 	ffprobe, err2 := exec.LookPath("ffprobe")

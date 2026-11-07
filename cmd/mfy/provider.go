@@ -102,7 +102,7 @@ func vpnFlow(ctx context.Context, cfg *config.Config) error {
 		choice = provProton
 	}
 	err := one(ctx, huh.NewSelect[string]().Title("Download through a VPN?").
-		Description("Several servers at once, so YouTube can't throttle one address. Your IP is never used instead: if the VPN can't connect, ytm stops.").
+		Description("Several servers at once, so YouTube can't throttle one address. Your IP is never used instead: if the VPN can't connect, mfetchy stops.").
 		Options(
 			huh.NewOption("Proton VPN", provProton),
 			huh.NewOption("Mullvad (account number only)", provMullvad),

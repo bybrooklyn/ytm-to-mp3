@@ -19,14 +19,14 @@ import (
 // Info is what we know about an audio file.
 type Info struct {
 	Path     string
-	Tags     map[string]string // ytm's canonical names (names.CanonicalTag)
+	Tags     map[string]string // mfetchy's canonical names (names.CanonicalTag)
 	Duration float64
 	HasCover bool
 	// CoverW, CoverH are the embedded picture's size in pixels (0 when unknown).
 	CoverW, CoverH int
 }
 
-// coverPx is the size every cover ytm writes is squared and scaled down to (at most).
+// coverPx is the size every cover mfetchy writes is squared and scaled down to (at most).
 const coverPx = 1200
 
 // GoodCover reports whether the file already has art worth keeping: a square picture of a
@@ -113,7 +113,7 @@ func Write(ctx context.Context, ffmpeg, ffprobe, path string, set map[string]str
 	defer os.Remove(tmp)
 
 	// Only jpeg/png/webp art is ever handed to ffmpeg's decoders, and it goes in as a square
-	// JPEG of at most coverPx, like every cover ytm writes.
+	// JPEG of at most coverPx, like every cover mfetchy writes.
 	dec := ""
 	if cover != "" {
 		sq := tmp + ".cover.jpg"

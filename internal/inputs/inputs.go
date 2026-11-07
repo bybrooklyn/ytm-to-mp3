@@ -1,4 +1,4 @@
-// Package inputs turns whatever the user gave ytm (arguments, a pasted block of links, a
+// Package inputs turns whatever the user gave mfetchy (arguments, a pasted block of links, a
 // text file of links, paths to exports) into one clean, de-duplicated list, and says which
 // lines it could not use, by line, without stopping the rest.
 package inputs
@@ -18,7 +18,7 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/tidal"
 )
 
-// Kind says which part of ytm handles an input.
+// Kind says which part of mfetchy handles an input.
 type Kind string
 
 const (
@@ -125,7 +125,7 @@ func (p *parser) token(tok, ln string, depth int) {
 	if link, ok := Normalize(tok); ok {
 		kind, key := classify(link)
 		if kind == "" {
-			p.bad(tok, "not a site ytm can download from (YouTube, Apple Music, Spotify, Tidal, SoundCloud, Bandcamp)")
+			p.bad(tok, "not a site mfetchy can download from (YouTube, Apple Music, Spotify, Tidal, SoundCloud, Bandcamp)")
 			return
 		}
 		p.add(Item{Value: link, Kind: kind, Line: p.line, Key: key})

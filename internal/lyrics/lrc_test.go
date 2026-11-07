@@ -69,14 +69,14 @@ func TestParseHeaderAndWords(t *testing.T) {
 
 func TestFormatLRC(t *testing.T) {
 	lines, _ := ParseLRC("[00:01.5]Hello\n[00:03.004]\n[01:00.999]Bye")
-	got := FormatLRC(Header{Title: "Hi", Artist: "A", Album: "Al", Length: 61 * time.Second, By: "ytm · LRCLIB"}, lines)
-	want := "[ti:Hi]\n[ar:A]\n[al:Al]\n[length:01:01]\n[by:ytm · LRCLIB]\n[00:01.50]Hello\n[00:03.00]\n[01:01.00]Bye\n"
+	got := FormatLRC(Header{Title: "Hi", Artist: "A", Album: "Al", Length: 61 * time.Second, By: "mfetchy · LRCLIB"}, lines)
+	want := "[ti:Hi]\n[ar:A]\n[al:Al]\n[length:01:01]\n[by:mfetchy · LRCLIB]\n[00:01.50]Hello\n[00:03.00]\n[01:01.00]Bye\n"
 	if got != want {
 		t.Fatalf("got\n%q\nwant\n%q", got, want)
 	}
 	// the output parses back to the same lines
 	back, h := ParseLRC(got)
-	if len(back) != 3 || back[2].At != 61*time.Second || h.By != "ytm · LRCLIB" {
+	if len(back) != 3 || back[2].At != 61*time.Second || h.By != "mfetchy · LRCLIB" {
 		t.Fatalf("%+v %+v", back, h)
 	}
 	if s := FormatLRC(Header{}, nil); s != "" {

@@ -53,10 +53,10 @@ func TestSplitArtists(t *testing.T) {
 	}
 }
 
-// TestLiveResolve hits real Spotify embed pages. Skipped unless YTM_SPOTIFY_LIVE=1.
+// TestLiveResolve hits real Spotify embed pages. Skipped unless MFY_SPOTIFY_LIVE=1.
 func TestLiveResolve(t *testing.T) {
 	if appname.Getenv("SPOTIFY_LIVE") != "1" {
-		t.Skip("set YTM_SPOTIFY_LIVE=1 to run the live Spotify test")
+		t.Skip("set MFY_SPOTIFY_LIVE=1 to run the live Spotify test")
 	}
 	if err := SetProxy(appname.Getenv("SPOTIFY_PROXY")); err != nil {
 		t.Fatal(err)

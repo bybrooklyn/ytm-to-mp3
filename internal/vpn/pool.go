@@ -30,7 +30,7 @@ type Options struct {
 	// near-instant. 0 means the default (1); negative means none. Spares count against the
 	// plan's device limit, so they are only opened when the limit is known and has room.
 	Spares int
-	// CachePath is the server cache file. "" means ytm/servers.json in the user cache
+	// CachePath is the server cache file. "" means mfetchy/servers.json in the user cache
 	// dir; "off" disables persistence.
 	CachePath string
 

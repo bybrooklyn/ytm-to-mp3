@@ -308,7 +308,7 @@ type engine struct {
 	nSwaps   atomic.Int64
 	total    int
 	live     liveSet    // in-flight tracks, for the live display
-	tm       *timings   // per-stage durations for the YTM_DEBUG report
+	tm       *timings   // per-stage durations for the MFY_DEBUG report
 	searches sync.Map   // track id -> *search started ahead of time (YouTube Music)
 	pathMu   sync.Mutex // choosing and claiming an output file name
 
@@ -1097,7 +1097,7 @@ func (e *engine) startCover(ctx context.Context, j *job) <-chan struct{} {
 	return done
 }
 
-// catalogCover reports whether u is album art ytm may fetch for a song: from Spotify's,
+// catalogCover reports whether u is album art mfetchy may fetch for a song: from Spotify's,
 // Apple's or YouTube's image servers, the only places a song's art comes from.
 func catalogCover(u string) bool { return AlbumCoverURL(u) }
 
@@ -1374,7 +1374,7 @@ func withFeatured(artists []string, title string) []string {
 }
 
 // freePath returns path, or "path (2).ext", "(3)"... if the name already belongs to a
-// different song (or to a file ytm didn't write): two songs called "Intro" on one album
+// different song (or to a file mfetchy didn't write): two songs called "Intro" on one album
 // must not overwrite each other. A re-download of the same song keeps its name.
 func (e *engine) freePath(path, id string) string {
 	ext := filepath.Ext(path)

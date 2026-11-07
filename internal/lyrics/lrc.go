@@ -30,7 +30,7 @@ type Line struct {
 type Header struct {
 	Title, Artist, Album string
 	Length               time.Duration
-	By                   string // source credit, e.g. "ytm · LRCLIB"
+	By                   string // source credit, e.g. "mfetchy · LRCLIB"
 }
 
 // ParseLRC reads LRC text: [mm:ss.xx] stamps with 1 to 3 fractional digits (also [m:ss] and
@@ -212,6 +212,12 @@ func FormatLRC(h Header, lines []Line) string {
 		fmt.Fprintf(&b, "%s%s\n", stamp(l.At), strings.TrimSpace(l.Text))
 	}
 	return b.String()
+}
+
+// WrittenByUs reports whether an LRC header's [by:] credit is ours: "mfetchy · LRCLIB",
+// or "ytm · LRCLIB" from before the rename. A file with another credit is the user's.
+func WrittenByUs(by string) bool {
+	return strings.HasPrefix(by, "mfetchy · ") || strings.HasPrefix(by, "ytm · ")
 }
 
 func stamp(d time.Duration) string {

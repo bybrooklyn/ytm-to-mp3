@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bybrooklyn/mfetchy/internal/appname"
 	"github.com/bybrooklyn/mfetchy/internal/proton"
 	"github.com/bybrooklyn/mfetchy/internal/vpnprovider"
 )
@@ -116,13 +117,13 @@ type Cache struct {
 	lastSave time.Time
 }
 
-// DefaultCachePath is ytm/servers.json inside the user cache directory.
+// DefaultCachePath is mfetchy/servers.json inside the user cache directory.
 func DefaultCachePath() string {
-	d, err := os.UserCacheDir()
+	d, err := appname.CacheDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(d, "ytm", "servers.json")
+	return filepath.Join(d, "servers.json")
 }
 
 // AccountID is a short non-reversible tag for a username, so one account's server list

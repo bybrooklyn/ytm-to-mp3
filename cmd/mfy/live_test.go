@@ -12,7 +12,7 @@ import (
 // export. A dry run with no database must plan it without touching the network.
 func TestPresetTracksAreDownloadedLikeAnExport(t *testing.T) {
 	sandboxConfig(t)
-	o, _, err := parse("ytm", []string{"--dry-run", "--albums=false", "-o", t.TempDir()})
+	o, _, err := parse("mfy", []string{"--dry-run", "--albums=false", "-o", t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// The kinds of line ytm prints, so every screen reads the same way. Each is indented two
+// The kinds of line mfetchy prints, so every screen reads the same way. Each is indented two
 // spaces under a one-character mark, with any detail dimmed after "·":
 //
 //	  ♪ Heading            a section or what's starting

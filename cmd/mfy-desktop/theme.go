@@ -11,16 +11,16 @@ import (
 
 // Colour roles beyond Fyne's own. The values are in docs/DESIGN.md; keep the two in step.
 const (
-	colSidebar  fyne.ThemeColorName = "ytm.sidebar"
-	colSurface  fyne.ThemeColorName = "ytm.surface"
-	colHover    fyne.ThemeColorName = "ytm.hover"
-	colBorder   fyne.ThemeColorName = "ytm.border"
-	colMuted    fyne.ThemeColorName = "ytm.muted"
-	colOnAccent fyne.ThemeColorName = "ytm.onAccent"
-	colSuccess  fyne.ThemeColorName = "ytm.success"
-	colCaution  fyne.ThemeColorName = "ytm.caution"
-	colProblem  fyne.ThemeColorName = "ytm.problem"
-	colTint     fyne.ThemeColorName = "ytm.tint" // the accent, faint: the cursor row
+	colSidebar  fyne.ThemeColorName = "mfy.sidebar"
+	colSurface  fyne.ThemeColorName = "mfy.surface"
+	colHover    fyne.ThemeColorName = "mfy.hover"
+	colBorder   fyne.ThemeColorName = "mfy.border"
+	colMuted    fyne.ThemeColorName = "mfy.muted"
+	colOnAccent fyne.ThemeColorName = "mfy.onAccent"
+	colSuccess  fyne.ThemeColorName = "mfy.success"
+	colCaution  fyne.ThemeColorName = "mfy.caution"
+	colProblem  fyne.ThemeColorName = "mfy.problem"
+	colTint     fyne.ThemeColorName = "mfy.tint" // the accent, faint: the cursor row
 )
 
 // The spacing scale, in dp. Nothing in the window uses a gap that isn't one of these.

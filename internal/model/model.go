@@ -1,4 +1,4 @@
-// Package model holds the types shared across ytm packages.
+// Package model holds the types shared across mfetchy packages.
 package model
 
 import "strings"

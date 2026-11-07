@@ -50,7 +50,7 @@ func LoadAll(paths []string, all bool) ([]model.Track, error) {
 	return merge(docs, all)
 }
 
-// maxWalk bounds how many files a folder import will look at, so pointing ytm at a huge
+// maxWalk bounds how many files a folder import will look at, so pointing mfetchy at a huge
 // directory (like your home folder) can't run away.
 const maxWalk = 50_000
 

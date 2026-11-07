@@ -33,7 +33,7 @@ import (
 
 const (
 	base      = "https://bandcamp.com"
-	userAgent = "ytm"
+	userAgent = "mfetchy"
 )
 
 // ErrNotSignedIn means Bandcamp didn't recognise the session.

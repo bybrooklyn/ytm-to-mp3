@@ -35,10 +35,10 @@ func (q Quality) tiers() []string {
 	return []string{"LOSSLESS"}
 }
 
-// Refusals ytm makes on purpose: what it will not fetch.
+// Refusals mfetchy makes on purpose: what it will not fetch.
 var (
-	ErrEncrypted = errors.New("Tidal served this stream encrypted, which ytm does not fetch")
-	ErrDASH      = errors.New("Tidal served this stream as a DASH manifest, which ytm does not fetch")
+	ErrEncrypted = errors.New("Tidal served this stream encrypted, which mfetchy does not fetch")
+	ErrDASH      = errors.New("Tidal served this stream as a DASH manifest, which mfetchy does not fetch")
 	ErrLossy     = errors.New("Tidal served a lossy stream, not lossless")
 )
 
@@ -79,7 +79,7 @@ type btsManifest struct {
 	URLs           []string `json:"urls"`
 }
 
-// ParseManifest reads a playbackinfo answer into a Stream, refusing what ytm won't fetch:
+// ParseManifest reads a playbackinfo answer into a Stream, refusing what mfetchy won't fetch:
 // DASH manifests, encrypted streams, and anything that is not FLAC.
 func ParseManifest(mime, manifest string) (Stream, error) {
 	switch {

@@ -23,12 +23,12 @@ import (
 // errBack means "go back to the menu" from a sub-flow.
 var errBack = errors.New("back")
 
-// runHome is what plain `ytm` does in a terminal: a short menu that leads to the right
+// runHome is what plain `mfetchy` does in a terminal: a short menu that leads to the right
 // flow, so nothing has to be remembered.
 func runHome(ctx context.Context, u *ui.UI, o opts) error {
 	if !config.Exists() {
 		first := true
-		if err := one(ctx, huh.NewConfirm().Title("Welcome to ytm. Set it up first? (takes a minute)").
+		if err := one(ctx, huh.NewConfirm().Title("Welcome to mfetchy. Set it up first? (takes a minute)").
 			Description("Pick your music folder and set up a VPN (Proton, Mullvad or your own WireGuard config). You can skip and change it later.").
 			Affirmative("Set up").Negative("Skip").Value(&first)); err != nil {
 			if !errors.Is(err, errBack) {
@@ -221,7 +221,7 @@ func header(o opts, width int) string {
 	}
 	// Never wrap: on a narrow terminal shorten the VPN part, then the folder.
 	folder := tilde(o.out)
-	line := func() string { return "  ♪ ytm  " + folder + "  ·  " + o.format + "  ·  ● " + vpn }
+	line := func() string { return "  ♪ mfetchy  " + folder + "  ·  " + o.format + "  ·  ● " + vpn }
 	if len([]rune(line())) > width-1 {
 		vpn = vpnShort
 	}
@@ -234,7 +234,7 @@ func header(o opts, width int) string {
 		}
 	}
 	sep := ui.Dim("  ·  ")
-	return fmt.Sprintf("\n  %s %s  %s%s%s%s%s %s\n", ui.Accent("♪"), ui.Bold("ytm"),
+	return fmt.Sprintf("\n  %s %s  %s%s%s%s%s %s\n", ui.Accent("♪"), ui.Bold("mfetchy"),
 		ui.Dim(folder), sep, ui.Cyan(o.format), sep, dot, ui.Dim(vpn))
 }
 

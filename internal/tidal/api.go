@@ -11,7 +11,7 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/catalog"
 )
 
-// Track is a Tidal song with what ytm tags and files it by.
+// Track is a Tidal song with what mfy tags and files it by.
 type Track struct {
 	ID          int64
 	Title       string // with the version in brackets when there is one ("Song (Live)")
@@ -46,7 +46,7 @@ func CoverURL(uuid string) string {
 	return imageBase + "/" + strings.ReplaceAll(uuid, "-", "/") + "/1280x1280.jpg"
 }
 
-// Catalog is the track as ytm's source-agnostic song.
+// Catalog is the track as mfetchy's source-agnostic song.
 func (t Track) Catalog() catalog.Track {
 	return catalog.Track{
 		Title: t.Title, Artists: t.Artists, Album: t.Album, AlbumArtist: t.AlbumArtist,

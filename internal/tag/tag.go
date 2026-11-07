@@ -167,7 +167,7 @@ func propose(ctx context.Context, o Options, path string) (*proposal, error) {
 			pr.matched = true
 			enrich(pr, info, m, artist)
 			// Album art only replaces a missing, small or non-square picture: a good cover
-			// (Apple's, or one ytm already put there) is never swapped on every run.
+			// (Apple's, or one mfetchy already put there) is never swapped on every run.
 			if m.Release != nil && m.Release.ID != "" && !info.GoodCover() {
 				pr.coverURL = CoverURL(m.Release.ID)
 			}
@@ -226,7 +226,7 @@ func enrich(pr *proposal, info Info, m *Match, artist string) {
 			pr.set["artist"] = r.ArtistCredit[0].Artist.Name
 		}
 	}
-	// The standard name players and Picard read; ytm used to write musicbrainz_recordingid.
+	// The standard name players and Picard read; mfetchy used to write musicbrainz_recordingid.
 	pr.set["musicbrainz_trackid"] = r.ID
 	if info.Tags["musicbrainz_recordingid"] != "" {
 		pr.set["musicbrainz_recordingid"] = ""
@@ -286,7 +286,7 @@ func year(d string) string {
 }
 
 // trackFallback is the track number for a file without one, from o.TrackNumber, looked up
-// by the tags as ytm wrote them (before any MusicBrainz corrections).
+// by the tags as mfetchy wrote them (before any MusicBrainz corrections).
 func trackFallback(o Options, info Info) (no, total int) {
 	if o.TrackNumber == nil || info.get("track") != "" || info.get("album") == "" {
 		return 0, 0
@@ -319,7 +319,7 @@ func renameTarget(root, path string, info Info, set map[string]string, fallbackN
 		return ""
 	}
 	// Same scheme as new downloads: Artist/Album/NN - Title.ext, no video id in the name
-	// (ytm keeps it in the comment tag).
+	// (mfetchy keeps it in the comment tag).
 	ext := filepath.Ext(path)
 	parts := []string{names.Dirs(root, artist, get("album"))}
 	prefix := ""

@@ -1,4 +1,4 @@
-// Command ytm downloads a YouTube Music library export as tagged audio files.
+// Command mfy (mfetchy) downloads a music library as tagged audio files.
 package main
 
 import (
@@ -40,16 +40,16 @@ import (
 
 var version = "dev"
 
-const usage = `ytm - your music library from YouTube Music, Apple Music and Spotify,
+const usage = `mfetchy - your music library from YouTube Music, Apple Music and Spotify,
 downloaded as tagged audio through Proton VPN
 
-  ytm                     open ytm: downloads, your library, settings and tools in one place
-  ytm <link or file>...   download right away: YouTube, Apple Music, Spotify, SoundCloud or Bandcamp links (songs,
+  mfy                     open mfetchy: downloads, your library, settings and tools in one place
+  mfy <link or file>...   download right away: YouTube, Apple Music, Spotify, SoundCloud or Bandcamp links (songs,
                           albums, playlists), a Takeout .zip, folder or .csv, or a text file
                           of links. Each song comes from the best source you have: Apple Music
                           (256 kbps AAC) when you're signed in there and it has it, else YouTube.
 
-Options for one run (your defaults are in ytm's Settings):
+Options for one run (your defaults are in mfetchy's Settings):
   -o DIR       music folder          -f FORMAT   mp3, m4a, opus, flac
   --no-vpn     skip the VPN this run -j N        max parallel downloads
   --connections N   VPN exits to use this run
@@ -78,7 +78,7 @@ func main() {
 		}
 		msg := ui.Sanitize(err.Error())
 		if st, serr := os.Stderr.Stat(); serr == nil && st.Mode()&os.ModeCharDevice != 0 {
-			// "  ✗ what went wrong" then any further lines as dim hints, like ytm's other lines
+			// "  ✗ what went wrong" then any further lines as dim hints, like mfetchy's other lines
 			first, rest, _ := strings.Cut(msg, "\n")
 			fmt.Fprintln(os.Stderr, ui.Mark(ui.Fail("✗"), first))
 			for _, l := range strings.Split(rest, "\n") {
@@ -87,7 +87,7 @@ func main() {
 				}
 			}
 		} else {
-			fmt.Fprintln(os.Stderr, "ytm:", msg)
+			fmt.Fprintln(os.Stderr, "mfy:", msg)
 		}
 		os.Exit(1)
 	}
@@ -119,7 +119,7 @@ type opts struct {
 	// after a download: fix the new songs' tags, and run the Premium upgrade if signed in
 	tagAfter, premiumAfter bool
 	lyricsAfter            bool // fetch lyrics (a .lrc beside each song and a tag in it) for the new songs
-	// ytm apple match: replace the YouTube copies; also take the less certain matches
+	// mfy apple match: replace the YouTube copies; also take the less certain matches
 	replace, maybe bool
 	// source forces the audio source for a unified (Spotify) import: "" = best available
 	// (Apple when signed in, else YouTube), "youtube" = always YouTube.
@@ -136,7 +136,7 @@ type opts struct {
 func parse(name string, args []string) (opts, []string, error) {
 	var o opts
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(io.Discard) // errors are printed once by main, with a pointer to 'ytm --help'
+	fs.SetOutput(io.Discard) // errors are printed once by main, with a pointer to 'mfy --help'
 	fs.Usage = func() {}
 	fs.StringVar(&o.out, "o", "", "")
 	fs.StringVar(&o.format, "f", "", "")
@@ -179,7 +179,7 @@ func parse(name string, args []string) (opts, []string, error) {
 	}
 	cfg, cerr := config.LoadChecked()
 	if cerr != nil {
-		fmt.Fprintln(os.Stderr, "ytm: warning:", cerr)
+		fmt.Fprintln(os.Stderr, "mfy: warning:", cerr)
 	}
 	if o.jobs < 0 {
 		return o, nil, fmt.Errorf("-j must be 1 or more")
@@ -227,7 +227,7 @@ func parse(name string, args []string) (opts, []string, error) {
 	return o, pos, nil
 }
 
-// movedInto says where each old subcommand lives now: everything is in ytm itself.
+// movedInto says where each old subcommand lives now: everything is in mfetchy itself.
 var movedInto = map[string]string{
 	"setup":  "Settings",
 	"login":  "Settings (VPN account)",
@@ -237,21 +237,21 @@ var movedInto = map[string]string{
 	"export": "\"Download my YouTube Music library\" (it helps you get the export)",
 	"tag":    "More tools > Fix tags",
 	"update": "More tools > Update yt-dlp, ffmpeg and deno",
-	"apple":  "Apple Music... (links just work: ytm <link>)",
+	"apple":  "Apple Music... (links just work: mfy <link>)",
 }
 
 func run(args []string) error {
-	o, pos, err := parse("ytm", args)
+	o, pos, err := parse("mfy", args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			printUsage()
 			return nil
 		}
-		return fmt.Errorf("%w (see: ytm --help)", err)
+		return fmt.Errorf("%w (see: mfy --help)", err)
 	}
 	switch {
 	case o.version || (len(pos) == 1 && pos[0] == "version"):
-		fmt.Println("ytm", version)
+		fmt.Println("mfy", version)
 		return nil
 	case len(pos) == 1 && pos[0] == "help":
 		printUsage()
@@ -264,16 +264,16 @@ func run(args []string) error {
 		fmt.Print(s)
 		return nil
 	}
-	// The old subcommands: "ytm apple <link>" / "ytm spotify <link>" are just links now; the
+	// The old subcommands: "mfy apple <link>" / "mfetchy spotify <link>" are just links now; the
 	// rest say where they went (unless a file of that name is meant).
 	if len(pos) > 0 {
 		if _, err := os.Stat(pos[0]); err != nil {
 			if (pos[0] == "apple" || pos[0] == "spotify") && len(pos) > 1 {
 				pos = pos[1:]
 			} else if where, ok := movedInto[pos[0]]; ok {
-				return fmt.Errorf("'ytm %s' is now part of ytm itself: run ytm and pick %s", pos[0], where)
+				return fmt.Errorf("'mfy %s' is now part of mfetchy itself: run mfy and pick %s", pos[0], where)
 			} else if pos[0] == "completion" {
-				return errors.New("use: ytm --completion bash|zsh|fish|powershell")
+				return errors.New("use: mfy --completion bash|zsh|fish|powershell")
 			}
 		}
 	}
@@ -330,7 +330,7 @@ func wizard(ctx context.Context, u *ui.UI) (string, error) {
 		printUsage()
 		return "", errors.New("no export given")
 	}
-	u.Warn("ytm needs your YouTube Music export (a Google Takeout file).")
+	u.Warn("mfetchy needs your YouTube Music export (a Google Takeout file).")
 	if ans := u.Ask("Path to it, or press Enter to get one now: ", ""); ans != "" {
 		return strings.Trim(ans, `"' `), nil
 	}
@@ -484,7 +484,7 @@ func downloadOnce(ctx context.Context, u *ui.UI, o opts, led *jobs.Ledger, input
 			rest = append(rest, in)
 		}
 	}
-	// SoundCloud and Bandcamp links: yt-dlp finds the songs, ytm files and tags them.
+	// SoundCloud and Bandcamp links: yt-dlp finds the songs, mfetchy files and tags them.
 	// They run alongside the Spotify/Apple/Tidal part (which has its own lanes): the two
 	// don't share a source, so neither waits for the other.
 	var webErr error
@@ -707,7 +707,7 @@ func downloadOnce(ctx context.Context, u *ui.UI, o opts, led *jobs.Ledger, input
 		}
 		if len(fails) > 0 {
 			u.Styled(fmt.Sprintf("\n  %s %s", ui.Bold(fmt.Sprintf("Not downloaded (%d)", len(fails))),
-				ui.Dim("· run ytm again to retry the temporary ones")))
+				ui.Dim("· run mfy again to retry the temporary ones")))
 			for _, l := range failureLines(fails, 15) {
 				u.Styled(l)
 			}
@@ -742,7 +742,7 @@ func afterDownload(ctx context.Context, u *ui.UI, o opts, st *store.Store, since
 	return nil
 }
 
-// idFromTags reads the video id ytm writes into every file's comment tag
+// idFromTags reads the video id mfetchy writes into every file's comment tag
 // ("https://music.youtube.com/watch?v=ID"), for recognising files whose names don't carry
 // it. ffprobe is only fetched if a file actually needs reading.
 func idFromTags(ctx context.Context, logf func(string, ...any)) func(string) string {
@@ -762,8 +762,8 @@ func idFromTags(ctx context.Context, logf func(string, ...any)) func(string) str
 	}
 }
 
-// removeLegacyCookies deletes the cookie jar older ytm versions may have left behind.
-// ytm never uses a Google account login: when YouTube blocks an exit, ytm moves to a
+// removeLegacyCookies deletes the cookie jar older mfetchy versions may have left behind.
+// mfetchy never uses a Google account login: when YouTube blocks an exit, mfetchy moves to a
 // different location instead.
 func removeLegacyCookies() {
 	if cache, err := config.CacheDir(); err == nil {
@@ -875,7 +875,7 @@ func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 	pc, label := v.Prov, providerLabel(providerID(cfg))
 	if o.noVPN || cfg.NoVPN || !v.SignedIn {
 		if !o.noVPN && !cfg.NoVPN {
-			u.Note("no VPN · set one up in ytm's Settings to download faster")
+			u.Note("no VPN · set one up in mfetchy's Settings to download faster")
 		}
 		return none, nil
 	}

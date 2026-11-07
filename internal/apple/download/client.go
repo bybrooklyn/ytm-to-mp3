@@ -224,7 +224,7 @@ func transportFor(proxyURL string) (*http.Transport, error) {
 			return nil, fmt.Errorf("unsupported proxy scheme %q (supported: socks5, http, https)", parsed.Scheme)
 		}
 	} else {
-		t.Proxy = nil // never pick up HTTP_PROXY behind ytm's back: direct means direct
+		t.Proxy = nil // never pick up HTTP_PROXY behind mfetchy's back: direct means direct
 	}
 	transports[proxyURL] = t
 	return t, nil

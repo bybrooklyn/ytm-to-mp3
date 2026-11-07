@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bybrooklyn/mfetchy/internal/appname"
 )
 
 const (
@@ -112,11 +114,11 @@ type Client struct {
 
 // SessionPath is the default place for the saved session (next to the Proton one).
 func SessionPath() (string, error) {
-	d, err := os.UserConfigDir()
+	d, err := appname.ConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(d, "ytm", "tidal.json"), nil
+	return filepath.Join(d, "tidal.json"), nil
 }
 
 // New builds a client and loads the session at path, if there is one.

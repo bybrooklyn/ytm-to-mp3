@@ -1,4 +1,4 @@
-// Package vpn gives ytm several network "exits" to spread downloads across.
+// Package vpn gives mfetchy several network "exits" to spread downloads across.
 //
 // An Exit is a SOCKS5 proxy URL on 127.0.0.1 in front of one userspace WireGuard
 // tunnel to a server of any vpnprovider.Provider (Proton, Mullvad, a WireGuard config).

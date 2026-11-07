@@ -1,6 +1,6 @@
 // Package sidecar writes the files media servers look for next to the music: folder.jpg
 // (and optionally cover.png) with the album's cover, album.nfo in album folders and
-// artist.nfo in artist folders. Everything ytm writes carries a marker ("written by ytm");
+// artist.nfo in artist folders. Everything mfetchy writes carries a marker ("written by mfetchy");
 // a file without it was made by the user and is never touched. A second run changes
 // nothing: files are rewritten only when their content would differ (nfo) or a larger
 // cover is now available (images).
@@ -27,8 +27,11 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/tag"
 )
 
-// Marker is the text that says ytm wrote a file.
-const Marker = "written by ytm"
+// Marker is the text that says mfetchy wrote a file.
+const Marker = "written by mfetchy"
+
+// OldMarker is what files written before the rename carry; they still count as ours.
+const OldMarker = "written by ytm"
 
 // CoverPx is the largest side of the album art files.
 const CoverPx = 1200
@@ -240,7 +243,8 @@ func owned(p string) bool {
 	defer f.Close()
 	buf := make([]byte, 4096)
 	n, _ := f.Read(buf)
-	return bytes.Contains(buf[:n], []byte(Marker))
+	head := buf[:n]
+	return bytes.Contains(head, []byte(Marker)) || bytes.Contains(head, []byte(OldMarker))
 }
 
 func exists(p string) bool { _, err := os.Lstat(p); return err == nil }
@@ -351,7 +355,7 @@ func syncCovers(ctx context.Context, o *Options, dir string, infos []tag.Info, a
 }
 
 // wantImage says whether the image at p should be (re)written for a cover of the given
-// side: it is missing, or ytm's own and smaller. A user's file counts as kept.
+// side: it is missing, or mfetchy's own and smaller. A user's file counts as kept.
 func wantImage(p string, side int, res *Result) bool {
 	if !exists(p) {
 		return true

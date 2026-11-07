@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-// Strict matching: ytm only touches a file when MusicBrainz is essentially certain.
+// Strict matching: mfetchy only touches a file when MusicBrainz is essentially certain.
 const (
 	minScore    = 98  // MusicBrainz's own search score
 	maxDurDelta = 2.0 // seconds between file and recording length
@@ -81,7 +81,7 @@ type Client struct {
 	gap      time.Duration
 }
 
-// Transport, when set, carries every MusicBrainz and cover-art request (ytm sets it to a
+// Transport, when set, carries every MusicBrainz and cover-art request (mfetchy sets it to a
 // VPN exit so lookups don't leave from the user's own IP). nil is the default transport.
 var Transport http.RoundTripper
 
@@ -111,7 +111,7 @@ func (c *Client) get(ctx context.Context, u string) ([]byte, error) {
 		c.last = time.Now()
 		c.mu.Unlock()
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-		req.Header.Set("User-Agent", "ytm-to-mp3/1 ( https://github.com/bybrooklyn/mfetchy )")
+		req.Header.Set("User-Agent", "mfetchy/1 ( https://github.com/bybrooklyn/mfetchy )")
 		req.Header.Set("Accept", "application/json")
 		resp, err := c.HTTP.Do(req)
 		if err != nil {

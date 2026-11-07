@@ -36,7 +36,7 @@ func one(ctx context.Context, f huh.Field) error {
 	return runForm(ctx, huh.NewForm(huh.NewGroup(f)))
 }
 
-// errQuit is Ctrl-C in a form: leave ytm (quietly, like any interrupt).
+// errQuit is Ctrl-C in a form: leave mfetchy (quietly, like any interrupt).
 var errQuit = fmt.Errorf("quit: %w", context.Canceled)
 
 // formKeys are the form keys: Esc goes back a screen, Ctrl-C quits. The menus are short,
@@ -50,7 +50,7 @@ func formKeys() *huh.KeyMap {
 	return km
 }
 
-// runForm runs a form with ytm's keys. Esc comes back as errBack (the caller returns to
+// runForm runs a form with mfetchy's keys. Esc comes back as errBack (the caller returns to
 // where it came from), Ctrl-C as errQuit.
 func runForm(ctx context.Context, f *huh.Form) error {
 	var esc atomic.Bool
@@ -126,7 +126,7 @@ func loginFlow(ctx context.Context, pc *proton.Client, cfg *config.Config) error
 		var ae *proton.APIError
 		if errors.As(err, &ae) && (ae.RateLimited() || ae.BadVersion() || ae.Code == 9001) {
 			// retrying can't help and a rate limit gets longer with every attempt
-			return errors.New("stopping here; fix the above, then try again in Settings (set YTM_DEBUG=1 to see Proton's raw reply)")
+			return errors.New("stopping here; fix the above, then try again in Settings (set MFY_DEBUG=1 to see Proton's raw reply)")
 		}
 		again := true
 		if one(ctx, huh.NewConfirm().Title("Try again?").Value(&again)) != nil || !again {

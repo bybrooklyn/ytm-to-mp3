@@ -24,7 +24,7 @@ func TestAppleState(t *testing.T) {
 	if st := s.Apple("1"); !st.Done || st.Path != "/m/a.m4a" || st.Attempts != 2 {
 		t.Fatalf("after done: %+v", st)
 	}
-	// a rename by `ytm tag` follows the file
+	// a rename by `mfy tag` follows the file
 	if err := s.MovePath("/m/a.m4a", "/m/b.m4a"); err != nil {
 		t.Fatal(err)
 	}

@@ -8,7 +8,7 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/tidal"
 )
 
-// Connection is one account or source ytm can use, and what state it is in.
+// Connection is one account or source mfetchy can use, and what state it is in.
 type Connection struct {
 	ID     string
 	Name   string
@@ -24,7 +24,7 @@ type Connection struct {
 }
 
 // DetectConnections reads the current state of every account and source. It only looks at
-// files ytm owns and at which browsers are installed: no network, no keyring prompts.
+// files mfetchy owns and at which browsers are installed: no network, no keyring prompts.
 func DetectConnections() []Connection {
 	cfg := config.Load()
 	var out []Connection
@@ -37,7 +37,7 @@ func DetectConnections() []Connection {
 		yt.Hint = "your library is read straight from that browser's sign-in, no export; enter to pick another browser"
 	} else {
 		yt.Status = "not set up"
-		yt.Hint = "pick the browser that is signed in to music.youtube.com, and ytm reads your library from it; enter to choose"
+		yt.Hint = "pick the browser that is signed in to music.youtube.com, and mfetchy reads your library from it; enter to choose"
 	}
 	out = append(out, yt)
 

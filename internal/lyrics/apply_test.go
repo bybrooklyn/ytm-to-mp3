@@ -64,7 +64,7 @@ func TestProcessWritesSidecarAndTagForEveryContainer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{"[ti:Bloom]", "[ar:Radiohead]", "[al:The King of Limbs]", "[length:03:35]", "[by:ytm · LRCLIB]", "[00:12.34]Open your mouth wide"} {
+			for _, want := range []string{"[ti:Bloom]", "[ar:Radiohead]", "[al:The King of Limbs]", "[length:03:35]", "[by:mfetchy · LRCLIB]", "[00:12.34]Open your mouth wide"} {
 				if !strings.Contains(string(side), want) {
 					t.Errorf("sidecar lacks %q:\n%s", want, side)
 				}

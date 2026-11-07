@@ -10,10 +10,10 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/model"
 )
 
-// YTM_LIVE=1 go test ./internal/engine -run NativeLive -v
+// MFY_LIVE=1 go test ./internal/engine -run NativeLive -v
 func TestNativeLiveFindAlbumAndSearch(t *testing.T) {
 	if appname.Getenv("LIVE") == "" {
-		t.Skip("set YTM_LIVE=1")
+		t.Skip("set MFY_LIVE=1")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

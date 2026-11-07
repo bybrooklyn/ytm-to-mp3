@@ -58,8 +58,8 @@ func TestSetEventsAreKeys(t *testing.T) {
 	if last.Jobs != 2 {
 		t.Fatalf("jobs %d", last.Jobs)
 	}
-	h.Do(Event{Set: &Set{Row: 0, Value: "/tmp/ytm-set-test"}})
-	if !strings.HasSuffix(last.Out, "ytm-set-test") {
+	h.Do(Event{Set: &Set{Row: 0, Value: "/tmp/mfetchy-set-test"}})
+	if !strings.HasSuffix(last.Out, "mfetchy-set-test") {
 		t.Fatalf("folder %q", last.Out)
 	}
 	if v := h.Do(Event{Set: &Set{Row: 99, Press: true}}); v.Editing {

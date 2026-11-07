@@ -511,7 +511,7 @@ func outputTemplate(dir, id string) string {
 }
 
 // Download lets yt-dlp fetch the audio itself. This is the slower but most robust
-// path, used when the direct stream URL can't be fetched by ytm.
+// path, used when the direct stream URL can't be fetched by mfetchy.
 // onProgress, if set, is told the bytes downloaded so far and the expected total (0 when
 // yt-dlp doesn't know it yet).
 func (y ytdlp) Download(ctx context.Context, id, dir string, onProgress func(got, total int64)) (string, error) {
@@ -549,7 +549,7 @@ func (y ytdlp) Download(ctx context.Context, id, dir string, onProgress func(got
 	return path, nil
 }
 
-// progPrefix marks ytm's own progress lines in yt-dlp's output.
+// progPrefix marks mfetchy's own progress lines in yt-dlp's output.
 const progPrefix = "ytmprog "
 
 var progTemplate = "download:" + progPrefix +

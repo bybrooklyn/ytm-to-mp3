@@ -31,7 +31,7 @@ func X25519FromSeed(seed []byte) [32]byte {
 	return k
 }
 
-// MaxSlots bounds how many identities ytm keeps (Proton plans allow at most 10 or so
+// MaxSlots bounds how many identities mfetchy keeps (Proton plans allow at most 10 or so
 // devices at once).
 const MaxSlots = 16
 
@@ -62,7 +62,7 @@ func (c *Client) key(slot int) (*WGKey, *time.Time, error) {
 	}
 	seed, err := base64.StdEncoding.DecodeString(*keyStr)
 	if err != nil || len(seed) != ed25519.SeedSize {
-		return nil, nil, errors.New("the saved Proton key is damaged: sign out and in again in ytm's Settings")
+		return nil, nil, errors.New("the saved Proton key is damaged: sign out and in again in mfetchy's Settings")
 	}
 	pub := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
 	der, err := x509.MarshalPKIXPublicKey(pub)
@@ -88,7 +88,7 @@ func (c *Client) IdentityAt(ctx context.Context, slot int) (*WGKey, error) {
 	c.mu.Lock()
 	if c.Session == nil {
 		c.mu.Unlock()
-		return nil, errors.New("not signed in to Proton: sign in in ytm's Settings")
+		return nil, errors.New("not signed in to Proton: sign in in mfetchy's Settings")
 	}
 	k, until, err := c.key(slot)
 	fresh := err == nil && time.Now().Before(*until)

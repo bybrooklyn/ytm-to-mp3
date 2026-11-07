@@ -1,7 +1,7 @@
 // Package library reads the music library of every account the user has set up (YouTube
 // Music, Bandcamp purchases, Apple Music), merges them into one deduplicated library, and
 // plans what is missing from the music folder and which account can supply each song at the
-// best quality. It does no downloading: cmd/ytm hands the plan to the existing pipelines.
+// best quality. It does no downloading: cmd/mfy hands the plan to the existing pipelines.
 //
 // Adding a service (Tidal, say) means implementing LibrarySource and registering it:
 //
@@ -19,7 +19,7 @@
 //
 // Combine then merges its songs with everyone else's by the usual identity rules, and Plan
 // prefers it for a song exactly when catalog.Rank puts its audio above the other accounts'.
-// The download step (cmd/ytm) must know how to fetch from the new Supplies() source.
+// The download step (cmd/mfy) must know how to fetch from the new Supplies() source.
 package library
 
 import (
@@ -30,7 +30,7 @@ import (
 )
 
 // Status is what Detect reports about an account without touching the network or asking
-// the user anything: only ytm's own settings and which browsers are installed are looked at.
+// the user anything: only mfetchy's own settings and which browsers are installed are looked at.
 type Status struct {
 	SetUp  bool   // the user has set this account up
 	Detail string // how it is used when set up ("reads Firefox", "signed in")

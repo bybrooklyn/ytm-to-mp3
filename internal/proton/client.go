@@ -76,7 +76,7 @@ func verifyPin(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 			return nil
 		}
 	}
-	return errors.New("Proton's TLS certificate doesn't match the keys Proton's apps pin (a proxy or attacker may be intercepting, or Proton rotated its keys). Set YTM_NO_PIN=1 to skip this check at your own risk")
+	return errors.New("Proton's TLS certificate doesn't match the keys Proton's apps pin (a proxy or attacker may be intercepting, or Proton rotated its keys). Set MFY_NO_PIN=1 to skip this check at your own risk")
 }
 
 func newHTTP() *http.Client {
@@ -149,18 +149,18 @@ func New(path string) *Client {
 
 // SessionPath is the default location of the saved session.
 func SessionPath() (string, error) {
-	d, err := os.UserConfigDir()
+	d, err := appname.ConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(d, "ytm", "proton.json"), nil
+	return filepath.Join(d, "proton.json"), nil
 }
 
 // save writes the session atomically (temp file + rename) so a crash can't lose the
 // WireGuard seed or a rotated refresh token.
 func (c *Client) save() {
 	if err := c.saveErr(); err != nil {
-		fmt.Fprintln(os.Stderr, "ytm: warning: couldn't save your Proton session:", err)
+		fmt.Fprintln(os.Stderr, "mfy: warning: couldn't save your Proton session:", err)
 	}
 }
 
@@ -252,10 +252,10 @@ func (e *APIError) Error() string {
 	var hint string
 	switch {
 	case e.BadVersion():
-		hint = "Proton rejected the app version ytm identifies as (ytm needs an update; or set YTM_APP_VERSION)"
+		hint = "Proton rejected the app version mfetchy identifies as (mfetchy needs an update; or set MFY_APP_VERSION)"
 	case e.NeedsHuman():
 		hint = "Proton wants a human check (" + strings.Join(e.HVMethods, ", ") + ") before it lets this app sign in. " +
-			"Sign in once at https://account.protonvpn.com in a browser on this same network, then sign in again in ytm's Settings"
+			"Sign in once at https://account.protonvpn.com in a browser on this same network, then sign in again in mfetchy's Settings"
 	case e.Code == 8002:
 		hint = "wrong password or 2FA code"
 	case e.Code == 2028:
@@ -351,7 +351,7 @@ func (c *Client) send(ctx context.Context, id appID, method, path string, authed
 		}
 		c.mu.Unlock()
 		if s == nil {
-			return errors.New("not signed in to Proton: sign in in ytm's Settings")
+			return errors.New("not signed in to Proton: sign in in mfetchy's Settings")
 		}
 		req.Header.Set("x-pm-uid", uid)
 		req.Header.Set("Authorization", "Bearer "+tok)
@@ -387,7 +387,7 @@ func (c *Client) send(ctx context.Context, id appID, method, path string, authed
 		// Never print request bodies (they hold SRP proofs / tokens). Replies can carry
 		// identifiers, so long token-like strings are masked.
 		body := longHex.ReplaceAllString(strings.TrimSpace(string(raw[:min(len(raw), 400)])), "<redacted>")
-		fmt.Fprintf(os.Stderr, "ytm debug: %s %s [%s] -> HTTP %d %s\n", method, path, id.Version, resp.StatusCode, body)
+		fmt.Fprintf(os.Stderr, "mfy debug: %s %s [%s] -> HTTP %d %s\n", method, path, id.Version, resp.StatusCode, body)
 	}
 	return ae
 }
@@ -402,7 +402,7 @@ func (c *Client) refresh(ctx context.Context, stale string) error {
 	s := c.Session
 	if s == nil {
 		c.mu.Unlock()
-		return errors.New("not signed in to Proton: sign in in ytm's Settings")
+		return errors.New("not signed in to Proton: sign in in mfetchy's Settings")
 	}
 	if s.AccessToken != stale {
 		c.mu.Unlock()
@@ -422,7 +422,7 @@ func (c *Client) refresh(ctx context.Context, stale string) error {
 	if err != nil {
 		var ae *APIError
 		if errors.As(err, &ae) && (ae.Status == 400 || ae.Status == 401 || ae.Status == 422) {
-			return errors.New("your Proton session expired: sign in again in ytm's Settings")
+			return errors.New("your Proton session expired: sign in again in mfetchy's Settings")
 		}
 		return fmt.Errorf("couldn't refresh the Proton session (network?): %w", err)
 	}

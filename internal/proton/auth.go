@@ -68,7 +68,7 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 	c.mu.Unlock()
 	if r.TwoFA.Enabled != 0 {
 		if r.TwoFA.Enabled&1 == 0 {
-			return errors.New("this account only has a security key (FIDO2) for 2FA, which ytm can't use; add an authenticator-app code in Proton account settings")
+			return errors.New("this account only has a security key (FIDO2) for 2FA, which mfetchy can't use; add an authenticator-app code in Proton account settings")
 		}
 		return ErrNeed2FA
 	}
@@ -83,7 +83,7 @@ func (c *Client) Submit2FA(ctx context.Context, code string) error {
 		if errors.As(err, &ae) && ae.Code == 8002 {
 			// Proton "jails" the login after too many wrong codes: it must start over.
 			c.Logout()
-			return errors.New("Proton reset this sign-in after wrong 2FA codes; sign in again in ytm's Settings")
+			return errors.New("Proton reset this sign-in after wrong 2FA codes; sign in again in mfetchy's Settings")
 		}
 		return err
 	}

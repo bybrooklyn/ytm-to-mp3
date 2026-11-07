@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-// ytm keeps tags under one set of lower-case names everywhere ("canonical" names):
+// mfetchy keeps tags under one set of lower-case names everywhere ("canonical" names):
 //
 //	title artist album album_artist date genre comment composer copyright label barcode
 //	track ("N" or "N/T") disc ("N" or "N/T") isrc explicit ("1")
@@ -70,7 +70,7 @@ func TagSupported(format, key string) bool {
 	return true
 }
 
-// CanonicalTag maps a tag name as ffprobe reports it (any case) to ytm's name for it.
+// CanonicalTag maps a tag name as ffprobe reports it (any case) to mfetchy's name for it.
 func CanonicalTag(key string) string {
 	k := strings.ToLower(strings.TrimSpace(key))
 	if c, ok := readKeys[k]; ok {

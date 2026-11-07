@@ -107,8 +107,8 @@ func TestResolveTrackMapping(t *testing.T) {
 	if got != want {
 		t.Errorf("got %+v\nwant %+v", got, want)
 	}
-	if ua := f.apiUA.Load(); ua != "ytm" {
-		t.Errorf("User-Agent %v, want ytm", ua)
+	if ua := f.apiUA.Load(); ua != "mfetchy" {
+		t.Errorf("User-Agent %v, want mfetchy", ua)
 	}
 }
 

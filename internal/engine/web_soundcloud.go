@@ -14,9 +14,9 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/vpn"
 )
 
-// nativeSoundCloud reports whether SoundCloud links try ytm's own client first. yt-dlp is
+// nativeSoundCloud reports whether SoundCloud links try mfetchy's own client first. yt-dlp is
 // the fallback whenever the native path errors or finds nothing, so a change on
-// SoundCloud's side costs speed, not results. YTM_SOUNDCLOUD=yt-dlp turns it off.
+// SoundCloud's side costs speed, not results. MFY_SOUNDCLOUD=yt-dlp turns it off.
 func nativeSoundCloud() bool { return !strings.EqualFold(appname.Getenv("SOUNDCLOUD"), "yt-dlp") }
 
 // scClients keeps one client per exit, so its client_id is found once per session.

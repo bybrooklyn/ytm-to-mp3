@@ -17,7 +17,7 @@ func TestSOCKSPreAuthCapAndVersionByte(t *testing.T) {
 		t.Fatal(err)
 	}
 	var d net.Dialer
-	go ServeSOCKS5(ctx, l, "ytm", "secret", d.DialContext)
+	go ServeSOCKS5(ctx, l, "mfy", "secret", d.DialContext)
 
 	// hold many half-open connections
 	var held []net.Conn

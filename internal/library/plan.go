@@ -22,7 +22,7 @@ type HeldCopy struct {
 }
 
 // HeldFunc looks an entry up in the music folder, given the copy chosen as the best
-// supplier; ok is false when nothing is held. cmd/ytm backs it with the library table, the
+// supplier; ok is false when nothing is held. cmd/mfy backs it with the library table, the
 // Apple and YouTube download records and the title/artist index.
 type HeldFunc func(e Entry, best Song) (h HeldCopy, ok bool)
 

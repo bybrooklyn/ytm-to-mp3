@@ -16,7 +16,7 @@ import (
 // into an existing "Meganeko" folder, a song of "CHROMAKOPIA" into an existing
 // "CHROMAKOPIA +". Every place that builds an Artist/Album path goes through Dirs.
 
-// IsSidecarName reports whether name is one of the media-server files ytm writes into
+// IsSidecarName reports whether name is one of the media-server files mfetchy writes into
 // album and artist folders (folder.jpg, cover.png, album.nfo, artist.nfo), which are not
 // songs even when a song is titled "Cover" or "Folder".
 func IsSidecarName(name string) bool {

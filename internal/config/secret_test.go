@@ -13,7 +13,7 @@ func TestWriteSecretTightensExistingFile(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix permission bits")
 	}
-	d := filepath.Join(t.TempDir(), "ytm")
+	d := filepath.Join(t.TempDir(), "mfetchy")
 	p := filepath.Join(d, "token")
 	if err := os.MkdirAll(d, 0o755); err != nil {
 		t.Fatal(err)

@@ -13,12 +13,12 @@ import (
 )
 
 // TestBenchResolve compares resolving N ids one process each against batches.
-// Hits YouTube for real, so it only runs when YTM_BENCH_IDS (a Takeout-style csv, first
-// column = id) and YTM_BENCH_YTDLP are set.
+// Hits YouTube for real, so it only runs when MFY_BENCH_IDS (a Takeout-style csv, first
+// column = id) and MFY_BENCH_YTDLP are set.
 func TestBenchResolve(t *testing.T) {
 	csvPath, bin := appname.Getenv("BENCH_IDS"), appname.Getenv("BENCH_YTDLP")
 	if csvPath == "" || bin == "" {
-		t.Skip("set YTM_BENCH_IDS and YTM_BENCH_YTDLP to run")
+		t.Skip("set MFY_BENCH_IDS and MFY_BENCH_YTDLP to run")
 	}
 	f, err := os.Open(csvPath)
 	if err != nil {

@@ -9,10 +9,10 @@ import (
 )
 
 // Live checks against the real YouTube Music (anonymous: no account, public searches).
-// Run with YTM_LIVE=1 go test ./internal/ytmusic -run Live -v
+// Run with MFY_LIVE=1 go test ./internal/ytmusic -run Live -v
 func TestLiveSearchAlbumPlaylist(t *testing.T) {
 	if appname.Getenv("LIVE") == "" {
-		t.Skip("set YTM_LIVE=1")
+		t.Skip("set MFY_LIVE=1")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

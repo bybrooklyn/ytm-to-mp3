@@ -52,7 +52,7 @@ func chooseYouTubeBrowser(ctx context.Context) error {
 func pickBrowser(ctx context.Context) (browsercookies.Browser, error) {
 	return pickBrowserFor(ctx, browserPurpose{
 		title: "Which browser is signed in to YouTube Music?",
-		desc:  "ytm reads that browser's youtube.com sign-in once, only to read your library, and keeps it in memory.\nNothing is saved but the browser's name. Requests go from your own connection, not the VPN.\nThe browser must have music.youtube.com open or recently used (a signed-out one won't work).",
+		desc:  "mfetchy reads that browser's youtube.com sign-in once, only to read your library, and keeps it in memory.\nNothing is saved but the browser's name. Requests go from your own connection, not the VPN.\nThe browser must have music.youtube.com open or recently used (a signed-out one won't work).",
 		get:   func(c config.Config) string { return c.YouTubeBrowser },
 		set:   func(c *config.Config, id string) { c.YouTubeBrowser = id },
 		none:  "no supported browser found (Firefox, Chrome, Chromium, Brave, Edge, ...): export from Google Takeout instead",
@@ -63,7 +63,7 @@ func pickBrowser(ctx context.Context) (browsercookies.Browser, error) {
 func pickBandcampBrowser(ctx context.Context) (browsercookies.Browser, error) {
 	return pickBrowserFor(ctx, browserPurpose{
 		title: "Which browser is signed in to Bandcamp?",
-		desc:  "ytm reads that browser's bandcamp.com sign-in only to download music you have bought in its original\nquality (FLAC when offered). It stays in memory and goes only to Bandcamp; nothing is saved but the browser's name.\nMusic you haven't bought still streams at 128 kbps.",
+		desc:  "mfetchy reads that browser's bandcamp.com sign-in only to download music you have bought in its original\nquality (FLAC when offered). It stays in memory and goes only to Bandcamp; nothing is saved but the browser's name.\nMusic you haven't bought still streams at 128 kbps.",
 		get:   func(c config.Config) string { return c.BandcampBrowser },
 		set:   func(c *config.Config, id string) { c.BandcampBrowser = id },
 		none:  "no supported browser found (Firefox, Chrome, Chromium, Brave, Edge, ...)",

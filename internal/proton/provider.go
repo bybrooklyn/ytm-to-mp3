@@ -28,7 +28,7 @@ func (c *Client) AccountID() string {
 	return vpnprovider.AccountHash(c.Session.Username)
 }
 
-// MaxSlots is how many identities ytm keeps.
+// MaxSlots is how many identities mfetchy keeps.
 func (c *Client) MaxSlots() int { return MaxSlots }
 
 // Tunnel builds the connection to s. Proton gives every client the same tunnel address

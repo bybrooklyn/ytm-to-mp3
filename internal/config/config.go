@@ -1,4 +1,4 @@
-// Package config persists the few choices ytm remembers between runs.
+// Package config persists the few choices mfetchy remembers between runs.
 package config
 
 import (
@@ -65,7 +65,7 @@ type Config struct {
 	TidalQuality string `json:"tidal_quality,omitempty"`
 }
 
-// AppleTokenPath is where ytm keeps the user's Apple Music media-user-token
+// AppleTokenPath is where mfetchy keeps the user's Apple Music media-user-token
 // (mode 0600): the "login" for the native Apple Music download path.
 func AppleTokenPath() string {
 	d, err := dir()
@@ -75,7 +75,7 @@ func AppleTokenPath() string {
 	return filepath.Join(d, "apple-token")
 }
 
-// AppleCookiesPath is where ytm keeps the full Apple cookie jar (mode 0600),
+// AppleCookiesPath is where mfetchy keeps the full Apple cookie jar (mode 0600),
 // an HTTP Cookie header value; the web-playback endpoint needs more than the
 // media-user-token alone.
 func AppleCookiesPath() string {
@@ -183,7 +183,7 @@ func SaveAppleToken(token string) error {
 	return WriteSecret(p, []byte(token+"\n"))
 }
 
-// PremiumCookiesPath is where ytm keeps its copy of the user's YouTube Premium cookies
+// PremiumCookiesPath is where mfetchy keeps its copy of the user's YouTube Premium cookies
 // (mode 0600). Only the upgrade pass reads it.
 func PremiumCookiesPath() string {
 	d, err := dir()
@@ -286,7 +286,7 @@ func ExpandPath(p string) string {
 // into the file untouched (every other format is a re-encode).
 const DefaultFormat = "opus"
 
-// DefaultOut is ~/Music, so libraries don't scatter across whatever folder you ran ytm from.
+// DefaultOut is ~/Music, so libraries don't scatter across whatever folder you ran mfetchy from.
 func DefaultOut() string {
 	if h, err := os.UserHomeDir(); err == nil {
 		return filepath.Join(h, "Music")

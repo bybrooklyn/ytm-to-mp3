@@ -21,7 +21,7 @@ const (
 
 // Progress, when set, receives the number of bytes read as downloads proceed.
 // It lets the host render progress through its own UI; the vendored upstream
-// drew a terminal progress bar here, which does not fit ytm's live display.
+// drew a terminal progress bar here, which does not fit mfetchy's live display.
 var Progress func(ctx context.Context, n, total int64)
 
 func reportProgress(ctx context.Context, n, total int64) {

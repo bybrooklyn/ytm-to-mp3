@@ -11,10 +11,10 @@ import (
 
 // Reads the real library of whichever installed browser is signed in to YouTube Music
 // (most recently used first). It prints counts only, never cookies or account details.
-// Run with: YTM_LIVE_ACCOUNT=1 go test ./internal/ytmusic -run LiveAccount -v
+// Run with: MFY_LIVE_ACCOUNT=1 go test ./internal/ytmusic -run LiveAccount -v
 func TestLiveAccountLibrary(t *testing.T) {
 	if appname.Getenv("LIVE_ACCOUNT") == "" {
-		t.Skip("set YTM_LIVE_ACCOUNT=1")
+		t.Skip("set MFY_LIVE_ACCOUNT=1")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

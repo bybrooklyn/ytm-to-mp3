@@ -73,7 +73,7 @@ func sidecarLibraryFlow(ctx context.Context, u *ui.UI, o opts) error {
 	}
 	write := false
 	if err := one(ctx, huh.NewConfirm().Title("Write these files?").
-		Description("Files ytm wrote before are updated; files you made are left alone.").
+		Description("Files mfetchy wrote before are updated; files you made are left alone.").
 		Affirmative("Write").Negative("Not now").Value(&write)); err != nil || !write {
 		return err
 	}

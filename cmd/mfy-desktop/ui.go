@@ -510,7 +510,7 @@ func (v *view) draw(st screen.View) {
 
 	// Sidebar: the wordmark, then one item per tab. Future sections are more tabs.
 	v.sidebar.Objects = nil
-	v.sidebar.Add(padded(txt("ytm", theme.ColorNameForeground, 18, true), sp24, sp16))
+	v.sidebar.Add(padded(txt("mfetchy", theme.ColorNameForeground, 18, true), sp24, sp16))
 	for i, name := range st.Tabs {
 		i := i
 		active := i == st.Current

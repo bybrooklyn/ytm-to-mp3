@@ -11,7 +11,7 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/names"
 )
 
-// Formats ytm can write.
+// Formats mfetchy can write.
 var Formats = []string{"mp3", "m4a", "opus", "flac"}
 
 // ValidFormat reports whether f is a supported output format.
@@ -77,7 +77,7 @@ func encodeArgs(src, cover, dst, format, srcCodec string, meta map[string]string
 			"-disposition:v:0", "attached_pic",
 			"-metadata:s:v:0", "title=Album cover", "-metadata:s:v:0", "comment=Cover (front)")
 	}
-	meta = names.TagsFor(format, meta) // each container's own names for ytm's tags
+	meta = names.TagsFor(format, meta) // each container's own names for mfetchy's tags
 	keys := make([]string, 0, len(meta))
 	for k, v := range meta {
 		if v != "" {

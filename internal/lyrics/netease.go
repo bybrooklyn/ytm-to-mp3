@@ -11,7 +11,7 @@ import (
 )
 
 // NetEaseName and NetEaseBase: NetEase Cloud Music's public web API. This is UNOFFICIAL
-// (undocumented, no key, no promises) and a third party outside the music services ytm
+// (undocumented, no key, no promises) and a third party outside the music services mfetchy
 // otherwise uses, so it is off until switched on in Settings. It gets the title and artist
 // as the search text and, for the three best hits, their song ids; nothing else.
 const (

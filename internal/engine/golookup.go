@@ -12,7 +12,7 @@ import (
 
 // goLookup reports whether lookups try the native player API first: the default since it
 // did 120 songs through 6 VPN exits in 37 s with no failures, against 3-4 minutes with
-// yt-dlp lookups (2026-11-04). YTM_RESOLVER=yt-dlp turns it off; yt-dlp is always the
+// yt-dlp lookups (2026-11-04). MFY_RESOLVER=yt-dlp turns it off; yt-dlp is always the
 // fallback for whatever the native path can't handle.
 func goLookup() bool { return !strings.EqualFold(appname.Getenv("RESOLVER"), "yt-dlp") }
 

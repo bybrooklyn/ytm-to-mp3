@@ -14,7 +14,7 @@ import (
 )
 
 func TestEnvCarriesProxyNotArgv(t *testing.T) {
-	y := ytdlp{proxy: "socks5h://ytm:secret@127.0.0.1:9"}
+	y := ytdlp{proxy: "socks5h://mfy:secret@127.0.0.1:9"}
 	for _, a := range y.baseArgs() {
 		if strings.Contains(a, "secret") {
 			t.Fatalf("proxy password leaked into argv: %q", a)
@@ -22,7 +22,7 @@ func TestEnvCarriesProxyNotArgv(t *testing.T) {
 	}
 	var found int
 	for _, kv := range y.env() {
-		if strings.HasSuffix(kv, "=socks5h://ytm:secret@127.0.0.1:9") {
+		if strings.HasSuffix(kv, "=socks5h://mfy:secret@127.0.0.1:9") {
 			found++
 		}
 	}
@@ -50,12 +50,12 @@ func TestYtDlpUsesEnvProxy(t *testing.T) {
 	var dest atomic.Value
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go vpn.ServeSOCKS5(ctx, l, "ytm", "secret", func(_ context.Context, _, addr string) (net.Conn, error) {
+	go vpn.ServeSOCKS5(ctx, l, "mfy", "secret", func(_ context.Context, _, addr string) (net.Conn, error) {
 		hits.Add(1)
 		dest.Store(addr)
 		return nil, net.ErrClosed
 	})
-	y := ytdlp{tools: deps.Tools{YtDlp: bin}, proxy: "socks5h://ytm:secret@" + l.Addr().String()}
+	y := ytdlp{tools: deps.Tools{YtDlp: bin}, proxy: "socks5h://mfy:secret@" + l.Addr().String()}
 	rctx, rc := context.WithTimeout(ctx, 40*time.Second)
 	defer rc()
 	_, _ = y.Resolve(rctx, "dQw4w9WgXcQ")

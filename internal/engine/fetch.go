@@ -40,7 +40,7 @@ func contentLength(r *Resolved) int64 {
 	return r.Size
 }
 
-// canFetch reports whether ytm can download the stream itself (plain HTTPS, known size).
+// canFetch reports whether mfetchy can download the stream itself (plain HTTPS, known size).
 func canFetch(r *Resolved) bool {
 	n := contentLength(r)
 	return r.URL != "" && (r.Protocol == "https" || r.Protocol == "http") && n > 0 && n <= maxFetchSize

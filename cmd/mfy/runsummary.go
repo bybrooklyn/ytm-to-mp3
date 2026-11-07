@@ -76,7 +76,7 @@ func summaryWorthPrinting(led *jobs.Ledger) bool {
 func printRunSummary(u *ui.UI, led *jobs.Ledger, interrupted bool) {
 	if !summaryWorthPrinting(led) {
 		if interrupted && len(led.Results()) > 0 {
-			u.Note("stopped early · what finished is kept; run ytm again with the same links to continue")
+			u.Note("stopped early · what finished is kept; run mfy again with the same links to continue")
 		}
 		return
 	}
@@ -120,7 +120,7 @@ func printRunSummary(u *ui.UI, led *jobs.Ledger, interrupted bool) {
 		u.Note("%s not started or not finished", count(c.Unfinished, "song"))
 	}
 	if interrupted {
-		u.Note("stopped early · run ytm again with the same links to continue where it left off")
+		u.Note("stopped early · run mfy again with the same links to continue where it left off")
 	}
 }
 

@@ -18,7 +18,7 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
 
-// runTag runs `ytm tag` on dir, or only on files (under dir) when given.
+// runTag runs `mfy tag` on dir, or only on files (under dir) when given.
 func runTag(ctx context.Context, u *ui.UI, o opts, dir string, files ...string) error {
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 		return fmt.Errorf("%s is not a folder", dir)
@@ -27,7 +27,7 @@ func runTag(ctx context.Context, u *ui.UI, o opts, dir string, files ...string) 
 	if err != nil {
 		return err
 	}
-	// Renamed files are recorded in the folder's ytm database (if it has one), so they're
+	// Renamed files are recorded in the folder's mfetchy database (if it has one), so they're
 	// still known as downloaded.
 	// The album lookups there also number old files that have no track number.
 	var onMove func(from, to string)
@@ -115,7 +115,7 @@ func mergeFlow(ctx context.Context, u *ui.UI, o opts) error {
 	return err
 }
 
-// tagFlow is the menu's way into `ytm tag`: pick what to do, then a preview that can be
+// tagFlow is the menu's way into `mfy tag`: pick what to do, then a preview that can be
 // applied straight away.
 func tagFlow(ctx context.Context, u *ui.UI, o opts) error {
 	dir := tilde(o.out)

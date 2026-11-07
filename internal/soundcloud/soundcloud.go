@@ -1,6 +1,6 @@
 // Package soundcloud is a small client for the public API behind soundcloud.com: it turns a
 // track, playlist/album or artist link into songs and fetches their audio. No login, no
-// cookies, public tracks only. It says what it is (User-Agent "ytm") and does not pretend to
+// cookies, public tracks only. It says what it is (User-Agent "mfetchy") and does not pretend to
 // be a browser: if SoundCloud answers with a challenge page instead of data, that is an
 // error and the caller falls back to yt-dlp.
 //
@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	userAgent   = "ytm"
+	userAgent   = "mfetchy"
 	defaultAPI  = "https://api-v2.soundcloud.com"
 	defaultSite = "https://soundcloud.com/"
 	maxPages    = 100 // an artist's tracks, 50 per page

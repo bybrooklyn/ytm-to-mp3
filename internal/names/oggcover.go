@@ -15,7 +15,7 @@ import (
 
 // Ogg Opus has no picture stream: cover art is a Vorbis comment holding a base64 FLAC
 // picture block (METADATA_BLOCK_PICTURE), which ffmpeg reads back as cover art but can't
-// write from a picture input. ytm builds the comment itself and hands it to ffmpeg in an
+// write from a picture input. mfetchy builds the comment itself and hands it to ffmpeg in an
 // ffmetadata file (it is far too long for a command-line argument).
 
 // maxCoverBytes bounds the image put into a comment (players choke on huge headers).

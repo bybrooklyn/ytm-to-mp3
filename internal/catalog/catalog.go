@@ -1,4 +1,4 @@
-// Package catalog is ytm's source-agnostic song identity: one canonical Track
+// Package catalog is mfetchy's source-agnostic song identity: one canonical Track
 // type that any metadata source (Apple Music, Spotify, YouTube, a Takeout
 // export) maps onto, so the downloader can treat them alike and fetch each
 // song from the best available audio source.

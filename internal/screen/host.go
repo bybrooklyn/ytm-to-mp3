@@ -71,14 +71,14 @@ func (h *Host) open(i int) {
 // ActionNotice explains an action a window can't run itself (the sign-ins are interactive
 // terminal flows for now).
 var ActionNotice = map[string]string{
-	"signin":   "Signing in to Proton happens in the terminal: run ytm, then Connections.",
-	"signout":  "Signing out happens in the terminal: run ytm, then Connections.",
-	"test":     "The VPN test runs in the terminal: run ytm, then Settings > Test VPN.",
-	"premium":  "The YouTube Premium setup runs in the terminal: run ytm, then Connections.",
-	"applein":  "Apple Music sign-in runs in the terminal: run ytm, then Connections.",
-	"appleout": "Apple Music sign-out runs in the terminal: run ytm, then Connections.",
-	"bandcamp": "Choosing the browser for your Bandcamp purchases happens in the terminal: run ytm, then Connections.",
-	"youtube":  "Choosing the browser for your YouTube Music library happens in the terminal: run ytm, then Connections.",
+	"signin":   "Signing in to Proton happens in the terminal: run mfy, then Connections.",
+	"signout":  "Signing out happens in the terminal: run mfy, then Connections.",
+	"test":     "The VPN test runs in the terminal: run mfy, then Settings > Test VPN.",
+	"premium":  "The YouTube Premium setup runs in the terminal: run mfy, then Connections.",
+	"applein":  "Apple Music sign-in runs in the terminal: run mfy, then Connections.",
+	"appleout": "Apple Music sign-out runs in the terminal: run mfy, then Connections.",
+	"bandcamp": "Choosing the browser for your Bandcamp purchases happens in the terminal: run mfy, then Connections.",
+	"youtube":  "Choosing the browser for your YouTube Music library happens in the terminal: run mfy, then Connections.",
 }
 
 // View is the current state.

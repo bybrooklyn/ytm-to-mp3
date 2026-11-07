@@ -304,8 +304,8 @@ var (
 )
 
 // ImportDisk marks tracks done for audio files already under dir, so nothing is
-// downloaded twice: files named "... [id].ext" (older ytm versions and other tools) by
-// their name, others by idOf (which reads the YouTube link ytm writes into the tags; nil
+// downloaded twice: files named "... [id].ext" (older versions and other tools) by
+// their name, others by idOf (which reads the YouTube link mfetchy writes into the tags; nil
 // = names only). idOf is only asked about files the database doesn't know yet, so on a
 // normal run it isn't called at all.
 func (s *Store) ImportDisk(dir string, idOf func(path string) string) (int, error) {
@@ -320,7 +320,7 @@ func (s *Store) ImportDisk(dir string, idOf func(path string) string) (int, erro
 		rows.Close()
 	}
 	if len(known) > 0 {
-		// Reading tags is for rebuilding a lost or new database. Otherwise files ytm didn't
+		// Reading tags is for rebuilding a lost or new database. Otherwise files mfetchy didn't
 		// write (no id anywhere) would be probed again on every run.
 		idOf = nil
 	}
@@ -425,7 +425,7 @@ func (s *Store) SetPath(id, path string) error {
 	return err
 }
 
-// MovePath records that a file moved (e.g. renamed by `ytm tag`).
+// MovePath records that a file moved (e.g. renamed by `mfy tag`).
 func (s *Store) MovePath(from, to string) error {
 	if _, err := s.db.Exec(`UPDATE tracks SET path=? WHERE path=?`, to, from); err != nil {
 		return err

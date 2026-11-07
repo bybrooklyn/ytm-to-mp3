@@ -206,7 +206,7 @@ func TestAlbumNFOGolden(t *testing.T) {
 		mk("c.opus", map[string]string{"album": "Best <of> \"Both\"", "album_artist": "Tom & Jerry", "title": "", "track": "1/2", "disc": "1/2"}, 0),
 	}
 	want := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<!-- written by ytm -->
+<!-- written by mfetchy -->
 <album>
   <title>Best &lt;of&gt; &#34;Both&#34;</title>
   <musicBrainzAlbumID>alb-1</musicBrainzAlbumID>
@@ -260,7 +260,7 @@ func TestArtistNFOGolden(t *testing.T) {
 		{Tags: map[string]string{"album_artist": "AC/DC & Co", "genre": "Blues;rock"}},
 	}
 	want := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<!-- written by ytm -->
+<!-- written by mfetchy -->
 <artist>
   <name>AC/DC &amp; Co</name>
   <musicBrainzArtistID>mb-9</musicBrainzArtistID>

@@ -10,7 +10,7 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/appname"
 )
 
-// timings collects per-track stage durations for the YTM_DEBUG report, so a slow run can be
+// timings collects per-track stage durations for the MFY_DEBUG report, so a slow run can be
 // pinned on a stage (looking up, waiting, downloading, converting) or an exit.
 type timings struct {
 	on   bool
@@ -27,7 +27,7 @@ type trackTiming struct {
 
 func newTimings() *timings { return &timings{on: debugOn()} }
 
-// debugOn: YTM_DEBUG is set, so per-exit detail is shown.
+// debugOn: MFY_DEBUG is set, so per-exit detail is shown.
 func debugOn() bool { return appname.Getenv("DEBUG") != "" }
 
 // record notes a finished track. bytes is the size of the downloaded source.

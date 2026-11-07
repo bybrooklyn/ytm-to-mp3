@@ -52,7 +52,7 @@ func privacyLines(cfg config.Config, v vpnState, o opts) []privacyLine {
 	case cfg.NoVPN || o.noVPN:
 		out = append(out, privacyLine{kind: lineNote, text: fmt.Sprintf("VPN: %s (%s) is set up but turned off, so traffic is NOT tunnelled", label, v.Who)})
 	default:
-		out = append(out, privacyLine{kind: lineGood, text: fmt.Sprintf("VPN: %s (%s). Downloads, link lookups and metadata lookups are tunnelled; if the VPN can't connect ytm stops instead of using your IP (Settings > Test VPN shows each exit)", label, v.Who)})
+		out = append(out, privacyLine{kind: lineGood, text: fmt.Sprintf("VPN: %s (%s). Downloads, link lookups and metadata lookups are tunnelled; if the VPN can't connect mfetchy stops instead of using your IP (Settings > Test VPN shows each exit)", label, v.Who)})
 		out = append(out, privacyLine{kind: lineNote, text: "DNS: names are looked up inside the tunnel. The only lookup outside it is a WireGuard config that names its server by host name; " + label + "'s sign-in and server-list requests go from your own IP"})
 	}
 	if cfg.Private {

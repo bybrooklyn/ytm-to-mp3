@@ -35,7 +35,7 @@ const tidalWarning = `Tidal's terms do not allow downloading its music.
     for your own use. Do not share the files.
   • Tidal can limit or close an account it thinks is downloading. Go gently, and use a
     spare account if you can.
-  • ytm fetches only plain FLAC streams (lossless, 16-bit/44.1 kHz). It never decrypts
+  • mfetchy fetches only plain FLAC streams (lossless, 16-bit/44.1 kHz). It never decrypts
     anything: a stream Tidal serves encrypted is skipped, and the song comes from Apple
     Music or YouTube instead. The output says which quality you got.
   • Tidal has no public download API. This can stop working whenever Tidal changes things.`
@@ -63,8 +63,8 @@ func tidalLogout(u *ui.UI) error {
 	return nil
 }
 
-// tidalLogin shows the terms, then signs in with Tidal's device-code flow: ytm shows a code
-// and a link, the user approves it in any browser, and ytm waits.
+// tidalLogin shows the terms, then signs in with Tidal's device-code flow: mfetchy shows a code
+// and a link, the user approves it in any browser, and mfetchy waits.
 func tidalLogin(ctx context.Context, u *ui.UI) error {
 	if !u.Interactive() {
 		return errors.New("signing in to Tidal needs a terminal")
@@ -400,7 +400,7 @@ func fetchFile(ctx context.Context, url, dst string) error {
 	return os.WriteFile(dst, b, 0o644)
 }
 
-// tidalDoctor is the self-check line for ytm doctor.
+// tidalDoctor is the self-check line for mfy doctor.
 func tidalDoctor(ctx context.Context, bad func(fix, f string, a ...any), ok, note func(f string, a ...any)) {
 	c := tidalClient()
 	if !c.SignedIn() {

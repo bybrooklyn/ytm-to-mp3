@@ -14,10 +14,10 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/ytmusic"
 )
 
-// nativeSearch reports whether searches and album/playlist listings try ytm's own
+// nativeSearch reports whether searches and album/playlist listings try mfetchy's own
 // YouTube Music client first (about 0.3 s, against ~2 s for a yt-dlp process). yt-dlp is
 // always the fallback when the native answer is an error or empty, so a change in
-// YouTube's response format costs speed, not results. YTM_SEARCH=yt-dlp turns it off.
+// YouTube's response format costs speed, not results. MFY_SEARCH=yt-dlp turns it off.
 func nativeSearch() bool { return !strings.EqualFold(appname.Getenv("SEARCH"), "yt-dlp") }
 
 const nativeTimeout = 25 * time.Second
