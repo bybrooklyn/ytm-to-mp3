@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"image/color"
 	"net/url"
 	"strings"
@@ -279,6 +280,10 @@ func (p dialogPrompter) Form(ctx context.Context, f core.FormSpec) (map[string]s
 		for _, c := range ctls {
 			if c.fd.Validate != nil {
 				if err := c.fd.Validate(c.get()); err != nil {
+					// the message sits under the whole form, so say which field it is about
+					if label := strings.TrimSpace(c.fd.Label); label != "" && len(f.Fields) > 1 {
+						return fmt.Errorf("%s (%s)", strings.TrimSpace(err.Error()), label)
+					}
 					return err
 				}
 			}
