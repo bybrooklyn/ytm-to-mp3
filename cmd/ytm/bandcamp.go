@@ -160,7 +160,14 @@ func saveOwned(ctx context.Context, c *bandcamp.Client, tools deps.Tools, st *st
 			Artist: firstNonEmpty(info.Tags["artist"], it.Artist), Album: info.Tags["album"],
 			AlbumArtist: info.Tags["album_artist"], TrackNo: no, TrackTotal: total,
 		}
-		ok, err := placeOwned(st, byName, root, f, wt)
+		carry := func(newFile, oldPath, oldSource string) map[string]string {
+			// The copy being replaced may know things the purchase doesn't (ISRC, MusicBrainz
+			// ids, genre, lyrics): carry them over. Failing to is not a reason to skip the
+			// purchase.
+			from, _ := tag.CarryTags(ctx, tools.FFmpeg, tools.FFprobe, newFile, string(catalog.BandcampPurchase), oldPath, oldSource)
+			return from
+		}
+		ok, err := placeOwned(st, byName, root, f, wt, carry)
 		if err != nil {
 			return added, err
 		}
@@ -173,8 +180,10 @@ func saveOwned(ctx context.Context, c *bandcamp.Client, tools deps.Tools, st *st
 
 // placeOwned files one extracted purchase as Artist/Album/NN - Title.ext and records it,
 // unless a copy of at least this quality is already held (then nothing changes). A held copy of
-// lower quality is moved to .ytm/replaced.
-func placeOwned(st *store.Store, byName map[string]store.HeldCopy, root, file string, wt engine.WebTrack) (bool, error) {
+// lower quality is moved to .ytm/replaced. carry, if set, is told when a held copy is about
+// to be replaced, and merges that copy's tags into file first (it returns which source each
+// tag came from, recorded as the song's provenance).
+func placeOwned(st *store.Store, byName map[string]store.HeldCopy, root, file string, wt engine.WebTrack, carry func(newFile, oldPath, oldSource string) map[string]string) (bool, error) {
 	ct := catalog.Track{Title: wt.Title, Artists: []string{wt.Artist}, Album: wt.Album}
 	rank := catalog.Rank(catalog.BandcampPurchase)
 	if lib := st.Library(ct.Key()); lib.Done && fileExists(lib.Path) && lib.Quality >= rank {
@@ -196,6 +205,10 @@ func placeOwned(st *store.Store, byName map[string]store.HeldCopy, root, file st
 	if fileExists(dest) {
 		return false, nil // that name is taken by another file: leave it alone
 	}
+	var from map[string]string
+	if old != nil && carry != nil {
+		from = carry(file, old.Path, old.Source)
+	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return false, err
 	}
@@ -204,6 +217,9 @@ func placeOwned(st *store.Store, byName map[string]store.HeldCopy, root, file st
 	}
 	if old != nil && old.Path != dest { // the lower-quality copy goes aside, not away
 		_ = moveAside(root, old.Path)
+	}
+	if len(from) > 0 {
+		_ = st.SetProvenance(ct.Key(), from)
 	}
 	return true, st.LibraryPut(ct.Key(), wt.Title, wt.Artist, string(catalog.BandcampPurchase), rank, dest)
 }

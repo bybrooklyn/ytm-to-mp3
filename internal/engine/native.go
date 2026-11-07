@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/vpn"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ytmusic"
 )
@@ -108,7 +109,12 @@ func (y ytdlp) nativeFindAlbum(ctx context.Context, q, album string, saved []mod
 		return nil, false, nil
 	}
 	read := 0
+	var found *Album
 	for _, h := range hits {
+		// Once one edition matched, only other editions of the same album are worth opening.
+		if found != nil && names.EditionKey(albumTitle(h.Title)) != names.EditionKey(album) {
+			continue
+		}
 		p, err := c.Album(ctx, h.BrowseID)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -136,8 +142,11 @@ func (y ytdlp) nativeFindAlbum(ctx context.Context, q, album string, saved []mod
 			a.Tracks = append(a.Tracks, AlbumTrack{ID: t.ID, Title: t.Title})
 		}
 		if albumMatches(album, a, saved) {
-			return a, true, nil
+			found = fullerAlbum(found, a, saved) // several editions match: the fullest one
 		}
+	}
+	if found != nil {
+		return found, true, nil
 	}
 	// No page could be read at all: more likely a format change than "not found".
 	return nil, read > 0, nil

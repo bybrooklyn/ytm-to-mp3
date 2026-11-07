@@ -56,3 +56,19 @@ func TestAlbumMatches(t *testing.T) {
 		}
 	}
 }
+
+func TestFullerAlbumPrefersDeluxe(t *testing.T) {
+	std := &Album{Title: "CHROMAKOPIA", Tracks: []AlbumTrack{{"aaaaaaaaaaa", "St. Chroma"}, {"bbbbbbbbbbb", "Noid"}}}
+	dlx := &Album{Title: "CHROMAKOPIA +", Tracks: []AlbumTrack{{"aaaaaaaaaaa", "St. Chroma"}, {"bbbbbbbbbbb", "Noid"}, {"ccccccccccc", "Hey Jane"}}}
+	saved := []model.Track{{ID: "aaaaaaaaaaa", Title: "St. Chroma"}}
+	for _, order := range [][2]*Album{{std, dlx}, {dlx, std}} {
+		if got := fullerAlbum(fullerAlbum(nil, order[0], saved), order[1], saved); got != dlx {
+			t.Errorf("want the deluxe edition from order %s,%s", order[0].Title, order[1].Title)
+		}
+	}
+	// the edition holding more of my songs wins over a longer one that lacks them
+	other := &Album{Title: "CHROMAKOPIA (Instrumentals)", Tracks: []AlbumTrack{{"ddddddddddd", "x"}, {"eeeeeeeeeee", "y"}, {"fffffffffff", "z"}, {"ggggggggggg", "w"}}}
+	if got := fullerAlbum(std, other, saved); got != std {
+		t.Error("an album with none of my songs must not win on length")
+	}
+}

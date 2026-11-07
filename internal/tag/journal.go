@@ -179,6 +179,10 @@ func undo(ctx context.Context, o Options) error {
 				cur = e.NewPath
 			}
 		}
+		if len(e.Old) == 0 && e.CoverBackup == "" {
+			n++ // a pure move (folder merge): nothing was written to the file
+			continue
+		}
 		if err := Write(ctx, o.FFmpeg, o.FFprobe, cur, e.Old, e.CoverBackup); err != nil {
 			o.UI.Bad("%s · %v", cur, err)
 			continue

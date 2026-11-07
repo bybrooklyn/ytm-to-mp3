@@ -14,6 +14,7 @@ import (
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/apple"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/browsercookies"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/catalog"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
@@ -247,10 +248,9 @@ type appleJob struct {
 // YouTube downloads.
 func applePath(root string, t apple.Track) string {
 	artist := firstNonEmpty(t.AlbumArtist, t.Artist)
-	parts := []string{root, names.Part(artist, "Unknown Artist")}
+	parts := []string{names.Dirs(root, artist, t.Album)}
 	prefix := ""
 	if t.Album != "" {
-		parts = append(parts, names.Part(t.Album, "Unknown Album"))
 		prefix = names.TrackPrefix(t.TrackNumber, t.TrackCount)
 	}
 	parts = append(parts, names.PartBetween(prefix, t.Title, "Unknown", ".m4a"))
@@ -516,6 +516,11 @@ func appleSave(ctx context.Context, s *appleSession, ffmpeg, ffprobe, root strin
 
 	var backup string
 	if j.replace && fileExists(j.ytPath) {
+		// The YouTube copy may know things Apple's tags don't (MusicBrainz ids, lyrics, a
+		// genre): keep them. Failing to is not a reason to skip the upgrade.
+		if from, err := tag.CarryTags(ctx, ffmpeg, ffprobe, tmp, string(catalog.Apple), j.ytPath, string(catalog.YouTube)); err == nil && len(from) > 0 {
+			_ = s.st.SetProvenance(appleToCatalog(t).Key(), from)
+		}
 		rel, err := filepath.Rel(root, j.ytPath)
 		if err != nil || strings.HasPrefix(rel, "..") {
 			rel = filepath.Base(j.ytPath)

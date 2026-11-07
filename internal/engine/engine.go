@@ -1302,10 +1302,8 @@ func outputPath(root string, t model.Track, r *Resolved, format string) (path st
 		no, total = r.Track, 0
 	}
 	albumArtist := firstNonEmpty(t.AlbumArtist, firstString(artists))
-	parts := []string{root, names.Part(albumArtist, "Unknown Artist")}
-	if album != "" {
-		parts = append(parts, names.Part(album, "Unknown Album"))
-	}
+	// An existing folder that differs only by case (or edition marker) is reused.
+	parts := []string{names.Dirs(root, albumArtist, album)}
 	prefix := ""
 	if album != "" { // a number only means something inside an album folder
 		prefix = names.TrackPrefix(no, total)

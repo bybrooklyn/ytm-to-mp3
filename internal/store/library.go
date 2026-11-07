@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -21,6 +22,11 @@ CREATE TABLE IF NOT EXISTS library_tracks (
   quality INTEGER NOT NULL DEFAULT 0,       -- catalog.Rank(source); higher is better
   path    TEXT NOT NULL DEFAULT '',
   updated INTEGER NOT NULL DEFAULT 0
+);
+-- Which source each tag of a held song came from (internal/meta), as JSON {"isrc":"apple",...}.
+CREATE TABLE IF NOT EXISTS library_provenance (
+  key  TEXT PRIMARY KEY,                    -- catalog.Track.Key()
+  json TEXT NOT NULL DEFAULT '{}'
 );`
 
 // LibraryState is what the unified downloader has for one canonical song.
@@ -53,6 +59,30 @@ func (s *Store) LibraryPut(key, title, artist, source string, quality int, path 
 		source=excluded.source, quality=excluded.quality, path=excluded.path, updated=excluded.updated`,
 		key, names.Clean(title), names.Clean(artist), source, quality, path, time.Now().Unix())
 	return err
+}
+
+// SetProvenance records which source each tag of canonical key came from.
+func (s *Store) SetProvenance(key string, from map[string]string) error {
+	b, err := json.Marshal(from)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO library_provenance(key,json) VALUES(?,?)
+		ON CONFLICT(key) DO UPDATE SET json=excluded.json`, key, string(b))
+	return err
+}
+
+// Provenance returns what SetProvenance recorded for key (nil if nothing).
+func (s *Store) Provenance(key string) map[string]string {
+	var raw string
+	if s.db.QueryRow(`SELECT json FROM library_provenance WHERE key=?`, key).Scan(&raw) != nil {
+		return nil
+	}
+	var m map[string]string
+	if json.Unmarshal([]byte(raw), &m) != nil {
+		return nil
+	}
+	return m
 }
 
 // AddPending inserts a track row so the engine's MarkDone (an UPDATE) has

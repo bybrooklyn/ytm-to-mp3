@@ -48,6 +48,9 @@ func runTag(ctx context.Context, u *ui.UI, o opts, dir string, files ...string) 
 // tidyFlow renames the music folder to the current scheme (Artist/Album/NN - Title.ext,
 // no [id]) without touching tags or going online: a preview first, then apply.
 func tidyFlow(ctx context.Context, u *ui.UI, o opts) error {
+	if err := mergeFlow(ctx, u, o); err != nil {
+		return err
+	}
 	o.rename, o.offline, o.apply = true, true, false
 	if err := runTag(ctx, u, o, o.out); err != nil {
 		return err
@@ -60,6 +63,37 @@ func tidyFlow(ctx context.Context, u *ui.UI, o opts) error {
 	}
 	o.apply = true
 	return runTag(ctx, u, o, o.out)
+}
+
+// mergeFlow finds artist and album folders that are one under two spellings (differing by
+// case, or a standard and a deluxe edition), shows the merge, and applies it when told to.
+// Nothing is deleted; duplicates go to .ytm/replaced, and "Undo the last fix" reverts it.
+func mergeFlow(ctx context.Context, u *ui.UI, o opts) error {
+	groups, err := tag.PlanMerges(o.out)
+	if err != nil || len(groups) == 0 {
+		return err
+	}
+	to := tag.Options{Dir: o.out, UI: u}
+	if _, err := tag.MergeFolders(ctx, to); err != nil {
+		return err
+	}
+	merge := false
+	if err := one(ctx, huh.NewConfirm().Title("Merge these folders?").
+		Description("The spelling downloaded first is kept; the fullest edition takes the others. Nothing is deleted.\nUndo with \"Fix tags\" → \"Undo the last fix\".").
+		Affirmative("Merge").Negative("Not now").Value(&merge)); err != nil || !merge {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(o.out, ".ytm", "state.db")); err == nil {
+		st, err := store.Open(filepath.Join(o.out, ".ytm"))
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		to.OnMove = func(from, dst string) { _ = st.MovePath(from, dst) }
+	}
+	to.Apply = true
+	_, err = tag.MergeFolders(ctx, to)
+	return err
 }
 
 // tagFlow is the menu's way into `ytm tag`: pick what to do, then a preview that can be

@@ -42,10 +42,9 @@ func webCatalog(t engine.WebTrack) catalog.Track {
 // webPath is where a site song goes: Artist/Album/NN - Title.ext, as every other download.
 func webPath(root string, t engine.WebTrack, ext string) string {
 	artist := firstNonEmpty(t.AlbumArtist, t.Artist)
-	parts := []string{root, names.Part(artist, "Unknown Artist")}
+	parts := []string{names.Dirs(root, artist, t.Album)}
 	prefix := ""
 	if t.Album != "" {
-		parts = append(parts, names.Part(t.Album, "Unknown Album"))
 		prefix = names.TrackPrefix(t.TrackNo, t.TrackTotal)
 	}
 	parts = append(parts, names.PartBetween(prefix, t.Title, "Unknown", ext))

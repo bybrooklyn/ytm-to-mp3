@@ -320,10 +320,9 @@ func renameTarget(root, path string, info Info, set map[string]string, fallbackN
 	// Same scheme as new downloads: Artist/Album/NN - Title.ext, no video id in the name
 	// (ytm keeps it in the comment tag).
 	ext := filepath.Ext(path)
-	parts := []string{root, names.Part(artist, "Unknown Artist")}
+	parts := []string{names.Dirs(root, artist, get("album"))}
 	prefix := ""
 	if al := get("album"); al != "" {
-		parts = append(parts, names.Part(al, "Unknown Album"))
 		no, total := names.ParseTrack(get("track"))
 		if no <= 0 {
 			no, total = fallbackNo, fallbackTotal

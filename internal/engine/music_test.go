@@ -1,6 +1,10 @@
 package engine
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+)
 
 func TestTitleMatches(t *testing.T) {
 	for _, c := range []struct {
@@ -47,6 +51,69 @@ func TestArtistMatches(t *testing.T) {
 	}
 	if artistMatches([]string{"Pink Floyd"}, nil) {
 		t.Error("a result with no artist must not match a track that has one")
+	}
+}
+
+// Realistic reasons a re-uploaded song was not found: the same artist or title spelled
+// differently by the export and by YouTube Music.
+func TestArtistMatchesRealCredits(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		want, got []string
+		ok        bool
+	}{
+		{"diacritics", []string{"Sigur Ros"}, []string{"Sigur Rós"}, true},
+		{"diacritics other way", []string{"Beyoncé"}, []string{"BEYONCE"}, true},
+		{"ampersand", []string{"Simon & Garfunkel"}, []string{"Simon and Garfunkel"}, true},
+		{"topic channel", []string{"Radiohead"}, []string{"Radiohead - Topic"}, true},
+		{"vevo channel", []string{"Adele"}, []string{"AdeleVEVO"}, true},
+		{"feat in one string", []string{"Drake"}, []string{"Drake feat. Rihanna"}, true},
+		{"joined credit wanted", []string{"Kendrick Lamar & SZA"}, []string{"SZA"}, true},
+		{"The prefix", []string{"The Weeknd"}, []string{"Weeknd"}, true},
+		{"stylised", []string{"P!nk"}, []string{"Pink"}, true},
+		{"stylised dollar", []string{"Ke$ha"}, []string{"Kesha"}, true},
+		{"umlauts", []string{"Mötley Crüe"}, []string{"Motley Crue"}, true},
+		{"plus collab", []string{"Queen + Adam Lambert"}, []string{"Queen"}, true},
+		{"japanese stays itself", []string{"ずっと真夜中でいいのに。"}, []string{"ずっと真夜中でいいのに。"}, true},
+		// A different artist with a similar name must not be accepted.
+		{"one word is not enough", []string{"Pink"}, []string{"Pink Floyd"}, false},
+		{"substring of another act", []string{"Eve"}, []string{"Steve Miller Band"}, false},
+		{"cover band", []string{"Queen"}, []string{"Queens of the Stone Age"}, false},
+		{"different kana", []string{"か"}, []string{"が"}, false},
+	} {
+		if got := artistMatches(c.want, c.got); got != c.ok {
+			t.Errorf("%s: artistMatches(%q, %q) = %v, want %v", c.name, c.want, c.got, got, c.ok)
+		}
+	}
+}
+
+func TestTitleMatchesRealTitles(t *testing.T) {
+	for _, c := range []struct {
+		want, got string
+		ok        bool
+	}{
+		{"Déjà Vu", "Deja Vu", true},
+		{"Rock & Roll", "Rock and Roll", true},
+		{"Get Lucky ft. Pharrell Williams", "Get Lucky", true},
+		{"Get Lucky (feat. Pharrell Williams)", "Get Lucky", true},
+		{"Señorita", "Senorita", true},
+		{"Bohemian Rhapsody", "Bohemian Rhapsody - Remastered 2011", true},
+		{"Song", "Song 2", false},
+		{"Rock & Roll", "Rock Roll Part 2", false},
+	} {
+		if got := titleMatches(c.want, c.got); got != c.ok {
+			t.Errorf("titleMatches(%q, %q) = %v, want %v", c.want, c.got, got, c.ok)
+		}
+	}
+}
+
+func TestMusicQueryDropsChannelNoise(t *testing.T) {
+	got := musicQuery(model.Track{Title: "Creep", Artists: []string{"Radiohead - Topic"}})
+	if got != "Radiohead Creep" {
+		t.Errorf("query = %q", got)
+	}
+	if got := musicQuery(model.Track{Title: "Hello", Artists: []string{"AdeleVEVO"}}); got != "Adele Hello" {
+		t.Errorf("query = %q", got)
 	}
 }
 

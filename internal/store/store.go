@@ -392,6 +392,9 @@ func (s *Store) MovePath(from, to string) error {
 	if _, err := s.db.Exec(`UPDATE tracks SET path=? WHERE path=?`, to, from); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`UPDATE apple_tracks SET path=? WHERE path=?`, to, from)
+	if _, err := s.db.Exec(`UPDATE apple_tracks SET path=? WHERE path=?`, to, from); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE library_tracks SET path=? WHERE path=?`, to, from)
 	return err
 }

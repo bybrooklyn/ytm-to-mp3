@@ -3,11 +3,17 @@ package engine
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"unicode"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 )
+
+// featTail is an unbracketed featured-artist credit at the end of a title ("Song ft. X"):
+// the same recording is titled with and without it across services.
+var featTail = regexp.MustCompile(`(?i)\s+(?:feat\.?|ft\.?|featuring)\s+.*$`)
 
 // A track whose video id is dead ("Video unavailable") has usually been re-uploaded: labels
 // replace releases (remasters, re-issues) and YouTube Music points the song at a new video.
@@ -22,7 +28,11 @@ var errNoMusicMatch = &Error{kindPermanent, "not found on YouTube Music either"}
 // normTitle folds a title for comparison: lower case, letters and digits only, with
 // bracketed parts ("(2023 Remaster)", "[Official Video]") and " - ..." suffixes dropped.
 func normTitle(s string) string {
-	s = strings.ToLower(s)
+	// accents and "&" differ between services ("Beyoncé"/"Beyonce", "Rock & Roll"/"Rock and Roll")
+	if c := featTail.ReplaceAllString(s, ""); strings.TrimSpace(c) != "" {
+		s = c
+	}
+	s = names.FoldAccents(strings.ReplaceAll(strings.ToLower(s), "&", " and "))
 	var b strings.Builder
 	depth := 0
 	for _, r := range s {
@@ -63,7 +73,7 @@ func titleMatches(want, got string) bool {
 // Remaster)" and "Time" differ.
 func fullTitle(s string) string {
 	var b strings.Builder
-	for _, r := range strings.ToLower(s) {
+	for _, r := range names.FoldAccents(strings.ReplaceAll(strings.ToLower(s), "&", " and ")) {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			b.WriteRune(r)
 		}
@@ -89,20 +99,17 @@ func orderHits(title, oldID string, hits []musicHit) []musicHit {
 	return append(exact, other...)
 }
 
-// artistMatches reports whether any wanted artist is among the result's artists (either
-// name containing the other, so "Tyler, The Creator" matches "Tyler The Creator").
+// artistMatches reports whether any wanted artist is among the result's artists, judged by
+// names.SameArtist: accents, case, "&"/"and", "The", punctuation, " - Topic"/VEVO channel
+// names and joined credits ("A feat. B") are all set aside, so "Tyler, The Creator" matches
+// "Tyler The Creator" and "Sigur Rós" matches "Sigur Ros", but "Pink" never matches "Pink Floyd".
 func artistMatches(want, got []string) bool {
 	if len(want) == 0 {
 		return true // nothing to check against; the title had to match exactly
 	}
 	for _, w := range want {
-		nw := normTitle(w)
-		if nw == "" {
-			continue
-		}
 		for _, g := range got {
-			ng := normTitle(g)
-			if ng != "" && (strings.Contains(ng, nw) || strings.Contains(nw, ng)) {
+			if names.SameArtist(w, g) {
 				return true
 			}
 		}
@@ -115,7 +122,8 @@ func musicQuery(t model.Track) string {
 	if strings.TrimSpace(t.Title) == "" {
 		return ""
 	}
-	return strings.TrimSpace(t.PrimaryArtist() + " " + t.Title)
+	// A channel-style artist ("Artist - Topic", "ArtistVEVO") would only add noise to the search.
+	return strings.TrimSpace(names.CleanChannel(t.PrimaryArtist()) + " " + t.Title)
 }
 
 // search is one YouTube Music search, possibly still running.

@@ -56,8 +56,9 @@ func TestAppleLibraryJobPlacement(t *testing.T) {
 	if j := appleLibraryJob(dir, m4a, r, true); j.dest != m4a || !j.replace || j.ytPath != m4a {
 		t.Errorf("replace m4a: %+v", j)
 	}
-	// not downloaded from YouTube: Apple's own scheme
-	if j := appleLibraryJob(dir, "", r, true); j.dest != filepath.Join(dir, "Artist", "Album (Deluxe)", "05 - Song.m4a") || j.ytPath != "" {
+	// not downloaded from YouTube: Apple's own scheme, in the folder of the album's other
+	// edition when there is one ("Album" exists, so "Album (Deluxe)" files there)
+	if j := appleLibraryJob(dir, "", r, true); j.dest != filepath.Join(dir, "Artist", "Album", "05 - Song.m4a") || j.ytPath != "" {
 		t.Errorf("not downloaded: %+v", j)
 	}
 }

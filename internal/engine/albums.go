@@ -72,6 +72,7 @@ func FindAlbum(ctx context.Context, tools deps.Tools, proxy, artist, album strin
 	if err := json.Unmarshal(b, &res); err != nil {
 		return nil, &Error{kindTransient, "unreadable yt-dlp output"}
 	}
+	var best *Album
 	for _, e := range res.Entries {
 		if !isAlbumURL(e.URL) {
 			continue
@@ -84,10 +85,38 @@ func FindAlbum(ctx context.Context, tools deps.Tools, proxy, artist, album strin
 			continue
 		}
 		if albumMatches(album, a, saved) {
-			return a, nil
+			best = fullerAlbum(best, a, saved) // several editions match: the fullest one
 		}
 	}
-	return nil, nil
+	return best, nil
+}
+
+// onAlbum counts how many of the saved songs are on a (by id, or by title).
+func onAlbum(a *Album, saved []model.Track) int {
+	n := 0
+	for _, s := range saved {
+		for _, t := range a.Tracks {
+			if s.ID == t.ID || titleMatches(s.Title, t.Title) {
+				n++
+				break
+			}
+		}
+	}
+	return n
+}
+
+// fullerAlbum picks between two editions of one album: the one holding more of the saved
+// songs, then the one with more tracks (the deluxe over the standard edition, so the whole
+// of it is downloaded and the standard songs sit in the same folder); the first on a tie.
+func fullerAlbum(best, cand *Album, saved []model.Track) *Album {
+	if best == nil {
+		return cand
+	}
+	bh, ch := onAlbum(best, saved), onAlbum(cand, saved)
+	if ch > bh || ch == bh && len(cand.Tracks) > len(best.Tracks) {
+		return cand
+	}
+	return best
 }
 
 // isAlbumURL accepts only YouTube Music album pages, so nothing else from search results is
