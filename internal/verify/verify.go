@@ -23,6 +23,9 @@ type Want struct {
 	// Tolerance is how far the real duration may be from Duration, in seconds
 	// (default: 5 percent of it, at least 3 s, since catalogs and encoders disagree a bit).
 	Tolerance float64
+	// Loose checks only that the file is not empty and (when Duration is set) its length:
+	// for files our own ffmpeg just wrote, where a wrong header is not the risk.
+	Loose bool
 }
 
 // Probe is how the duration is read; tests replace it. It returns seconds.
@@ -42,13 +45,15 @@ func File(ctx context.Context, ffprobe, path string, w Want) error {
 	if err != nil {
 		return err
 	}
-	if st.Size() < 1024 {
+	if st.Size() == 0 || (!w.Loose && st.Size() < 1024) {
 		return &jobs.CorruptError{Msg: fmt.Sprintf("the file is only %d bytes", st.Size())}
 	}
-	head := make([]byte, 16)
-	n, _ := io.ReadFull(f, head)
-	if err := magic(strings.ToLower(w.Ext), head[:n]); err != nil {
-		return &jobs.CorruptError{Msg: err.Error()}
+	if !w.Loose {
+		head := make([]byte, 16)
+		n, _ := io.ReadFull(f, head)
+		if err := magic(strings.ToLower(w.Ext), head[:n]); err != nil {
+			return &jobs.CorruptError{Msg: err.Error()}
+		}
 	}
 	if w.Duration > 0 && ffprobe != "" {
 		got, err := Probe(ctx, ffprobe, path)

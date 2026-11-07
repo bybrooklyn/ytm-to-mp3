@@ -23,6 +23,7 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/verify"
 )
 
 func appleLogout(u *ui.UI) error {
@@ -513,6 +514,10 @@ func appleSave(ctx context.Context, s *appleSession, ffmpeg, ffprobe, root strin
 	}
 	if err := tag.Write(ctx, ffmpeg, ffprobe, tmp, set, cover); err != nil {
 		return fmt.Errorf("tag: %w", err)
+	}
+	// Never file a damaged or cut-short download.
+	if err := verify.File(ctx, ffprobe, tmp, verify.Want{Ext: ".m4a", Duration: float64(t.DurationMillis) / 1000}); err != nil {
+		return err
 	}
 
 	var backup string

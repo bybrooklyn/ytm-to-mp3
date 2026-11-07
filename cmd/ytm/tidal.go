@@ -197,7 +197,7 @@ func runTidalItems(ctx context.Context, u *ui.UI, o opts, ex *runExits, st *stor
 	// gentle on the account. If Tidal keeps refusing (login, rate limit) the breaker stops
 	// using it for the rest of the run with one message, and the remaining songs go on to
 	// the next best source.
-	const workers = 2
+	workers := tidalWorkers
 	br := jobs.NewBreaker(3)
 	var mu sync.Mutex
 	var okN, heldN, finished int
@@ -286,6 +286,9 @@ func runTidalItems(ctx context.Context, u *ui.UI, o opts, ex *runExits, st *stor
 }
 
 var errTidalExists = errors.New("already downloaded")
+
+// tidalWorkers is how many Tidal songs download at once.
+var tidalWorkers = 2
 
 // tidalSave downloads one song, tags it and files it, moving a worse copy it replaces aside.
 // It returns the quality label of what was fetched.

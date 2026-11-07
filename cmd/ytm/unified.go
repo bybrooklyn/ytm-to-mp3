@@ -189,6 +189,9 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 	began := time.Now()
 	var failedTidal []*item
 	var wg sync.WaitGroup
+	// Tags and lyrics for the YouTube songs follow them as they arrive, overlapping the
+	// other sources' downloads.
+	pr := startPost(ctx, u, o, st, began)
 	if len(tidalItems) > 0 {
 		tools, err := ex.ensureTools(ctx, u)
 		if err != nil {
@@ -248,7 +251,9 @@ func downloadUnified(ctx context.Context, u *ui.UI, o opts, ex *runExits, inputs
 	// Songs fetched from YouTube get the same MusicBrainz pass as a library download
 	// (Apple Music songs come fully tagged).
 	if ytRan && firstErr == nil && ctx.Err() == nil {
-		firstErr = afterDownload(ctx, u, o, st, began)
+		firstErr = afterDownload(ctx, u, o, st, began, pr)
+	} else {
+		pr.Stop()
 	}
 	return firstErr
 }

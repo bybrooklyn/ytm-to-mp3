@@ -332,7 +332,12 @@ func (c *Client) Fetch(ctx context.Context, f Format, dir string) ([]string, err
 		return nil, err
 	}
 	defer os.Remove(tmp.Name())
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
+	n, err := io.Copy(tmp, resp.Body)
+	if err == nil && resp.ContentLength > 0 && n != resp.ContentLength {
+		// A cut-off zip would otherwise be taken for a lone audio file.
+		err = fmt.Errorf("the download stopped early (%d of %d bytes): %w", n, resp.ContentLength, io.ErrUnexpectedEOF)
+	}
+	if err != nil {
 		tmp.Close()
 		return nil, err
 	}

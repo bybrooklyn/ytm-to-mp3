@@ -663,7 +663,7 @@ func downloadOnce(ctx context.Context, u *ui.UI, o opts, led *jobs.Ledger, input
 	}
 	began := time.Now()
 	if len(plan.Todo) == 0 {
-		return afterDownload(ctx, u, o, st, began)
+		return afterDownload(ctx, u, o, st, began, nil)
 	}
 
 	if err := ensure(); err != nil {
@@ -673,6 +673,7 @@ func downloadOnce(ctx context.Context, u *ui.UI, o opts, led *jobs.Ledger, input
 		return err
 	}
 	cache, _ := config.CacheDir()
+	pr := startPost(ctx, u, o, st, began) // tags and lyrics follow the downloads as songs arrive
 	sum := engine.Run(ctx, engine.Options{
 		Out: o.out, Format: o.format, Jobs: o.jobs, Tools: tools,
 		Store: st, UI: u, CacheDir: filepath.Join(cache, "yt-dlp"), Exits: xs.Exits, Replace: xs.Replace, Healthy: xs.Healthy,
@@ -712,39 +713,23 @@ func downloadOnce(ctx context.Context, u *ui.UI, o opts, led *jobs.Ledger, input
 		}
 	}
 	if sum.Interrupted {
+		pr.Stop()
 		return context.Canceled
 	}
-	return afterDownload(ctx, u, o, st, began)
+	return afterDownload(ctx, u, o, st, began, pr)
 }
 
 // afterDownload runs the extras that follow a download (each on unless switched off in
 // settings): MusicBrainz tags for the songs just downloaded (not the whole library, which
 // would take an hour at MusicBrainz's one request a second), then the Premium upgrade if
 // a sign-in is set up.
-func afterDownload(ctx context.Context, u *ui.UI, o opts, st *store.Store, since time.Time) error {
-	if o.tagAfter && !config.Load().Private {
-		if files := st.DoneSince(since); len(files) > 0 {
-			u.Head("Fixing the tags of %s with MusicBrainz · turn off in settings", count(len(files), "new song"))
-			t := o
-			t.apply, t.rename, t.undo, t.offline = true, false, false, false
-			if err := runTag(ctx, u, t, o.out, files...); err != nil {
-				if ctx.Err() != nil {
-					return context.Canceled
-				}
-				u.Bad("tags: %v", err)
-			}
-		}
+func afterDownload(ctx context.Context, u *ui.UI, o opts, st *store.Store, since time.Time, pr *postRunner) error {
+	if pr == nil {
+		pr = startPost(ctx, u, o, st, since)
 	}
-	if o.lyricsAfter {
-		if files := st.DoneSince(since); len(files) > 0 {
-			u.Head("Fetching lyrics for %s · turn off in settings", count(len(files), "new song"))
-			if err := fetchLyrics(ctx, u, o.out, files); err != nil {
-				if ctx.Err() != nil {
-					return context.Canceled
-				}
-				u.Bad("lyrics: %v", err)
-			}
-		}
+	// The tag and lyrics passes have been following the downloads; this does what is left.
+	if err := pr.Finish(); err != nil {
+		return err
 	}
 	if o.premiumAfter && config.Load().Premium {
 		st.Close() // the upgrade opens the database itself

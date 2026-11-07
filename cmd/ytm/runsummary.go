@@ -68,14 +68,16 @@ func summaryWorthPrinting(led *jobs.Ledger) bool {
 		sources[r.Source] = true
 	}
 	c := led.Counts()
-	return len(sources) > 1 || (len(sources) == 1 && !sources["youtube"]) || c.Upgraded > 0 ||
-		(led.Held() > 0 && len(rs) > 0 && len(sources) > 1)
+	return len(sources) > 1 || (len(sources) == 1 && !sources["youtube"]) || c.Upgraded > 0
 }
 
 // printRunSummary says what the run did, per outcome: downloaded (by source), upgraded,
 // already held, and every failure grouped by reason with the songs named.
 func printRunSummary(u *ui.UI, led *jobs.Ledger, interrupted bool) {
 	if !summaryWorthPrinting(led) {
+		if interrupted && len(led.Results()) > 0 {
+			u.Note("stopped early · what finished is kept; run ytm again with the same links to continue")
+		}
 		return
 	}
 	rs := led.Results()
