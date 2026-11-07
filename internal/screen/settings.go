@@ -410,7 +410,9 @@ func (m *Settings) Screen() Screen {
 			Stepper: isStepRow(r.kind), Action: r.kind == rowTest,
 			Good: val == "on" || strings.HasPrefix(val, "signed in"),
 		}
+		m.describe(&row, r.kind)
 		if sel {
+			row.Error = m.err
 			switch {
 			case m.editing && r.kind == rowFolder:
 				row.Editing, row.Value = true, m.input
@@ -427,6 +429,67 @@ func (m *Settings) Screen() Screen {
 		sc.Rows = append(sc.Rows, row)
 	}
 	return sc
+}
+
+// describe fills in the hints a graphical host uses: which control a row wants, its options,
+// the section it starts and a line of help that is always shown.
+func (m *Settings) describe(row *Row, k rowKind) {
+	toggle := func(help string) {
+		row.Kind, row.On, row.Help = KindToggle, row.Value == "on", help
+	}
+	switch k {
+	case rowFolder:
+		row.Group, row.Kind = "Library", KindText
+		row.Help = "Where downloaded music is kept."
+	case rowFormat:
+		row.Kind, row.Options = KindChoice, engine.Formats
+		row.Help = "opus keeps YouTube's own audio untouched; the others are re-encoded from it."
+	case rowAlbums:
+		toggle("A song link brings its whole album. A library or playlist brings the rest of every album it has a song from.")
+	case rowRetry:
+		toggle("Try songs that were unavailable last time again, including on YouTube Music.")
+	case rowTagAfter:
+		toggle("Give the songs just downloaded their MusicBrainz tags, only when the match is certain.")
+	case rowPremiumAfter:
+		toggle("After downloading, upgrade songs to Premium quality. Slow, and uses your YouTube Premium sign-in.")
+	case rowVPN:
+		row.Group = "Network"
+		toggle("Send downloads through several Proton servers at once.")
+	case rowAccount:
+		row.Kind, row.Button = KindAction, "Sign in"
+		if m.signedIn {
+			row.Button = "Sign out"
+		}
+		row.Help = "Your Proton VPN account."
+	case rowConns:
+		row.Kind, row.Help = KindNumber, "Servers used at once. Auto uses all your plan allows, minus one kept spare."
+	case rowJobs:
+		row.Kind, row.Help = KindNumber, "Songs downloaded at the same time. Auto lets ytm decide."
+	case rowCountries:
+		row.Kind, row.Help = KindChoice, "Where downloads appear to come from."
+		row.Options = nil
+		for _, c := range countryChoices {
+			row.Options = append(row.Options, orDefault(c, "Auto"))
+		}
+	case rowPremium:
+		row.Group, row.Kind, row.Button = "Services", KindAction, "Set up..."
+		if m.cfg.Premium {
+			row.Button = "Turn off"
+		}
+		row.Help = "Experimental. Re-downloads songs at Premium quality using your Google account."
+	case rowApple:
+		row.Kind, row.Button = KindAction, "Sign in"
+		if m.appleIn {
+			row.Button = "Sign out"
+		}
+		row.Help = "Optional. 256 kbps AAC with your own Apple Music subscription."
+	case rowTest:
+		row.Kind, row.Button, row.Help = KindAction, "Run test", "Connect and show each server downloads would use."
+		row.Status = "Not run yet" // Value is the terminal's "press enter..." text
+		if !m.signedIn {
+			row.Status = "Needs a Proton sign-in"
+		}
+	}
 }
 
 // Render draws the screen with ANSI colours, as the terminal UI shows it.

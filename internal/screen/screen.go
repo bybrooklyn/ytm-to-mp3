@@ -21,7 +21,28 @@ type Row struct {
 	Action   bool   `json:"action,omitempty"`  // enter runs it
 	Editing  bool   `json:"editing,omitempty"` // the value is text being typed
 	Good     bool   `json:"good,omitempty"`    // on / signed in: shown in green
+
+	// Presentation hints for graphical hosts. The terminal ignores all of them, and a row that
+	// sets none (Kind "") still draws correctly everywhere from Label and Value alone.
+	Kind    string   `json:"kind,omitempty"`    // what control suits the row: one of the Kind* constants
+	Options []string `json:"options,omitempty"` // KindChoice: every value, as it appears in Value
+	On      bool     `json:"on,omitempty"`      // KindToggle: the switch is on
+	Button  string   `json:"button,omitempty"`  // KindAction: the button's label
+	Status  string   `json:"status,omitempty"`  // KindAction/KindInfo: shown instead of Value when set
+	Help    string   `json:"help,omitempty"`    // always-visible explanation under the label
+	Error   string   `json:"error,omitempty"`   // a problem with this row (also in Message)
+	Group   string   `json:"group,omitempty"`   // starts a section with this heading
 }
+
+// Row kinds, for Row.Kind.
+const (
+	KindToggle = "toggle" // on/off: a switch (Row.On); Set Value "on" or "off"
+	KindChoice = "choice" // one of Row.Options; Set Value to an option
+	KindNumber = "number" // a number (Value, may read "Auto"); Set Step +1 or -1
+	KindText   = "text"   // typed text such as a path; Set Value to the new text
+	KindAction = "action" // a button (Row.Button) that asks the host to do something; Set Press
+	KindInfo   = "info"   // a status with nothing to change
+)
 
 // Screen is what a screen shows: a title, rows and a footer of key hints. It carries no
 // colours or layout, so a terminal and a window can each draw it their own way.

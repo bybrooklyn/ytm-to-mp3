@@ -23,6 +23,16 @@ type Event struct {
 	Key   string `json:"key"`
 	Text  string `json:"text"`
 	Paste string `json:"paste"`
+	Set   *Set   `json:"set"`
+}
+
+// Set is a click on a row's own control. The host turns it into the same keys the terminal
+// uses, so a switch, a dropdown or a button can't do anything a key press couldn't.
+type Set struct {
+	Row   int    `json:"row"`
+	Value string `json:"value"` // toggle: "on"/"off"; choice: an option; text: the new text
+	Step  int    `json:"step"`  // number: +1 or -1
+	Press bool   `json:"press"` // action: run it
 }
 
 // View is what a window draws after an event.
@@ -94,6 +104,8 @@ func (h *Host) Do(ev Event) View {
 	h.notice = ""
 	m := h.tabs[h.current].model
 	switch {
+	case ev.Set != nil:
+		h.set(m, *ev.Set)
 	case ev.Tab != nil:
 		if i := *ev.Tab; i >= 0 && i < len(h.tabs) {
 			h.open(i)
@@ -120,6 +132,43 @@ func (h *Host) Do(ev Event) View {
 		}
 	}
 	return h.view()
+}
+
+// set applies a click on a row's control as the keys the terminal would use.
+func (h *Host) set(m Model, s Set) {
+	if m.Editing() {
+		return
+	}
+	m.SelectIndex(s.Row)
+	rows := m.Screen().Rows
+	if s.Row < 0 || s.Row >= len(rows) {
+		return
+	}
+	switch r := rows[s.Row]; {
+	case s.Press:
+		m.Key("enter")
+	case s.Step != 0:
+		if s.Step > 0 {
+			m.Key("right")
+		} else {
+			m.Key("left")
+		}
+	case r.Kind == KindText:
+		m.Key("enter") // starts editing, with the current text
+		if m.Editing() {
+			m.Key("ctrl+u")
+			m.Type(s.Value)
+			m.Key("enter")
+		}
+	case r.Kind == KindToggle:
+		if (s.Value == "on") != r.On {
+			m.Key("right")
+		}
+	default: // choice: step to it (the list wraps, so a few steps at most)
+		for i := 0; i <= len(r.Options) && m.Screen().Rows[s.Row].Value != s.Value; i++ {
+			m.Key("right")
+		}
+	}
 }
 
 // DefaultTabs are the screens of the desktop window: connections and settings. signedIn and
