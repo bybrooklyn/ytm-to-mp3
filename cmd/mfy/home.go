@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"charm.land/huh/v2"
@@ -20,8 +19,6 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
 
-// errBack means "go back to the menu" from a sub-flow.
-var errBack = errors.New("back")
 
 // runHome is what plain `mfetchy` does in a terminal: a short menu that leads to the right
 // flow, so nothing has to be remembered.
@@ -175,32 +172,7 @@ func refreshOpts(o opts) opts {
 }
 
 // extras says, in one line, what a library download does besides downloading.
-func extras(o opts) string {
-	var on []string
-	if o.albums {
-		on = append(on, "complete albums")
-	}
-	if o.retry {
-		on = append(on, "retry unavailable songs")
-	}
-	if o.tagAfter {
-		on = append(on, "fix tags")
-	}
-	if o.lyricsAfter {
-		on = append(on, "fetch lyrics")
-	}
-	if o.premiumAfter {
-		if config.Load().Premium {
-			on = append(on, "Premium upgrade")
-		} else {
-			on = append(on, "Premium upgrade (once you sign in, in settings)")
-		}
-	}
-	if len(on) == 0 {
-		return "just download (extras are off in settings)"
-	}
-	return "also: " + strings.Join(on, ", ") + "  (change in settings)"
-}
+func extras(o opts) string { return o.core().Extras() }
 
 func header(o opts, width int) string {
 	cfg := config.Load()
@@ -239,18 +211,6 @@ func header(o opts, width int) string {
 }
 
 // tilde shortens a path under the home folder for display.
-func tilde(p string) string {
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		if rel, err := filepath.Rel(home, p); err == nil && !strings.HasPrefix(rel, "..") {
-			if rel == "." {
-				return "~"
-			}
-			return "~" + string(filepath.Separator) + rel // native separators, so Windows isn't ~/AppData\Roaming
-		}
-	}
-	return p
-}
-
 // libraryFlow finds (or helps get) a Takeout export, shows what's in it, and downloads it.
 func libraryFlow(ctx context.Context, u *ui.UI, o opts) error {
 	var how string

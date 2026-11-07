@@ -118,6 +118,12 @@ func New() *UI {
 	return &UI{out: os.Stdout, tty: tty, in: bufio.NewReader(os.Stdin)}
 }
 
+// NewWriter is a UI that prints plain lines to w and is never interactive: no live block,
+// no prompts (a question returns its default). A window uses it to collect a run's text.
+func NewWriter(w io.Writer) *UI {
+	return &UI{out: w, in: bufio.NewReader(strings.NewReader(""))}
+}
+
 // Interactive reports whether both ends are a terminal, so prompting makes sense.
 func (u *UI) Interactive() bool {
 	u = u.base()

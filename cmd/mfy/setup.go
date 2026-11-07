@@ -17,16 +17,14 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"github.com/bybrooklyn/mfetchy/internal/config"
+	"github.com/bybrooklyn/mfetchy/internal/core"
 	"github.com/bybrooklyn/mfetchy/internal/proton"
 	"github.com/bybrooklyn/mfetchy/internal/screen"
 	"github.com/bybrooklyn/mfetchy/internal/ui"
 	"github.com/bybrooklyn/mfetchy/internal/vpn"
 )
 
-func protonClient() *proton.Client {
-	p, _ := proton.SessionPath()
-	return proton.New(p)
-}
+func protonClient() *proton.Client { return core.ProtonClient() }
 
 // checkFolder makes sure the music folder can be created and written, so a typo shows up
 // here instead of after a long download.
@@ -187,18 +185,4 @@ func runStatus(ctx context.Context, u *ui.UI) error {
 		u.Item(fmt.Sprintf("%-22s", x.Name), "exits at %s", ip)
 	}
 	return nil
-}
-
-func orDefault(s, d string) string {
-	if s == "" {
-		return d
-	}
-	return s
-}
-
-func orInt(n, d int) int {
-	if n == 0 {
-		return d
-	}
-	return n
 }

@@ -25,7 +25,9 @@ const (
 
 // tstate is one in-flight track as the live display sees it.
 type tstate struct {
+	id      string
 	label   string
+	sent    atomic.Int64 // bytes last reported as a progress event
 	started time.Time
 	stage   atomic.Int32
 	got     atomic.Int64
@@ -46,7 +48,7 @@ type liveSet struct {
 }
 
 func (s *liveSet) add(t model.Track) *tstate {
-	ts := &tstate{label: ui.Sanitize(t.Label()), started: time.Now()}
+	ts := &tstate{id: t.ID, label: ui.Sanitize(t.Label()), started: time.Now()}
 	s.mu.Lock()
 	if s.m == nil {
 		s.m = map[string]*tstate{}

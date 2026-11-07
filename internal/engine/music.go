@@ -189,7 +189,7 @@ func (e *engine) findOnMusic(ctx context.Context, t model.Track, ts *tstate) (*j
 		return nil, errNoMusicMatch
 	}
 	if ts != nil {
-		ts.stage.Store(stMusic)
+		e.setStage(ts, stMusic)
 	}
 	var cands []musicHit
 	if r := e.Replacements[t.ID]; r != "" {

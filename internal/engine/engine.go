@@ -22,6 +22,7 @@ import (
 
 	"github.com/bybrooklyn/mfetchy/internal/appname"
 	"github.com/bybrooklyn/mfetchy/internal/deps"
+	"github.com/bybrooklyn/mfetchy/internal/jobs"
 	"github.com/bybrooklyn/mfetchy/internal/model"
 	"github.com/bybrooklyn/mfetchy/internal/names"
 	"github.com/bybrooklyn/mfetchy/internal/store"
@@ -65,6 +66,10 @@ type Options struct {
 	MusicFirst map[string]bool
 	// Replacements are YouTube Music matches found by an earlier run (dead id -> video).
 	Replacements map[string]string
+	// Sink, if set, receives an event for each song as it moves: started, stage (resolving,
+	// downloading, tagging), progress (bytes of total, a few times a second), done, failed.
+	// The terminal display is unchanged; this is what a window draws from.
+	Sink jobs.Sink
 }
 
 // Summary is the result of a run.
@@ -487,6 +492,7 @@ func Run(ctx context.Context, o Options, todo []model.Track) Summary {
 				speed = speed*0.7 + inst*0.3
 				lastB, lastT = b, now
 				e.status(speed, began)
+				e.emitProgress()
 			case <-stopStatus:
 				return
 			}
@@ -645,6 +651,7 @@ func (e *engine) fail(t model.Track, err error) {
 	}
 	e.failed.Add(1)
 	e.UI.Line(red+"✗"+reset, t.Label()+"  ("+names.Clean(err.Error())+")")
+	e.emitFailed(t, err, perm)
 }
 
 func ctxErr(err error) bool { return err == context.Canceled || err == context.DeadlineExceeded }
@@ -721,6 +728,8 @@ func (e *engine) resolveBatch(ctx context.Context, batch []model.Track, out chan
 	sts := make([]state, len(batch))
 	for i, t := range batch {
 		sts[i] = state{t, e.live.add(t)}
+		e.emit(jobs.Event{Kind: jobs.Started, ID: t.ID, Label: sts[i].ts.label})
+		e.emit(jobs.Event{Kind: jobs.Stage, ID: t.ID, Label: sts[i].ts.label, Stage: "resolving"})
 	}
 	emitJob := func(j *job) {
 		j.ts.stage.Store(stQueued) // downloading only once a fetch worker picks it up
@@ -1013,7 +1022,7 @@ func (e *engine) resolveWithRetry(ctx context.Context, t model.Track, first *att
 func (e *engine) fetchWorker(ctx context.Context, in <-chan *job, out chan<- *job) {
 	for j := range in {
 		owner := j.owner
-		j.ts.stage.Store(stFetch)
+		e.setStage(j.ts, stFetch)
 		j.ts.fetchStart = time.Now()
 		// Cover art comes down alongside the audio, not after it.
 		coverDone := e.startCover(ctx, j)
@@ -1032,7 +1041,7 @@ func (e *engine) fetchWorker(ctx context.Context, in <-chan *job, out chan<- *jo
 				err = rerr
 			} else {
 				j = nj
-				j.ts.stage.Store(stFetch)
+				e.setStage(j.ts, stFetch)
 				coverDone = e.startCover(ctx, j)
 				err = e.fetchJob(ctx, j)
 				if coverDone != nil {
@@ -1246,7 +1255,7 @@ func (e *engine) moveToAnotherExit(ctx context.Context, j *job) bool {
 
 func (e *engine) encodeWorker(ctx context.Context, in <-chan *job) {
 	for j := range in {
-		j.ts.stage.Store(stEncode)
+		e.setStage(j.ts, stEncode)
 		j.ts.encodeStart = time.Now()
 		path, err := e.encodeJob(ctx, j)
 		e.live.remove(j.tr.ID)
@@ -1276,6 +1285,7 @@ func (e *engine) encodeWorker(ctx context.Context, in <-chan *job) {
 			label += "  (via YouTube Music)"
 		}
 		e.UI.LineNote(green+"✓"+reset, label, firstNonEmpty(j.tr.Album, j.res.Album))
+		e.emitDone(j.tr, label, path, e.Format)
 		if e.OnGood != nil && j.lane.good.CompareAndSwap(false, true) {
 			rate := j.lane.speed()
 			if rate == 0 {
