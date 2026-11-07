@@ -32,19 +32,19 @@ const (
 
 type vpnState = core.VPNState
 
-func providerID(cfg config.Config) string                { return core.ProviderID(cfg) }
-func providerLabel(id string) string                     { return core.ProviderLabel(id) }
-func currentVPN(cfg config.Config) vpnState              { return core.CurrentVPN(cfg) }
-func mullvadProvider() *mullvad.Provider                 { return core.MullvadProvider() }
-func wireguardProvider() *wgconf.Provider                { return core.WireguardProvider() }
-func signOutVPN(ctx context.Context, cfg config.Config)  { core.SignOutVPN(ctx, cfg) }
-func connections(cfg config.Config, v vpnState) int      { return core.Connections(cfg, v) }
+func providerID(cfg config.Config) string                   { return core.ProviderID(cfg) }
+func providerLabel(id string) string                        { return core.ProviderLabel(id) }
+func currentVPN(cfg config.Config) vpnState                 { return core.CurrentVPN(cfg) }
+func mullvadProvider() *mullvad.Provider                    { return core.MullvadProvider() }
+func wireguardProvider() *wgconf.Provider                   { return core.WireguardProvider() }
+func signOutVPN(ctx context.Context, cfg config.Config)     { core.SignOutVPN(ctx, cfg) }
+func connections(cfg config.Config, v vpnState) int         { return core.Connections(cfg, v) }
 func connectionsLabel(cfg config.Config, v vpnState) string { return core.ConnectionsLabel(cfg, v) }
 
-func appleSignedIn() bool                                { return core.AppleSignedIn() }
-func appleLogin(ctx context.Context, u *ui.UI) error     { return core.AppleLogin(ctx, u) }
-func appleLogout(u *ui.UI) error                         { return core.AppleLogout(u) }
-func appleStatus(ctx context.Context, u *ui.UI) error    { return core.AppleStatus(ctx, u) }
+func appleSignedIn() bool                             { return core.AppleSignedIn() }
+func appleLogin(ctx context.Context, u *ui.UI) error  { return core.AppleLogin(ctx, u) }
+func appleLogout(u *ui.UI) error                      { return core.AppleLogout(u) }
+func appleStatus(ctx context.Context, u *ui.UI) error { return core.AppleStatus(ctx, u) }
 func appleMatch(ctx context.Context, u *ui.UI, o opts, paths []string) error {
 	return core.AppleMatch(ctx, u, o.core(), newPrompter(u), paths)
 }
@@ -80,4 +80,4 @@ func chooseBandcampBrowser(ctx context.Context) error {
 }
 
 func sidecarOptions(cfg config.Config) (sidecar.Options, bool) { return core.SidecarOptions(cfg) }
-func audioFiles(dir string) []string                            { return core.AudioFiles(dir) }
+func audioFiles(dir string) []string                           { return core.AudioFiles(dir) }

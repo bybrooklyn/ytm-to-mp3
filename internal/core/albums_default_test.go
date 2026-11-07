@@ -18,7 +18,6 @@ func sandboxConfig(t *testing.T) {
 	t.Setenv("AppData", d)
 }
 
-
 func TestIsSongLink(t *testing.T) {
 	for in, want := range map[string]bool{
 		"https://music.apple.com/us/album/name/1440857781?i=1440858081": true,

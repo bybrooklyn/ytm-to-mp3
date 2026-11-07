@@ -19,7 +19,6 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
 
-
 // runHome is what plain `mfetchy` does in a terminal: a short menu that leads to the right
 // flow, so nothing has to be remembered.
 func runHome(ctx context.Context, u *ui.UI, o opts) error {
