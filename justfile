@@ -5,31 +5,31 @@ version := `git describe --tags --always --dirty 2>/dev/null || echo dev`
 default:
     @just --list
 
-# build ./ytm
+# build ./mfy
 build:
-    go build -ldflags "-s -w -X main.version={{version}}" -o ytm ./cmd/ytm
+    go build -ldflags "-s -w -X main.version={{version}}" -o mfy ./cmd/mfy
 
-# build ./ytm-desktop, the native desktop window (Fyne: needs a C compiler and OpenGL/X11 headers on Linux)
+# build ./mfy-desktop, the native desktop window (Fyne: needs a C compiler and OpenGL/X11 headers on Linux)
 build-desktop:
-    CGO_ENABLED=1 go build -ldflags "-s -w" -o ytm-desktop ./cmd/ytm-desktop
+    CGO_ENABLED=1 go build -ldflags "-s -w" -o mfy-desktop ./cmd/mfy-desktop
 
-# cross-compile ytm.exe for Windows (amd64)
+# cross-compile mfy.exe for Windows (amd64)
 build-win:
-    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X main.version={{version}}" -o ytm.exe ./cmd/ytm
+    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X main.version={{version}}" -o mfy.exe ./cmd/mfy
 
-# install to $GOBIN / ~/go/bin (make sure it's on PATH), then use `ytm <url>`
+# install to $GOBIN / ~/go/bin (make sure it's on PATH), then use `mfy <url>`
 install:
-    go install -ldflags "-s -w -X main.version={{version}}" ./cmd/ytm
-    @echo "installed: $(go env GOBIN | grep . || echo $(go env GOPATH)/bin)/ytm"
+    go install -ldflags "-s -w -X main.version={{version}}" ./cmd/mfy
+    @echo "installed: $(go env GOBIN | grep . || echo $(go env GOPATH)/bin)/mfy"
 
 # install to ~/.local/bin
 install-local: build
-    mkdir -p "${YTM_INSTALL_DIR:-$HOME/.local/bin}"
-    install -m755 ytm "${YTM_INSTALL_DIR:-$HOME/.local/bin}/ytm"
+    mkdir -p "${MFY_INSTALL_DIR:-$HOME/.local/bin}"
+    install -m755 mfy "${MFY_INSTALL_DIR:-$HOME/.local/bin}/mfy"
 
-# download URLs/exports: just get <url>... (extra args go to ytm)
+# download URLs/exports: just get <url>... (extra args go to mfy)
 get *args:
-    go run ./cmd/ytm {{args}}
+    go run ./cmd/mfy {{args}}
 
 test:
     go test ./...
@@ -50,5 +50,5 @@ snapshot:
     goreleaser release --snapshot --clean
 
 clean:
-    rm -rf ytm ytm.exe ytm-desktop dist
+    rm -rf mfy mfy.exe mfy-desktop dist
 

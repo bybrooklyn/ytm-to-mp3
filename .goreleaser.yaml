@@ -1,14 +1,14 @@
 version: 2
-project_name: ytm
+project_name: mfetchy
 
 before:
   hooks:
     - go mod verify
 
 builds:
-  - id: ytm
-    main: ./cmd/ytm
-    binary: ytm
+  - id: mfy
+    main: ./cmd/mfy
+    binary: mfy
     env: [CGO_ENABLED=0]
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
@@ -17,12 +17,12 @@ builds:
       - -s -w -X main.version={{ .Version }}
 
 archives:
-  - id: ytm
+  - id: mfy
     formats: [tar.gz]
     format_overrides:
       - goos: windows
         formats: [zip]
-    name_template: "ytm_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "mfy_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files: [README.md, LICENSE]
 
 checksum:
@@ -43,8 +43,8 @@ signs:
 
 nfpms:
   - id: packages
-    package_name: ytm
-    vendor: ytm-to-mp3
+    package_name: mfetchy
+    vendor: mfetchy
     homepage: https://github.com/bybrooklyn/mfetchy
     maintainer: bybrooklyn
     description: Download your YouTube Music library as tagged audio files
@@ -52,10 +52,10 @@ nfpms:
     formats: [deb, rpm]
     recommends: [ffmpeg]
 
-# A cask (goreleaser deprecated binary formulas). ffmpeg isn't a dependency: ytm fetches
+# A cask (goreleaser deprecated binary formulas). ffmpeg isn't a dependency: mfy fetches
 # its own copy when none is installed.
 homebrew_casks:
-  - name: ytm
+  - name: mfetchy
     repository:
       owner: bybrooklyn
       name: homebrew-tap
@@ -68,11 +68,11 @@ homebrew_casks:
         # the binary isn't notarized: without this macOS refuses to run it
         install_steps: |
           on_macos do
-            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/ytm"]
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/mfy"]
           end
 
 scoops:
-  - name: ytm
+  - name: mfetchy
     repository:
       owner: bybrooklyn
       name: scoop-bucket
@@ -90,4 +90,4 @@ changelog:
 release:
   github:
     owner: bybrooklyn
-    name: ytm-to-mp3
+    name: mfetchy

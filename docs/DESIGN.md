@@ -1,6 +1,6 @@
-# ytm design
+# mfetchy design
 
-ytm has two faces on one model: the terminal UI and the desktop window. Both draw the
+mfetchy has two faces on one model: the terminal UI and the desktop window. Both draw the
 screens in `internal/screen`. This file is about how the desktop window should look and why.
 The terminal keeps its look; it is a terminal.
 
@@ -17,7 +17,7 @@ the statistical average of its training data. The tells are symptoms of "nobody 
 
 The tells, and what we do instead:
 
-| Tell | Why it reads as slop | ytm |
+| Tell | Why it reads as slop | mfetchy |
 | --- | --- | --- |
 | Purple-to-blue gradients, neon on near-black, glowing halos | The palette is a default, not an identity | Flat colour. One accent (the teal-cyan the terminal already uses), never a gradient, no glow |
 | Glassmorphism, blur, frosted panels | Decoration with no layering problem to solve | Opaque surfaces only |
@@ -46,7 +46,7 @@ settings layouts, and the common thread of all three:
 - Empty and error states say what happened and what to do, next to where it happened.
 - Light and dark follow the system.
 
-## Principles for ytm
+## Principles for mfetchy
 
 1. **It is a tool, not a landing page.** Dense enough to see a whole section without
    scrolling, calm enough to read. Left-aligned, content column at most 720px wide.
@@ -65,7 +65,7 @@ settings layouts, and the common thread of all three:
 
 ## Palette
 
-Both themes follow the system. Flat colours, defined once in `cmd/ytm-desktop/theme.go`.
+Both themes follow the system. Flat colours, defined once in `cmd/mfy-desktop/theme.go`.
 
 | Role | Dark | Light |
 | --- | --- | --- |
@@ -105,7 +105,7 @@ Page margin: 32 (16 when the window is narrow). Sidebar: 200 wide.
 
 ## Component rules
 
-- **Sidebar**: wordmark "ytm" at the top (text, no logo tile), then one item per tab. Active
+- **Sidebar**: wordmark "mfetchy" at the top (text, no logo tile), then one item per tab. Active
   item: accent text, 3px accent bar at its left edge, hover-tint background. No emoji, no icons.
 - **Section**: heading (muted, 13 bold) above one bordered, radius-6 surface. Rows separated by
   hairlines. A section starts where the model sets `Row.Group`.
@@ -125,6 +125,6 @@ Page margin: 32 (16 when the window is narrow). Sidebar: 200 wide.
 
 ## Checklist before shipping a screen change
 
-Look at light and dark, wide and narrow screenshots (`YTM_SHOT_DIR=/tmp/ytm go test
-./cmd/ytm-desktop -run Screenshot`). Then ask: is there a gradient, glow, emoji, card grid,
+Look at light and dark, wide and narrow screenshots (`MFY_SHOT_DIR=/tmp/mfetchy go test
+./cmd/mfy-desktop -run Screenshot`). Then ask: is there a gradient, glow, emoji, card grid,
 centred block, or a sentence that says nothing? If yes, remove it.

@@ -12,10 +12,10 @@ as soon as I can and aim to ship a fix in the next release.
 
 Only the latest release receives security fixes.
 
-## What ytm stores locally
+## What mfetchy stores locally
 
 Config lives in your user config directory (the Settings screen shows the path), caches in your
-user cache directory under `ytm`.
+user cache directory under `mfetchy`.
 
 - `config.json`: your settings (music folder, format, number of VPN connections, whether
   to use a browser login or the VPN). No secrets.
@@ -26,15 +26,15 @@ user cache directory under `ytm`.
   folder's normal permissions protect the file. The device key stays listed in your Proton
   account until you remove it at account.protonvpn.com.
 - No browser cookies or Google login are ever read. (Older versions' `cookies.txt` is deleted on the next run.)
-- `<music folder>/.ytm/state.db`: which tracks were downloaded or failed, with titles and
+- `<music folder>/.mfetchy/state.db`: which tracks were downloaded or failed, with titles and
   error text (mode 0600).
-- `bin/` (cache dir): yt-dlp, ffmpeg, ffprobe and deno if ytm had to download them. Each is
+- `bin/` (cache dir): yt-dlp, ffmpeg, ffprobe and deno if mfetchy had to download them. Each is
   checked against the checksum file published in the same release (this catches corrupt or
   truncated downloads, but not a compromised release; the macOS Intel ffmpeg build has no
-  published checksum and is only a last resort). ytm records a hash of each binary and
+  published checksum and is only a last resort). mfetchy records a hash of each binary and
   re-downloads one that later changes.
 
-## What ytm contacts
+## What mfetchy contacts
 
 - YouTube / YouTube Music, via yt-dlp.
 - GitHub, to download and update helper tools and releases.

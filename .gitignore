@@ -1,10 +1,10 @@
-/ytm
-/ytm.exe
+/mfy
+/mfy.exe
 /dist/
 Music/
 downloads/
-.ytm/
+.mfetchy/
 *.csv
 !testdata/*.csv
 /legacy/
-/ytm-desktop
+/mfy-desktop

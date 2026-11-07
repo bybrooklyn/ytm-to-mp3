@@ -1,8 +1,9 @@
 #!/bin/sh
-# Install the latest ytm release for Linux or macOS.
+# Install the latest mfetchy release (the mfy command) for Linux or macOS.
 #   curl -fsSL https://raw.githubusercontent.com/bybrooklyn/mfetchy/main/install.sh | sh
-# Pin a version:  YTM_VERSION=v1.2.3 sh install.sh
-# Custom dir:     YTM_INSTALL_DIR=/usr/local/bin sh install.sh
+# Pin a version:  MFY_VERSION=v1.2.3 sh install.sh
+# Custom dir:     MFY_INSTALL_DIR=/usr/local/bin sh install.sh
+# (the old YTM_VERSION and YTM_INSTALL_DIR names still work)
 #
 # Integrity: this script verifies the archive against checksums.txt from the
 # same release. Releases also ship checksums.txt.sig and checksums.txt.pem
@@ -28,15 +29,15 @@ elif command -v wget >/dev/null 2>&1; then
   dl() { wget -q $wopt -O "$2" "$1"; }
   headers() { wget -q $wopt --spider -S --max-redirect=0 "$1" 2>&1 || true; }
 else
-  echo "error: need curl or wget to download ytm; install one and retry" >&2
+  echo "error: need curl or wget to download mfetchy; install one and retry" >&2
   exit 1
 fi
 
-tag=${YTM_VERSION:-}
+tag=${MFY_VERSION:-${YTM_VERSION:-}}
 if [ -z "$tag" ]; then
   # Resolve via the /releases/latest redirect (no API, no rate limit).
   tag=$(headers "https://github.com/$repo/releases/latest" | tr -d '\r' | sed -n 's/^[Ll]ocation:.*\/tag\/\([^/ ]*\)$/\1/p' | tail -n1)
-  [ -n "$tag" ] || { echo "error: could not determine the latest release (check your network, or set YTM_VERSION=vX.Y.Z)" >&2; exit 1; }
+  [ -n "$tag" ] || { echo "error: could not determine the latest release (check your network, or set MFY_VERSION=vX.Y.Z)" >&2; exit 1; }
 fi
 if ! printf '%s\n' "$tag" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
   echo "error: invalid version '$tag' (expected something like v1.2.3)" >&2
@@ -44,21 +45,21 @@ if ! printf '%s\n' "$tag" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-
 fi
 case "$tag" in v*) ;; *) tag="v$tag" ;; esac
 ver=${tag#v}
-file="ytm_${ver}_${os}_${arch}.tar.gz"
+file="mfy_${ver}_${os}_${arch}.tar.gz"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 
-echo "Downloading ytm $tag ($os/$arch)..."
+echo "Downloading mfetchy $tag ($os/$arch)..."
 dl "https://github.com/$repo/releases/download/$tag/$file" "$tmp/$file" || { echo "error: download failed for $tag ($file); does that release exist?" >&2; exit 1; }
 dl "https://github.com/$repo/releases/download/$tag/checksums.txt" "$tmp/checksums.txt" || { echo "error: could not download checksums.txt for $tag" >&2; exit 1; }
 want=$(grep " $file\$" "$tmp/checksums.txt" | cut -d' ' -f1)
 if command -v sha256sum >/dev/null 2>&1; then got=$(sha256sum "$tmp/$file" | cut -d' ' -f1); else got=$(shasum -a 256 "$tmp/$file" | cut -d' ' -f1); fi
 [ -n "$want" ] && [ "$want" = "$got" ] || { echo "error: checksum mismatch, refusing to install" >&2; exit 1; }
 
-tar -xzf "$tmp/$file" -C "$tmp" ytm
-dest="${YTM_INSTALL_DIR:-$HOME/.local/bin}"
+tar -xzf "$tmp/$file" -C "$tmp" mfy
+dest="${MFY_INSTALL_DIR:-${YTM_INSTALL_DIR:-$HOME/.local/bin}}"
 mkdir -p "$dest"
-install -m 0755 "$tmp/ytm" "$dest/ytm"
-echo "Installed to $dest/ytm"
+install -m 0755 "$tmp/mfy" "$dest/mfy"
+echo "Installed to $dest/mfy"
 case ":$PATH:" in
   *":$dest:"*) ;;
   *)
@@ -73,4 +74,4 @@ case ":$PATH:" in
     ;;
 esac
 echo
-echo "Next: run  ytm"
+echo "Next: run  mfy"

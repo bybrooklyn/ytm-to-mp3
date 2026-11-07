@@ -1,4 +1,4 @@
-# Install the latest ytm release for Windows.
+# Install the latest mfetchy release (the mfy command) for Windows.
 #   irm https://raw.githubusercontent.com/bybrooklyn/mfetchy/main/install.ps1 | iex
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -9,8 +9,9 @@ try {
     $isArm = ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') -or ($env:PROCESSOR_ARCHITEW6432 -eq 'ARM64')
     $arch = if ($isArm) { 'arm64' } else { 'amd64' }
 
-    if ($env:YTM_VERSION) {
-        $tag = $env:YTM_VERSION
+    $ver = if ($env:MFY_VERSION) { $env:MFY_VERSION } else { $env:YTM_VERSION }
+    if ($ver) {
+        $tag = $ver
         if (-not $tag.StartsWith('v')) { $tag = "v$tag" }
     } else {
         # Resolve via the /releases/latest redirect (no API rate limit).
@@ -26,7 +27,7 @@ try {
             $tag = $null
         }
         if (-not $tag) {
-            throw "could not determine the latest release (check your network). Set `$env:YTM_VERSION = 'vX.Y.Z' and retry."
+            throw "could not determine the latest release (check your network). Set `$env:MFY_VERSION = 'vX.Y.Z' and retry."
         }
     }
 
@@ -35,13 +36,13 @@ try {
     }
     if (-not $tag.StartsWith('v')) { $tag = "v$tag" }
 
-    $file = "ytm_$($tag.TrimStart('v'))_windows_$arch.zip"
+    $file = "mfy_$($tag.TrimStart('v'))_windows_$arch.zip"
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid())
     New-Item -ItemType Directory $tmp | Out-Null
 
     $base = "https://github.com/$repo/releases/download/$tag"
     if (-not $base.StartsWith('https://')) { throw 'refusing non-https download' }
-    Write-Host "Downloading ytm $tag (windows/$arch)..."
+    Write-Host "Downloading mfetchy $tag (windows/$arch)..."
     try {
         Invoke-WebRequest "$base/$file" -OutFile "$tmp\$file" -UseBasicParsing -MaximumRedirection 5
         Invoke-WebRequest "$base/checksums.txt" -OutFile "$tmp\checksums.txt" -UseBasicParsing
@@ -53,10 +54,10 @@ try {
     $got = (Get-FileHash "$tmp\$file" -Algorithm SHA256).Hash.ToLower()
     if (-not $want -or $want -ne $got) { throw 'checksum mismatch, refusing to install' }
 
-    $dest = Join-Path $env:LOCALAPPDATA 'Programs\ytm'
+    $dest = Join-Path $env:LOCALAPPDATA 'Programs\mfetchy'
     New-Item -ItemType Directory $dest -Force | Out-Null
     Expand-Archive "$tmp\$file" -DestinationPath $tmp -Force
-    Copy-Item "$tmp\ytm.exe" "$dest\ytm.exe" -Force
+    Copy-Item "$tmp\mfy.exe" "$dest\mfy.exe" -Force
 
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     $parts = if ($userPath) { $userPath -split ';' | Where-Object { $_ } } else { @() }
@@ -67,9 +68,9 @@ try {
     }
     if (($env:Path -split ';') -notcontains $dest) { $env:Path = "$env:Path;$dest" }
 
-    Write-Host "Installed to $dest\ytm.exe"
+    Write-Host "Installed to $dest\mfy.exe"
     Write-Host ''
-    Write-Host 'Next: run  ytm'
+    Write-Host 'Next: run  mfy'
 } catch {
     Write-Host "error: $($_.Exception.Message)" -ForegroundColor Red
     $global:LASTEXITCODE = 1

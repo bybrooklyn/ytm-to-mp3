@@ -33,11 +33,11 @@ jobs:
         if: runner.os != 'Windows'
       - run: go test ./...
         if: runner.os == 'Windows'
-      - run: go build -o ytm${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/ytm
+      - run: go build -o mfy${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/mfy
       - name: smoke test
         run: |
-          ./ytm --version
-          ./ytm --dry-run dQw4w9WgXcQ -o ./smoke
+          ./mfy --version
+          ./mfy --dry-run dQw4w9WgXcQ -o ./smoke
       - name: goreleaser check
         if: runner.os == 'Linux'
         uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
@@ -79,16 +79,16 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-        run: go build -trimpath -ldflags="-s -w -X main.version=dev-${GITHUB_SHA::7}" -o out/ytm${{ matrix.ext }} ./cmd/ytm
+        run: go build -trimpath -ldflags="-s -w -X main.version=dev-${GITHUB_SHA::7}" -o out/mfy${{ matrix.ext }} ./cmd/mfy
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ytm-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: out/ytm${{ matrix.ext }}
+          name: mfy-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: out/mfy${{ matrix.ext }}
           if-no-files-found: error
           retention-days: 30
 
   # The desktop app is a native window (Fyne), which needs a C compiler, so it is built on
-  # each OS itself instead of cross-compiled with the command-line ytm above.
+  # each OS itself instead of cross-compiled with the command-line mfy above.
   desktop:
     strategy:
       fail-fast: false
@@ -113,11 +113,11 @@ jobs:
       - name: build
         env:
           CGO_ENABLED: "1"
-        run: go build -trimpath -ldflags="-s -w ${{ matrix.ldflags }}" -o out/ytm-desktop${{ matrix.ext }} ./cmd/ytm-desktop
+        run: go build -trimpath -ldflags="-s -w ${{ matrix.ldflags }}" -o out/mfy-desktop${{ matrix.ext }} ./cmd/mfy-desktop
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ytm-desktop-${{ matrix.name }}
-          path: out/ytm-desktop${{ matrix.ext }}
+          name: mfy-desktop-${{ matrix.name }}
+          path: out/mfy-desktop${{ matrix.ext }}
           if-no-files-found: error
           retention-days: 30
 
