@@ -25,9 +25,9 @@ func main() {
 		}
 	}
 	a := app.NewWithID("io.github.bybrooklyn.ytm")
-	a.Settings().SetTheme(ytmTheme{theme.DefaultTheme()})
+	a.Settings().SetTheme(ytmTheme{Theme: theme.DefaultTheme()})
 	win := a.NewWindow("ytm")
-	win.Resize(fyne.NewSize(900, 720))
+	win.Resize(fyne.NewSize(980, 720))
 	newView(win, screen.NewHost(screen.DefaultTabs(signedIn, user)...))
 	win.ShowAndRun()
 }

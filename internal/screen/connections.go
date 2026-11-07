@@ -17,6 +17,10 @@ type Connection struct {
 	Good   bool   // set up (shown green)
 	Dim    bool   // nothing to set up
 	Action string // what Enter does ("" = nothing): the host runs it, then comes back
+
+	// For graphical hosts (the terminal shows Hint): a plain description and the button's label.
+	Help   string
+	Button string
 }
 
 // DetectConnections reads the current state of every account and source. It only looks at
@@ -25,8 +29,10 @@ func DetectConnections() []Connection {
 	cfg := config.Load()
 	var out []Connection
 
-	yt := Connection{ID: "youtube", Name: "YouTube Music library", Action: "youtube"}
+	yt := Connection{ID: "youtube", Name: "YouTube Music library", Action: "youtube", Button: "Choose browser...",
+		Help: "Your library is read from the browser that is signed in to music.youtube.com. Nothing is exported."}
 	if name := browserName(cfg.YouTubeBrowser); name != "" {
+		yt.Button = "Change browser..."
 		yt.Status, yt.Good = "reads "+name, true
 		yt.Hint = "your library is read straight from that browser's sign-in, no export; enter to pick another browser"
 	} else {
@@ -35,8 +41,10 @@ func DetectConnections() []Connection {
 	}
 	out = append(out, yt)
 
-	ap := Connection{ID: "apple", Name: "Apple Music", Action: "applein"}
+	ap := Connection{ID: "apple", Name: "Apple Music", Action: "applein", Button: "Sign in",
+		Help: "Optional. Songs come as 256 kbps AAC, with your own Apple Music subscription."}
 	if config.AppleToken() != "" {
+		ap.Button = "Sign out"
 		ap.Status, ap.Good, ap.Action = "signed in (store "+strings.ToUpper(orDefault(cfg.AppleStorefront, "us"))+")", true, "appleout"
 		ap.Hint = "songs come as 256 kbps AAC; enter to sign out"
 	} else {
@@ -45,9 +53,11 @@ func DetectConnections() []Connection {
 	}
 	out = append(out, ap)
 
-	pr := Connection{ID: "proton", Name: "Proton VPN", Action: "signin"}
+	pr := Connection{ID: "proton", Name: "Proton VPN", Action: "signin", Button: "Sign in",
+		Help: "Optional, but much faster: downloads go through several servers at once."}
 	if p, err := proton.SessionPath(); err == nil {
 		if c := proton.New(p); c.SignedIn() {
+			pr.Button = "Sign out"
 			pr.Status, pr.Good, pr.Action = "signed in as "+c.Session.Username, true, "signout"
 			pr.Hint = "downloads go through several servers at once; enter to sign out"
 		}
@@ -58,8 +68,10 @@ func DetectConnections() []Connection {
 	}
 	out = append(out, pr)
 
-	pm := Connection{ID: "premium", Name: "YouTube Premium upgrade", Action: "premium"}
+	pm := Connection{ID: "premium", Name: "YouTube Premium upgrade", Action: "premium", Button: "Set up...",
+		Help: "Experimental. Re-downloads songs at Premium quality using your Google account."}
 	if cfg.Premium {
+		pm.Button = "Turn off"
 		pm.Status, pm.Good = "on (experimental)", true
 		pm.Hint = "re-downloads songs at Premium quality, slowly; enter to turn off"
 	} else {
@@ -69,11 +81,15 @@ func DetectConnections() []Connection {
 	out = append(out, pm)
 
 	out = append(out,
-		Connection{ID: "spotify", Name: "Spotify", Status: "ready", Dim: true, Hint: "no sign-in: public albums, playlists and songs; the audio comes from Apple Music or YouTube"},
-		Connection{ID: "soundcloud", Name: "SoundCloud", Status: "ready", Dim: true, Hint: "no sign-in: paste a song, playlist or artist link (stream quality)"},
+		Connection{ID: "spotify", Name: "Spotify", Status: "ready", Dim: true, Hint: "no sign-in: public albums, playlists and songs; the audio comes from Apple Music or YouTube",
+			Help: "No sign-in. Public albums, playlists and songs; the audio comes from Apple Music or YouTube."},
+		Connection{ID: "soundcloud", Name: "SoundCloud", Status: "ready", Dim: true, Hint: "no sign-in: paste a song, playlist or artist link (stream quality)",
+			Help: "No sign-in. Paste a song, playlist or artist link. Stream quality."},
 	)
-	bc := Connection{ID: "bandcamp", Name: "Bandcamp", Action: "bandcamp"}
+	bc := Connection{ID: "bandcamp", Name: "Bandcamp", Action: "bandcamp", Button: "Choose browser...",
+		Help: "Optional. Pick the browser signed in to bandcamp.com and music you bought downloads as the original files."}
 	if name := browserName(cfg.BandcampBrowser); name != "" {
+		bc.Button = "Change browser..."
 		bc.Status, bc.Good = "reads "+name+" for your purchases", true
 		bc.Hint = "music you bought downloads as the original files (FLAC when offered), the rest streams; enter to pick another browser"
 	} else {
@@ -142,10 +158,23 @@ func (c *Connections) Key(k string) {
 func (c *Connections) Screen() Screen {
 	sc := Screen{Title: "connections", Footer: "↑↓ select · enter set up or change · esc done"}
 	for i, it := range c.items {
-		sc.Rows = append(sc.Rows, Row{
+		row := Row{
 			ID: it.ID, Label: it.Name, Value: it.Status, Selected: i == c.cur, Dim: it.Dim, Good: it.Good,
-			Gap: it.ID == "spotify", Message: it.Hint,
-		})
+			Gap: it.ID == "spotify", Message: it.Hint, Help: it.Help,
+			Kind: KindAction, Button: it.Button,
+		}
+		if it.Action == "" {
+			row.Kind, row.Button = KindInfo, ""
+		} else if row.Button == "" {
+			row.Button = "Set up"
+		}
+		if i == 0 {
+			row.Group = "Accounts"
+		}
+		if it.ID == "spotify" {
+			row.Group = "No sign-in needed"
+		}
+		sc.Rows = append(sc.Rows, row)
 	}
 	return sc
 }
