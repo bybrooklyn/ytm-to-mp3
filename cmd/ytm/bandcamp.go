@@ -107,26 +107,41 @@ func downloadOwnedBandcamp(ctx context.Context, u *ui.UI, o opts, tools deps.Too
 		}
 		return rest, nil
 	}
+	if err := saveOwnedAll(ctx, u, c, tools, st, o.out, owned, nil); err != nil {
+		return rest, err
+	}
+	return rest, nil
+}
+
+// saveOwnedAll downloads each purchase in owned in its original quality (saveOwned) and
+// reports how each went. done, if set, is told every purchase that was saved or found
+// already held (not the ones that failed).
+func saveOwnedAll(ctx context.Context, u *ui.UI, c *bandcamp.Client, tools deps.Tools, st *store.Store, root string,
+	owned []bandcamp.Item, done func(bandcamp.Item)) error {
 	byName := heldByName(st)
 	okN, failN := 0, 0
 	for _, it := range owned {
 		if ctx.Err() != nil {
-			return rest, ctx.Err()
+			return ctx.Err()
 		}
-		n, err := saveOwned(ctx, c, tools, st, byName, o.out, it)
+		n, err := saveOwned(ctx, c, tools, st, byName, root, it)
 		switch {
 		case err != nil:
 			failN++
 			u.Bad("%s - %s · %v", it.Artist, it.Title, err)
+			continue
 		case n == 0:
 			u.Note("%s - %s: already have it in this quality or better", it.Artist, it.Title)
 		default:
 			okN++
 			u.Good("%s - %s (%s)", it.Artist, it.Title, count(n, "song"))
 		}
+		if done != nil {
+			done(it)
+		}
 	}
 	u.Head("%d purchases downloaded · %d failed", okN, failN)
-	return rest, nil
+	return nil
 }
 
 // saveOwned downloads one purchase in its best format and files each song. It returns how
