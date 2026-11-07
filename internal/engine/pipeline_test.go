@@ -49,6 +49,7 @@ for id in $ids; do
   fi
   if [ $mode = download ]; then
     f=$(echo "$tmpl" | sed 's/%(ext)s/m4a/; s/%%/%/g')
+    if [ -n "$FAKE_PROG" ]; then echo "ytmprog 1000 4000"; sleep 0.5; echo "ytmprog 4000 4000"; sleep 0.3; fi
     echo data > "$f"; echo "$f"
   else
     echo "{\"id\":\"$id\",\"url\":\"https://example.invalid/$id\",\"protocol\":\"m3u8\",\"ext\":\"m4a\",\"acodec\":\"mp4a\",\"title\":\"Song $id\"}"

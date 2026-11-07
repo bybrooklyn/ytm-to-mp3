@@ -104,6 +104,9 @@ func (p *postRunner) pending() []string {
 // request a second in all.
 var postMu sync.Mutex
 
+// testPostHook replaces the tag and lyrics steps of afterFiles in tests.
+var testPostHook func(files []string) error
+
 // afterFiles runs the steps that follow a download on exactly these files, for sources that
 // do not record their songs in the tracks table (SoundCloud, Bandcamp): MusicBrainz tags and
 // lyrics, each under its setting, then the cover and .nfo files.
@@ -112,8 +115,14 @@ func afterFiles(ctx context.Context, u *ui.UI, o opts, files []string) error {
 		return ctx.Err()
 	}
 	p := &postRunner{ctx: ctx, u: u, o: o, done: map[string]bool{}}
-	if p.wanted() {
-		if err := p.process(files); err != nil {
+	if (o.tagAfter && !config.Load().Private) || o.lyricsAfter {
+		var err error
+		if testPostHook != nil {
+			err = testPostHook(files)
+		} else {
+			err = p.process(files)
+		}
+		if err != nil {
 			return err
 		}
 	}

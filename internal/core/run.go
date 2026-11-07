@@ -110,7 +110,7 @@ func downloadOnce(ctx context.Context, u *ui.UI, o opts, led *jobs.Ledger, extra
 	ex := &runExits{ctx: ctx, u: u, o: o, led: led, sink: jobs.Multi{led, u.Sink(), extra}, extra: extra}
 	// However the run ends (finished, failed, Ctrl-C), say what happened to each song.
 	defer func() { printRunSummary(u, led, ctx.Err() != nil) }()
-	ex.tools = sync.OnceValues(func() (deps.Tools, error) { return deps.Ensure(ctx, logf) })
+	ex.tools = sync.OnceValues(func() (deps.Tools, error) { return ensureTools(ctx, logf) })
 	defer ex.Close()
 	setCurrentRun(ex) // the tag fixing that follows reuses these exits
 	defer setCurrentRun(nil)
@@ -480,7 +480,7 @@ func (r *runExits) ensureTools(ctx context.Context, u *ui.UI) (deps.Tools, error
 	if r.tools != nil {
 		return r.tools()
 	}
-	return deps.Ensure(ctx, u.Logf)
+	return ensureTools(ctx, u.Logf)
 }
 
 func (r *runExits) Close() {

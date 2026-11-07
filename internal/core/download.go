@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/bybrooklyn/mfetchy/internal/deps"
 	"github.com/bybrooklyn/mfetchy/internal/jobs"
 	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
@@ -66,7 +67,7 @@ func runDownload(ctx context.Context, u *ui.UI, op opts, sink jobs.Sink, inputs 
 	var res Result
 	for round := 0; ; round++ {
 		led := &jobs.Ledger{}
-		err := downloadOnce(ctx, d.UI, op, led, d.Sink, inputs)
+		err := downloadOnceFn(ctx, d.UI, op, led, d.Sink, inputs)
 		res = Result{Results: led.Results(), Counts: led.Counts(), Held: led.Held(), Rounds: round + 1, Stopped: ctx.Err() != nil}
 		c := res.Counts
 		if ctx.Err() != nil || c.Retryable == 0 || round >= 2 {
@@ -81,3 +82,9 @@ func runDownload(ctx context.Context, u *ui.UI, op opts, sink jobs.Sink, inputs 
 		}
 	}
 }
+
+// Seams for tests: where the tools come from, and one round of a run.
+var (
+	ensureTools    = deps.Ensure
+	downloadOnceFn = downloadOnce
+)

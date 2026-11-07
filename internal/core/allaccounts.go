@@ -226,7 +226,7 @@ func downloadPlan(ctx context.Context, u *ui.UI, o opts, st *store.Store, srcs [
 	}
 
 	ex := &runExits{ctx: ctx, u: u, o: o}
-	ex.tools = sync.OnceValues(func() (deps.Tools, error) { return deps.Ensure(ctx, u.Logf) })
+	ex.tools = sync.OnceValues(func() (deps.Tools, error) { return ensureTools(ctx, u.Logf) })
 	defer ex.Close()
 	setCurrentRun(ex) // the tag fixing that follows reuses these exits
 	defer setCurrentRun(nil)
