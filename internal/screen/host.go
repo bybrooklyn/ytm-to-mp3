@@ -172,7 +172,14 @@ func (h *Host) set(m Model, s Set) {
 }
 
 // DefaultTabs are the screens of the desktop window: connections and settings.
-func DefaultTabs() []*Tab {
+func DefaultTabs() []*Tab { return defaultTabs() }
+
+// DesktopTabs are the screens of the desktop window with the Downloads page first.
+func DesktopTabs(d *Downloads) []*Tab {
+	return append([]*Tab{{Name: "downloads", Keep: true, Make: func() Model { return d }}}, defaultTabs()...)
+}
+
+func defaultTabs() []*Tab {
 	return []*Tab{
 		{Name: "connections", Make: func() Model { return NewConnections(DetectConnections(), 0) }},
 		{Name: "settings", Keep: true, Make: func() Model {
