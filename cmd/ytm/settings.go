@@ -85,6 +85,7 @@ func runSettings(ctx context.Context, u *ui.UI) error {
 		}
 		sm := screen.NewSettings(cfg, pc.SignedIn(), user, cur, func(c config.Config) error { return c.Save() }, checkFolder)
 		sm.SetApple(appleSignedIn())
+		sm.SetTidal(tidalSignedIn())
 		if landOnAccount {
 			sm.SelectAccount() // first run: land on the sign-in row
 			landOnAccount = false
@@ -151,6 +152,10 @@ func doAction(ctx context.Context, u *ui.UI, pc *proton.Client, action string) e
 		printErr(appleLogin(ctx, u))
 	case "appleout":
 		printErr(appleLogout(u))
+	case "tidalin":
+		printErr(tidalLogin(ctx, u))
+	case "tidalout":
+		printErr(tidalLogout(u))
 	case "youtube":
 		printErr(chooseYouTubeBrowser(ctx))
 	case "bandcamp":

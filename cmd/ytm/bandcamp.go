@@ -177,7 +177,7 @@ func saveOwned(ctx context.Context, c *bandcamp.Client, tools deps.Tools, st *st
 func placeOwned(st *store.Store, byName map[string]store.HeldCopy, root, file string, wt engine.WebTrack) (bool, error) {
 	ct := catalog.Track{Title: wt.Title, Artists: []string{wt.Artist}, Album: wt.Album}
 	rank := catalog.Rank(catalog.BandcampPurchase)
-	if lib := st.Library(ct.Key()); lib.Done && fileExists(lib.Path) && lib.Quality >= rank {
+	if lib := st.Library(ct.Key()); lib.Done && fileExists(lib.Path) && libRank(lib) >= rank {
 		return false, nil
 	}
 	var old *store.HeldCopy

@@ -94,6 +94,9 @@ func runDoctor(ctx context.Context, u *ui.UI, o opts) error {
 		}
 	}
 
+	u.Head("Tidal")
+	tidalDoctor(ctx, bad, ok, note)
+
 	if problems == 0 {
 		u.Styled("\n" + ui.Mark(ui.OK("✓"), ui.Bold("All good")))
 		return nil

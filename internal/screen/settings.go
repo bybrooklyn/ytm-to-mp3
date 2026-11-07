@@ -21,6 +21,7 @@ type Settings struct {
 	cfg      config.Config
 	signedIn bool
 	appleIn  bool // an Apple Music login is saved
+	tidalIn  bool // a Tidal login is saved
 	user     string
 	cur      int
 
@@ -44,6 +45,9 @@ func NewSettings(cfg config.Config, signedIn bool, user string, cur int, save fu
 
 // SetApple tells the screen whether an Apple Music login is saved.
 func (m *Settings) SetApple(in bool) { m.appleIn = in }
+
+// SetTidal tells the screen whether a Tidal login is saved.
+func (m *Settings) SetTidal(in bool) { m.tidalIn = in }
 
 // Cursor is the highlighted row (to come back to after an action).
 func (m *Settings) Cursor() int { return m.cur }
@@ -179,6 +183,11 @@ func (m *Settings) activate() {
 		if m.appleIn {
 			m.action = "appleout"
 		}
+	case rowTidal:
+		m.action = "tidalin"
+		if m.tidalIn {
+			m.action = "tidalout"
+		}
 	}
 }
 
@@ -214,6 +223,8 @@ func (m *Settings) change(d int) {
 		m.cfg.Jobs = clamp(m.cfg.Jobs+d, 0, MaxJobs)
 	case rowCountries:
 		m.cfg.Countries = cycle(countryChoices, m.cfg.Countries, d)
+	case rowTidalQuality:
+		m.cfg.TidalQuality = cycle([]string{"", "best"}, m.cfg.TidalQuality, d)
 	default:
 		return
 	}
@@ -250,6 +261,8 @@ const (
 	rowCountries
 	rowPremium
 	rowApple
+	rowTidal
+	rowTidalQuality
 	rowTest
 )
 
@@ -278,6 +291,8 @@ var settingsRows = []struct {
 	{rowCountries, "Exit countries"},
 	{rowPremium, "YouTube Premium"},
 	{rowApple, "Apple Music"},
+	{rowTidal, "Tidal"},
+	{rowTidalQuality, "Tidal quality"},
 	{rowTest, "Test VPN"},
 }
 
@@ -375,6 +390,16 @@ func (m *Settings) value(k rowKind) (val, hint string, dim bool) {
 			return "signed in (store " + strings.ToUpper(orDefault(m.cfg.AppleStorefront, "us")) + ")", "enter to sign out", false
 		}
 		return "not signed in", "optional: 256 kbps AAC with your Apple Music subscription; enter to sign in", false
+	case rowTidal:
+		if m.tidalIn {
+			return "signed in", "lossless FLAC with your own subscription; enter to sign out", false
+		}
+		return "not signed in", "optional: lossless FLAC with your own Tidal subscription (their terms don't allow it: you'll read the warning first); enter to sign in", false
+	case rowTidalQuality:
+		if m.cfg.TidalQuality == "best" {
+			return "best plain tier", "hi-res only when Tidal serves it as a plain file, else lossless; nothing encrypted is ever fetched", !m.tidalIn
+		}
+		return "lossless", "16-bit/44.1 kHz FLAC only; a song Tidal won't serve that way comes from Apple Music or YouTube", !m.tidalIn
 	case rowTest:
 		if !m.signedIn {
 			return "", "sign in first", true

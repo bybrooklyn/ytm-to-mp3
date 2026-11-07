@@ -6,6 +6,7 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/browsercookies"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/tidal"
 )
 
 // Connection is one account or source ytm can use, and what state it is in.
@@ -44,6 +45,20 @@ func DetectConnections() []Connection {
 		ap.Hint = "optional: 256 kbps AAC with your own subscription; enter to sign in"
 	}
 	out = append(out, ap)
+
+	ti := Connection{ID: "tidal", Name: "Tidal", Action: "tidalin"}
+	if p, err := tidal.SessionPath(); err == nil && tidal.New(p).SignedIn() {
+		q := "lossless"
+		if cfg.TidalQuality == "best" {
+			q = "best plain tier"
+		}
+		ti.Status, ti.Good, ti.Action = "signed in ("+q+")", true, "tidalout"
+		ti.Hint = "songs come as lossless FLAC when Tidal serves them plainly; enter to sign out"
+	} else {
+		ti.Status = "not signed in"
+		ti.Hint = "optional: lossless FLAC with your own subscription (Tidal's terms don't allow downloading: you read the warning first); enter to sign in"
+	}
+	out = append(out, ti)
 
 	pr := Connection{ID: "proton", Name: "Proton VPN", Action: "signin"}
 	if p, err := proton.SessionPath(); err == nil {

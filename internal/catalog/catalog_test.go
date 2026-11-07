@@ -27,6 +27,18 @@ func TestRank(t *testing.T) {
 	}
 }
 
+func TestRankOrderWithTidal(t *testing.T) {
+	order := []Source{Spotify, SoundCloud, YouTube, Apple, Tidal, BandcampPurchase}
+	for i := 1; i < len(order); i++ {
+		if SoundCloud == order[i] && Rank(Bandcamp) != Rank(SoundCloud) {
+			t.Error("stream sources should tie")
+		}
+		if Rank(order[i]) <= Rank(order[i-1]) {
+			t.Errorf("%s (%d) should outrank %s (%d)", order[i], Rank(order[i]), order[i-1], Rank(order[i-1]))
+		}
+	}
+}
+
 func TestNameKey(t *testing.T) {
 	if NameKey("Beyoncé (Live)", "Destiny's Child") != NameKey("beyonce live", "destinys child") {
 		t.Error("name keys should fold case, accents and punctuation")
