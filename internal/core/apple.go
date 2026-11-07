@@ -18,6 +18,7 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/catalog"
 	"github.com/bybrooklyn/mfetchy/internal/config"
 	"github.com/bybrooklyn/mfetchy/internal/deps"
+	"github.com/bybrooklyn/mfetchy/internal/jobs"
 	"github.com/bybrooklyn/mfetchy/internal/engine"
 	"github.com/bybrooklyn/mfetchy/internal/lyrics"
 	"github.com/bybrooklyn/mfetchy/internal/names"
@@ -239,6 +240,7 @@ func (s *appleSession) Close() {
 // track it stands for.
 type appleJob struct {
 	t      apple.Track
+	key    string // the song's id in a run's events ("" = the Apple id)
 	dest   string
 	ytID   string // the library song this is the Apple copy of ("" for links)
 	ytPath string // that song's YouTube file ("" if not downloaded)
@@ -274,6 +276,8 @@ var errAppleExists = errors.New("already downloaded")
 // appleLive is a song being downloaded, for the live display.
 type appleLive struct {
 	label      string
+	id         string       // the song's id in the run's events
+	sent       atomic.Int64 // bytes last reported as a progress event
 	got, total atomic.Int64
 }
 
@@ -281,7 +285,7 @@ type appleLiveKey struct{}
 
 // appleRun downloads jobs several at a time over the session's exits, retrying a
 // song on another exit when the network fails, and records each in the database.
-func appleRun(ctx context.Context, u *ui.UI, o opts, s *appleSession, jobs []appleJob) error {
+func appleRun(ctx context.Context, u *ui.UI, o opts, s *appleSession, list []appleJob) error {
 	ffmpeg, ffprobe, err := deps.EnsureMedia(ctx, u.Logf)
 	if err != nil {
 		return err
@@ -289,7 +293,7 @@ func appleRun(ctx context.Context, u *ui.UI, o opts, s *appleSession, jobs []app
 	// Leave out what is already done, or that Apple doesn't offer this account.
 	var todo []appleJob
 	have, notOffered := 0, 0
-	for _, j := range jobs {
+	for _, j := range list {
 		st := s.st.Apple(j.t.ID)
 		switch {
 		case st.Done && fileExists(st.Path):
@@ -350,6 +354,11 @@ func appleRun(ctx context.Context, u *ui.UI, o opts, s *appleSession, jobs []app
 			}
 			liveMu.Unlock()
 			sort.Slice(ls, func(a, b int) bool { return ls[a].label < ls[b].label })
+			for _, l := range ls {
+				if got := l.got.Load(); got != l.sent.Swap(got) {
+					o.watch(evProgress(l.id, l.label, "apple", got, l.total.Load()))
+				}
+			}
 			u.Block(appleRows(ls, int(finished.Load()), len(todo), int(failed.Load()+unavailable.Load()),
 				float64(bytes.Load())/time.Since(began).Seconds(), u.Width()))
 		}
@@ -368,7 +377,10 @@ func appleRun(ctx context.Context, u *ui.UI, o opts, s *appleSession, jobs []app
 					return
 				}
 				j := todo[i]
-				l := &appleLive{label: names.Clean(j.t.Artist + " - " + j.t.Title)}
+				l := &appleLive{label: names.Clean(j.t.Artist + " - " + j.t.Title), id: firstNonEmpty(j.key, j.t.ID)}
+				for _, e := range evStart(l.id, l.label, "apple") {
+					o.watch(e)
+				}
 				liveMu.Lock()
 				live[l] = true
 				liveMu.Unlock()
@@ -396,6 +408,7 @@ func appleRun(ctx context.Context, u *ui.UI, o opts, s *appleSession, jobs []app
 					transientInARow.Store(0)
 					done.Add(1)
 					u.Line(green+"✓"+reset, l.label)
+					o.watch(evDone(l.id, l.label, "apple", s.st.Apple(j.t.ID).Path, "256 kbps AAC"))
 				case errors.Is(err, apple.ErrLogin):
 					cancel(err)
 				case ctx.Err() != nil:
@@ -404,10 +417,12 @@ func appleRun(ctx context.Context, u *ui.UI, o opts, s *appleSession, jobs []app
 					unavailable.Add(1)
 					_ = s.st.AppleFailed(j.t.ID, j.t.Title, j.t.Artist, err.Error(), true)
 					u.Line(cYellow+"–"+reset, l.label+"  (not offered to your account)")
+					o.watch(evFailed(l.id, l.label, "apple", "Apple Music doesn't offer it to your account", jobs.ClassUnavailable, false))
 				default:
 					failed.Add(1)
 					_ = s.st.AppleFailed(j.t.ID, j.t.Title, j.t.Artist, err.Error(), false)
 					u.Line(red+"✗"+reset, l.label+"  ("+err.Error()+")")
+					o.watch(evFailed(l.id, l.label, "apple", "Apple Music download didn't finish", jobs.ClassNetwork, true))
 					if apple.Transient(err) && transientInARow.Add(1) >= 8 {
 						cancel(errors.New("8 songs in a row failed on the network: Apple may be blocking these exits; try again later"))
 					}

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/bybrooklyn/mfetchy/internal/config"
+	"github.com/bybrooklyn/mfetchy/internal/jobs"
 	"github.com/bybrooklyn/mfetchy/internal/model"
 )
 
@@ -108,6 +109,8 @@ type opts struct {
 
 	// prompt answers the questions a run asks (never nil inside the pipeline).
 	prompt Prompter
+	// sink hears progress and stage events (the window); nil when nobody listens.
+	sink jobs.Sink
 }
 
 func (o Options) internal(p Prompter) opts {
@@ -120,4 +123,31 @@ func (o Options) internal(p Prompter) opts {
 		replace: o.Replace, maybe: o.Maybe, source: o.Source, preset: o.Preset, given: o.Given,
 		prompt: p,
 	}
+}
+
+// watch reports an event to the caller's sink (the window); the terminal is not told.
+func (o opts) watch(e jobs.Event) { jobs.Emit(o.sink, e) }
+
+// Events for sources whose code names a variable "jobs".
+func evStart(id, label, source string) []jobs.Event {
+	return []jobs.Event{
+		{Kind: jobs.Started, ID: id, Label: label, Source: source},
+		{Kind: jobs.Stage, ID: id, Label: label, Source: source, Stage: "downloading"},
+	}
+}
+
+func evProgress(id, label, source string, got, total int64) jobs.Event {
+	return jobs.Event{Kind: jobs.Progress, ID: id, Label: label, Source: source, Bytes: got, Total: total}
+}
+
+func evStage(id, label, source, stage string) jobs.Event {
+	return jobs.Event{Kind: jobs.Stage, ID: id, Label: label, Source: source, Stage: stage}
+}
+
+func evDone(id, label, source, path, quality string) jobs.Event {
+	return jobs.Event{Kind: jobs.Done, ID: id, Label: label, Source: source, Path: path, Quality: quality}
+}
+
+func evFailed(id, label, source, reason string, class jobs.Class, retryable bool) jobs.Event {
+	return jobs.Event{Kind: jobs.Failed, ID: id, Label: label, Source: source, Reason: reason, Class: class, Retryable: retryable}
 }

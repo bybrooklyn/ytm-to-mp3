@@ -657,7 +657,8 @@ func runAppleItems(ctx context.Context, u *ui.UI, o opts, ex *runExits, ac *appl
 	s := &appleSession{c: ac, st: st, exits: proxies, close: func() {}}
 	ajobs := make([]appleJob, len(items))
 	for i, it := range items {
-		ajobs[i] = appleJob{t: it.match, dest: applePath(o.out, it.match)}
+		ajobs[i] = appleJob{t: it.match, key: it.key, dest: applePath(o.out, it.match)}
+		ex.watch(jobs.Event{Kind: jobs.Queued, ID: it.key, Label: it.t.Label(), Source: "apple"})
 		if it.upgrade {
 			// The old copy moves to .mfetchy/replaced; a library song stays counted as done,
 			// so a library download won't fetch it from YouTube again.

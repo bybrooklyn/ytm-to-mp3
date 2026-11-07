@@ -248,7 +248,7 @@ func downloadPlan(ctx context.Context, u *ui.UI, o opts, st *store.Store, srcs [
 			err := saveOwnedAll(ctx, u, bc.Client, tools, st, o.out, owned, func(it bandcamp.Item) {
 				_ = st.LibraryPut(albumMarkKey(bandcamp.Normalize(it.URL)), it.Title, it.Artist, albumMarkSource,
 					catalog.Rank(catalog.BandcampPurchase), o.out)
-			})
+			}, ownedHooks(ex))
 			if err != nil {
 				return err
 			}

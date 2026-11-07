@@ -158,6 +158,9 @@ func tidalPath(root string, t tidal.Track) string {
 // from Tidal (no plain lossless stream, an error), for the caller to fetch elsewhere.
 func runTidalItems(ctx context.Context, u *ui.UI, o opts, ex *runExits, st *store.Store, ffmpeg, ffprobe string, tc *tidal.Client, items []*item) (failed []*item, err error) {
 	q := tidalQuality()
+	for _, it := range items {
+		ex.watch(jobs.Event{Kind: jobs.Queued, ID: it.key, Label: it.t.Label(), Source: "tidal"})
+	}
 	// Two at a time: enough to keep the line busy while one song is being tagged, still
 	// gentle on the account. If Tidal keeps refusing (login, rate limit) the breaker stops
 	// using it for the rest of the run with one message, and the remaining songs go on to
@@ -191,10 +194,13 @@ func runTidalItems(ctx context.Context, u *ui.UI, o opts, ex *runExits, st *stor
 				id := it.key
 				var last atomic.Int64
 				var res string
+				ex.watch(jobs.Event{Kind: jobs.Started, ID: id, Label: label, Source: "tidal"})
+				ex.watch(jobs.Event{Kind: jobs.Stage, ID: id, Label: label, Source: "tidal", Stage: "downloading"})
 				err := jobs.Retry(ctx, 2, 2*time.Second, func() (e error) {
 					res, e = tidalSave(ctx, tc, st, ffmpeg, ffprobe, o.out, it, q, func(done, total int64) {
 						if total > 0 && time.Now().UnixMilli()-last.Load() > 200 {
 							last.Store(time.Now().UnixMilli())
+							ex.watch(jobs.Event{Kind: jobs.Progress, ID: id, Label: label, Source: "tidal", Bytes: done, Total: total})
 							u.Status("Tidal %d/%d · %s · %d%%", finished+1, len(items), label, done*100/total)
 						}
 					})

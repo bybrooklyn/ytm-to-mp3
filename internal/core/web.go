@@ -66,7 +66,7 @@ func downloadWeb(ctx context.Context, u *ui.UI, o opts, ex *runExits, links []st
 	}
 	// Bandcamp music you have bought comes as the original files, when a browser signed in
 	// to Bandcamp is set up (Connections); the rest streams.
-	if links, err = downloadOwnedBandcamp(ctx, u, o, tools, links); err != nil {
+	if links, err = downloadOwnedBandcamp(ctx, u, o, ex, tools, links); err != nil {
 		return err
 	}
 	if len(links) == 0 {
@@ -142,6 +142,11 @@ func downloadWeb(ctx context.Context, u *ui.UI, o opts, ex *runExits, links []st
 	var wg sync.WaitGroup
 	var ok, failed atomic.Int32
 	var mu sync.Mutex
+	var fresh []string // files that arrived, for the steps that follow
+	for _, t := range todo {
+		ct := ct0(t)
+		ex.watch(jobs.Event{Kind: jobs.Queued, ID: ct.Key(), Label: ct.Label(), Source: string(ct.Origin)})
+	}
 	br := jobs.NewBreaker(4) // SoundCloud/Bandcamp refusing again and again: stop, say so once
 	for i := 0; i < 3; i++ {
 		wg.Add(1)
@@ -159,7 +164,16 @@ func downloadWeb(ctx context.Context, u *ui.UI, o opts, ex *runExits, links []st
 					ex.record(ev) // counted in the summary; the one message was already printed
 					continue
 				}
-				path, err := saveWeb(ctx, tools, st, o.out, t)
+				ex.watch(jobs.Event{Kind: jobs.Started, ID: ev.ID, Label: ev.Label, Source: ev.Source})
+				var last time.Time
+				path, err := saveWeb(ctx, tools, st, o.out, t, func(got, total int64) {
+					if now := time.Now(); now.Sub(last) >= 250*time.Millisecond || (total > 0 && got >= total) {
+						last = now
+						ex.watch(jobs.Event{Kind: jobs.Progress, ID: ev.ID, Label: ev.Label, Source: ev.Source, Bytes: got, Total: total})
+					}
+				}, func(stage string) {
+					ex.watch(jobs.Event{Kind: jobs.Stage, ID: ev.ID, Label: ev.Label, Source: ev.Source, Stage: stage})
+				})
 				mu.Lock()
 				switch {
 				case ctx.Err() != nil:
@@ -182,6 +196,7 @@ func downloadWeb(ctx context.Context, u *ui.UI, o opts, ex *runExits, links []st
 					ok.Add(1)
 					ev.Kind, ev.Path = jobs.Done, path
 					ex.emit(ev)
+					fresh = append(fresh, path)
 				}
 				mu.Unlock()
 			}
@@ -201,7 +216,9 @@ loop:
 		return err
 	}
 	u.Head("%d downloaded · %d failed", ok.Load(), failed.Load())
-	return nil
+	// The same steps that follow a YouTube or Apple Music download, under the same settings:
+	// MusicBrainz tags, lyrics, and cover/.nfo files.
+	return afterFiles(ctx, u, o, fresh)
 }
 
 func ct0(t engine.WebTrack) catalog.Track { return webCatalog(t) }
@@ -215,7 +232,10 @@ func truncURL(s string) string {
 }
 
 // saveWeb fetches one song, tags it, moves it into place and records it.
-func saveWeb(ctx context.Context, tools deps.Tools, st *store.Store, root string, t engine.WebTrack) (string, error) {
+func saveWeb(ctx context.Context, tools deps.Tools, st *store.Store, root string, t engine.WebTrack, onProgress func(got, total int64), onStage func(string)) (string, error) {
+	if onStage == nil {
+		onStage = func(string) {}
+	}
 	// A work folder named after the link, inside .mfetchy (the library's own disk, so the final
 	// rename is atomic). It is kept when the fetch is cut short, so the next run resumes the
 	// partial download, and removed once the song is filed or failed for good.
@@ -230,11 +250,13 @@ func saveWeb(ctx context.Context, tools deps.Tools, st *store.Store, root string
 			os.RemoveAll(tmpDir)
 		}
 	}()
-	got, err := engine.FetchWeb(ctx, tools, "", t, tmpDir, nil)
+	onStage("downloading")
+	got, err := engine.FetchWeb(ctx, tools, "", t, tmpDir, onProgress)
 	if err != nil {
 		keep = ctx.Err() != nil || jobs.Classify(err).Retryable()
 		return "", err
 	}
+	onStage("tagging")
 	cover := ""
 	if t.Cover != "" {
 		cp := filepath.Join(tmpDir, "cover.img")

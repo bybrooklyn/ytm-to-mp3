@@ -29,7 +29,7 @@ import (
 // It returns the links that are not purchases, which still go the stream way. When no
 // browser is set up for Bandcamp, or its sign-in doesn't work, every link is returned
 // untouched.
-func downloadOwnedBandcamp(ctx context.Context, u *ui.UI, o opts, tools deps.Tools, links []string) ([]string, error) {
+func downloadOwnedBandcamp(ctx context.Context, u *ui.UI, o opts, ex *runExits, tools deps.Tools, links []string) ([]string, error) {
 	var bc []string
 	for _, l := range links {
 		if engine.WebSite(l) == "bandcamp" {
@@ -104,24 +104,81 @@ func downloadOwnedBandcamp(ctx context.Context, u *ui.UI, o opts, tools deps.Too
 		}
 		return rest, nil
 	}
-	if err := saveOwnedAll(ctx, u, c, tools, st, o.out, owned, nil); err != nil {
+	if err := saveOwnedAll(ctx, u, c, tools, st, o.out, owned, nil, ownedHooks(ex)); err != nil {
 		return rest, err
 	}
 	return rest, nil
+}
+
+// ownedReport tells the run how each purchase goes (the terminal prints its own lines, so
+// these reach the summary and the caller's sink but print nothing).
+type ownedReport struct {
+	queue func([]bandcamp.Item)
+	begin func(bandcamp.Item)
+	end   func(it bandcamp.Item, songs int, err error)
+}
+
+func ownedKey(it bandcamp.Item) string { return "bcowned:" + bandcamp.Normalize(it.URL) }
+
+func ownedHooks(ex *runExits) *ownedReport {
+	if ex == nil {
+		return nil
+	}
+	ev := func(it bandcamp.Item) jobs.Event {
+		return jobs.Event{ID: ownedKey(it), Label: it.Artist + " - " + it.Title, Source: "bandcamp"}
+	}
+	return &ownedReport{
+		queue: func(its []bandcamp.Item) {
+			for _, it := range its {
+				e := ev(it)
+				e.Kind = jobs.Queued
+				ex.watch(e)
+			}
+		},
+		begin: func(it bandcamp.Item) {
+			e := ev(it)
+			e.Kind = jobs.Started
+			ex.watch(e)
+			e.Kind, e.Stage = jobs.Stage, "downloading"
+			ex.watch(e)
+		},
+		end: func(it bandcamp.Item, n int, err error) {
+			e := ev(it)
+			switch {
+			case err != nil:
+				e.Kind, e.Reason, e.Class = jobs.Failed, jobs.Human(err), jobs.Classify(err)
+				e.Retryable = e.Class.Retryable()
+			case n == 0:
+				e.Kind, e.Reason = jobs.Skipped, "already held in this quality or better"
+			default:
+				e.Kind, e.Quality = jobs.Done, "original quality"
+			}
+			ex.record(e)
+		},
+	}
 }
 
 // saveOwnedAll downloads each purchase in owned in its original quality (saveOwned) and
 // reports how each went. done, if set, is told every purchase that was saved or found
 // already held (not the ones that failed).
 func saveOwnedAll(ctx context.Context, u *ui.UI, c *bandcamp.Client, tools deps.Tools, st *store.Store, root string,
-	owned []bandcamp.Item, done func(bandcamp.Item)) error {
+	owned []bandcamp.Item, done func(bandcamp.Item), hooks *ownedReport) error {
 	byName := heldByName(st)
 	okN, failN := 0, 0
+	if hooks != nil {
+		hooks.queue(owned)
+	}
 	for _, it := range owned {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if hooks != nil {
+			hooks.begin(it)
+		}
 		n, err := saveOwned(ctx, c, tools, st, byName, root, it)
+		if hooks != nil && ctx.Err() == nil {
+			hooks.end(it, n, err)
+		}
 		switch {
 		case err != nil:
 			failN++

@@ -31,14 +31,27 @@ func (r *runExits) record(e jobs.Event) {
 	jobs.Emit(r.extra, e)
 }
 
-// queue announces songs that are part of the run (they have not started yet).
+// queue announces songs that are part of the run (they have not started yet) to the
+// caller's sink only: the ledger learns each song's outcome when it ends, so the terminal
+// summary is the same whether or not anyone is watching.
 func (r *runExits) queue(source string, ts ...model.Track) {
+	if r == nil {
+		return
+	}
 	for _, t := range ts {
 		label := t.Label()
 		if label == "" {
 			label = t.ID
 		}
-		r.record(jobs.Event{Kind: jobs.Queued, ID: t.ID, Label: label, Source: source})
+		jobs.Emit(r.extra, jobs.Event{Kind: jobs.Queued, ID: t.ID, Label: label, Source: source})
+	}
+}
+
+// watch reports events to the caller's sink only (progress and stages: nothing the terminal
+// or the summary keeps).
+func (r *runExits) watch(e jobs.Event) {
+	if r != nil {
+		jobs.Emit(r.extra, e)
 	}
 }
 

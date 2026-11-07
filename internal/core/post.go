@@ -100,7 +100,30 @@ func (p *postRunner) pending() []string {
 	return out
 }
 
+// postMu keeps two sources' passes from asking MusicBrainz at the same time: it allows a
+// request a second in all.
+var postMu sync.Mutex
+
+// afterFiles runs the steps that follow a download on exactly these files, for sources that
+// do not record their songs in the tracks table (SoundCloud, Bandcamp): MusicBrainz tags and
+// lyrics, each under its setting, then the cover and .nfo files.
+func afterFiles(ctx context.Context, u *ui.UI, o opts, files []string) error {
+	if len(files) == 0 || ctx.Err() != nil {
+		return ctx.Err()
+	}
+	p := &postRunner{ctx: ctx, u: u, o: o, done: map[string]bool{}}
+	if p.wanted() {
+		if err := p.process(files); err != nil {
+			return err
+		}
+	}
+	writeSidecars(ctx, u, o.out, files)
+	return nil
+}
+
 func (p *postRunner) process(files []string) error {
+	postMu.Lock()
+	defer postMu.Unlock()
 	p.mu.Lock()
 	for _, f := range files {
 		p.done[f] = true
