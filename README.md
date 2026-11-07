@@ -59,6 +59,10 @@ ytm itself is Go. Searching YouTube Music, listing albums and playlists, reading
 - Files are named `Artist/Album/01 - Title.opus`: the track number (when known: from the album on YouTube Music, or YouTube's metadata) keeps albums in order. Two songs with the same title get `Title (2)`. The video link is in each file's comment tag, which is how ytm recognises its files even if its database is lost.
 - **Tidy file names** (More tools) renames an existing folder to this scheme (removing the `[id]` older versions added), with a preview first; undo it from **Fix tags** → **Undo the last fix**.
 
+## Album art and .nfo files
+
+For Jellyfin, Plex, Kodi and other players, ytm writes `folder.jpg` (the album's cover, square, up to 1200 px: the largest square cover among the album's songs), `album.nfo` in each album folder and `artist.nfo` in each artist folder (Kodi's music NFO format, which Jellyfin reads too: titles, artist, year, genres, label, MusicBrainz IDs, and the tracks with position, length and IDs). They are written once per album after a download, and **More tools** > **Write cover and .nfo files for my library** does it for what you already have (with a preview first). `folder.jpg` and the `.nfo` files are on by default and `cover.png` (same art as PNG) is off; each has a row in Settings. Files ytm writes carry a "written by ytm" mark and are refreshed only when something changed; a file of the same name that you made yourself is never touched. Merging duplicate folders carries these files along.
+
 ## Google account: only for the optional Premium upgrade
 
 Normal downloads never use your Google account or browser cookies. When YouTube blocks or throttles an exit, ytm drops that location, remembers it as blocked, and carries on from a different one.

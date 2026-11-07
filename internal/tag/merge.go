@@ -226,6 +226,9 @@ var trackPrefixRe = regexp.MustCompile(`^(?:\d+[-.]\d+|\d+)\s*[-.]?\s+`)
 // songKey is a file's identity inside a folder: its title, with the track number, the
 // extension and case set aside, so "03 - Song.opus" and "3 Song.m4a" are one song.
 func songKey(name string) string {
+	if names.IsSidecarName(name) {
+		return "\x01" + strings.ToLower(name) // a media-server file, not a song
+	}
 	base := strings.TrimSuffix(name, filepath.Ext(name))
 	base = trackPrefixRe.ReplaceAllString(base, "")
 	return names.FoldKey(base)

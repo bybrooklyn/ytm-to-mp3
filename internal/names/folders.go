@@ -16,6 +16,17 @@ import (
 // into an existing "Meganeko" folder, a song of "CHROMAKOPIA" into an existing
 // "CHROMAKOPIA +". Every place that builds an Artist/Album path goes through Dirs.
 
+// IsSidecarName reports whether name is one of the media-server files ytm writes into
+// album and artist folders (folder.jpg, cover.png, album.nfo, artist.nfo), which are not
+// songs even when a song is titled "Cover" or "Folder".
+func IsSidecarName(name string) bool {
+	switch strings.ToLower(name) {
+	case "folder.jpg", "cover.png", "album.nfo", "artist.nfo":
+		return true
+	}
+	return false
+}
+
 // Dirs is root/Artist[/Album], reusing the folders that already exist under root in any
 // spelling that differs only by case, Unicode form or trailing punctuation (and, for the
 // album, by an edition marker such as "(Deluxe Edition)" or "+"). An empty album gives

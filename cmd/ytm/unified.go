@@ -640,6 +640,9 @@ func runAppleItems(ctx context.Context, u *ui.UI, o opts, ac *apple.Client, st *
 			u.Bad("lyrics: %v", lerr)
 		}
 	}
+	if err == nil && len(fresh) > 0 {
+		writeSidecars(ctx, u, o.out, fresh)
+	}
 	return err
 }
 

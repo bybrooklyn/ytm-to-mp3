@@ -249,6 +249,33 @@ func TestLyricsSettingsRows(t *testing.T) {
 	}
 }
 
+func TestSidecarSettingsRows(t *testing.T) {
+	m, last, _ := testModel(true)
+	for r, want := range map[rowKind]string{rowFolderJpg: "on", rowNFO: "on", rowCoverPNG: "off"} {
+		if v, _, _ := m.value(r); v != want {
+			t.Errorf("%v starts %q, want %q", r, v, want)
+		}
+	}
+	if rowFolderJpg != rowTidalQuality+1 || rowCoverPNG+1 != rowPrivate {
+		t.Fatal("the new rows sit after the Tidal rows and before Private mode")
+	}
+	m.cur = int(rowNFO)
+	press(m, "right")
+	if !last.NoNFO || last.NoFolderJpg || last.CoverPNG {
+		t.Fatalf("wrong setting toggled: %+v", *last)
+	}
+	m.cur = int(rowCoverPNG)
+	press(m, "right")
+	if !last.CoverPNG {
+		t.Fatal("cover.png should switch on")
+	}
+	m.cur = int(rowFolderJpg)
+	press(m, "right")
+	if !last.NoFolderJpg {
+		t.Fatal("folder.jpg should switch off")
+	}
+}
+
 func TestPrivateModeRowToggles(t *testing.T) {
 	m, last, n := testModel(false)
 	m.cur = int(rowPrivate)

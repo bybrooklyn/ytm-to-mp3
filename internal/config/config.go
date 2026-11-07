@@ -47,6 +47,12 @@ type Config struct {
 	NoLyricsLRCLIB bool `json:"no_lyrics_lrclib,omitempty"` // don't ask LRCLIB
 	LyricsNetEase  bool `json:"lyrics_netease,omitempty"`   // also ask NetEase (unofficial)
 
+	// Media-server files next to the music: folder.jpg and .nfo files are on until switched
+	// off; cover.png is off until switched on.
+	NoFolderJpg bool `json:"no_folder_jpg,omitempty"` // don't write folder.jpg
+	NoNFO       bool `json:"no_nfo,omitempty"`        // don't write album.nfo / artist.nfo
+	CoverPNG    bool `json:"cover_png,omitempty"`     // also write cover.png
+
 	// Apple Music (optional, native AAC path). The media-user-token itself is a secret
 	// and lives in AppleTokenPath(), not here.
 	AppleStorefront string `json:"apple_storefront,omitempty"` // e.g. "us"; "" = us

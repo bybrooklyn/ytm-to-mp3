@@ -117,6 +117,7 @@ func toolsMenu(ctx context.Context, u *ui.UI, o opts) error {
 		huh.NewOption("Fix tags in my music folder (MusicBrainz)", "tag"),
 		huh.NewOption("Tidy file names (Artist/Album/01 - Title)", "tidy"),
 		huh.NewOption("Fetch lyrics for my library", "lyrics"),
+		huh.NewOption("Write cover and .nfo files for my library", "sidecars"),
 		huh.NewOption("YouTube Premium upgrade now (experimental, slow)", "premium"),
 		huh.NewOption("Update yt-dlp, ffmpeg and deno", "update"),
 		huh.NewOption("Check that everything works", "doctor"),
@@ -131,6 +132,8 @@ func toolsMenu(ctx context.Context, u *ui.UI, o opts) error {
 		return tidyFlow(ctx, u, o)
 	case "lyrics":
 		return lyricsLibraryFlow(ctx, u, o)
+	case "sidecars":
+		return sidecarLibraryFlow(ctx, u, o)
 	case "premium":
 		if !config.Load().Premium {
 			if err := premiumSetup(ctx, u); err != nil || !config.Load().Premium {
