@@ -190,6 +190,41 @@ func TestMergeArtistSpellingMovesAlbumsAndLooseFiles(t *testing.T) {
 	}
 }
 
+// Media-server files follow their folder when albums merge; a song titled "Cover" is not
+// mistaken for cover.png.
+func TestMergeCarriesSidecars(t *testing.T) {
+	root := t.TempDir()
+	if !caseSensitive(t, root) {
+		t.Skip("case-insensitive filesystem: variants cannot coexist")
+	}
+	put(t, root, "Artist/Album/01 - Alpha.opus", 100*time.Hour)
+	put(t, root, "Artist/Album/album.nfo", 100*time.Hour)
+	put(t, root, "artist/ALBUM/02 - Beta.opus", 50*time.Hour)
+	put(t, root, "artist/ALBUM/folder.jpg", 50*time.Hour)
+	put(t, root, "artist/ALBUM/album.nfo", 50*time.Hour)
+	put(t, root, "artist/ALBUM/cover.opus", 50*time.Hour)
+	put(t, root, "artist/artist.nfo", 50*time.Hour)
+	put(t, root, "Artist/Album/cover.png", 100*time.Hour)
+	o, _, _ := testOpts(root, true)
+	if _, err := MergeFolders(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"Artist/Album/folder.jpg", "Artist/Album/album.nfo", "Artist/Album/cover.png", "Artist/artist.nfo", "Artist/Album/02 - Beta.opus", "Artist/Album/cover.opus"} {
+		if !exists(root, rel) {
+			t.Errorf("%s missing after merge", rel)
+		}
+	}
+	if exists(root, "artist") {
+		t.Error("the emptied folder should be gone")
+	}
+	if s, _ := os.ReadFile(filepath.Join(root, "Artist/Album/album.nfo")); string(s) != "Artist/Album/album.nfo" {
+		t.Errorf("the target's own album.nfo must stay: %q", s)
+	}
+	if !exists(root, ".ytm/replaced/artist/ALBUM/album.nfo") {
+		t.Error("the duplicate album.nfo should go to .ytm/replaced")
+	}
+}
+
 func listAll(t *testing.T, root string) []string {
 	var out []string
 	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {

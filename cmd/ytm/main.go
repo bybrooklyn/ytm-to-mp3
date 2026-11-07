@@ -672,6 +672,9 @@ func afterDownload(ctx context.Context, u *ui.UI, o opts, st *store.Store, since
 			}
 		}
 	}
+	if files := st.DoneSince(since); len(files) > 0 {
+		writeSidecars(ctx, u, o.out, files)
+	}
 	if o.premiumAfter && config.Load().Premium {
 		st.Close() // the upgrade opens the database itself
 		return premiumUpgrade(ctx, u, o, true)

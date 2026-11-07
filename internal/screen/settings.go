@@ -214,6 +214,12 @@ func (m *Settings) change(d int) {
 		m.cfg.NoLyricsLRCLIB = !m.cfg.NoLyricsLRCLIB
 	case rowLyricsNetEase:
 		m.cfg.LyricsNetEase = !m.cfg.LyricsNetEase
+	case rowFolderJpg:
+		m.cfg.NoFolderJpg = !m.cfg.NoFolderJpg
+	case rowNFO:
+		m.cfg.NoNFO = !m.cfg.NoNFO
+	case rowCoverPNG:
+		m.cfg.CoverPNG = !m.cfg.CoverPNG
 	case rowPrivate:
 		m.cfg.Private = !m.cfg.Private
 	case rowVPN:
@@ -278,6 +284,9 @@ const (
 	rowApple
 	rowTidal
 	rowTidalQuality
+	rowFolderJpg
+	rowNFO
+	rowCoverPNG
 	rowPrivate
 	rowTest
 )
@@ -312,6 +321,9 @@ var settingsRows = []struct {
 	{rowApple, "Apple Music"},
 	{rowTidal, "Tidal"},
 	{rowTidalQuality, "Tidal quality"},
+	{rowFolderJpg, "Album art file (folder.jpg)"},
+	{rowNFO, "Album .nfo files"},
+	{rowCoverPNG, "Album art as cover.png"},
 	{rowPrivate, "Private mode"},
 	{rowTest, "Test VPN"},
 }
@@ -420,6 +432,12 @@ func (m *Settings) value(k rowKind) (val, hint string, dim bool) {
 			return "signed in (store " + strings.ToUpper(orDefault(m.cfg.AppleStorefront, "us")) + ")", "enter to sign out", false
 		}
 		return "not signed in", "optional: 256 kbps AAC with your Apple Music subscription; enter to sign in", false
+	case rowFolderJpg:
+		return onOff(!m.cfg.NoFolderJpg), "a folder.jpg with the album cover in each album folder, for Jellyfin, Plex, Kodi and other players", false
+	case rowNFO:
+		return onOff(!m.cfg.NoNFO), "an album.nfo in each album folder and an artist.nfo in each artist folder (Kodi and Jellyfin)", false
+	case rowCoverPNG:
+		return onOff(m.cfg.CoverPNG), "also a cover.png of the same album art", false
 	case rowPrivate:
 		return onOff(m.cfg.Private), "no MusicBrainz tag or cover lookups at all (see PRIVACY.md); downloading still contacts your music source", false
 	case rowTidal:
@@ -555,6 +573,12 @@ func (m *Settings) describe(row *Row, k rowKind) {
 	case rowTidalQuality:
 		row.Kind, row.Options = KindChoice, []string{"lossless", "best plain tier"}
 		row.Help = "Hi-res only when Tidal serves it as a plain file, else lossless. Nothing encrypted is ever fetched."
+	case rowFolderJpg:
+		toggle("Write the album cover as folder.jpg in each album folder. A folder.jpg you made yourself is never touched.")
+	case rowNFO:
+		toggle("Write album.nfo and artist.nfo files that Kodi and Jellyfin read. One you made yourself is never touched.")
+	case rowCoverPNG:
+		toggle("Also write the album cover as cover.png.")
 	case rowPrivate:
 		toggle("No MusicBrainz tag or cover lookups at all. Downloading still contacts your music source. See PRIVACY.md.")
 	case rowTest:
@@ -579,7 +603,7 @@ func (m *Settings) SelectIndex(i int) {
 
 func isStepRow(k rowKind) bool {
 	switch k {
-	case rowFormat, rowAlbums, rowRetry, rowTagAfter, rowPremiumAfter, rowLyricsAfter, rowLyricsLRCLIB, rowLyricsNetEase, rowVPN, rowConns, rowJobs, rowCountries, rowPrivate, rowTidalQuality:
+	case rowFormat, rowAlbums, rowRetry, rowTagAfter, rowPremiumAfter, rowLyricsAfter, rowLyricsLRCLIB, rowLyricsNetEase, rowVPN, rowConns, rowJobs, rowCountries, rowPrivate, rowTidalQuality, rowFolderJpg, rowNFO, rowCoverPNG:
 		return true
 	}
 	return false
