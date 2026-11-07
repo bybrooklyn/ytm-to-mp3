@@ -195,6 +195,12 @@ func (m *Settings) change(d int) {
 		m.cfg.NoTagAfter = !m.cfg.NoTagAfter
 	case rowPremiumAfter:
 		m.cfg.NoPremiumAfter = !m.cfg.NoPremiumAfter
+	case rowLyricsAfter:
+		m.cfg.NoLyricsAfter = !m.cfg.NoLyricsAfter
+	case rowLyricsLRCLIB:
+		m.cfg.NoLyricsLRCLIB = !m.cfg.NoLyricsLRCLIB
+	case rowLyricsNetEase:
+		m.cfg.LyricsNetEase = !m.cfg.LyricsNetEase
 	case rowVPN:
 		if !m.vpnUsable() {
 			m.err = "sign in to Proton first"
@@ -243,6 +249,9 @@ const (
 	rowRetry
 	rowTagAfter
 	rowPremiumAfter
+	rowLyricsAfter
+	rowLyricsLRCLIB
+	rowLyricsNetEase
 	rowVPN
 	rowAccount
 	rowConns
@@ -271,6 +280,9 @@ var settingsRows = []struct {
 	{rowRetry, "Retry unavailable"},
 	{rowTagAfter, "Fix tags after"},
 	{rowPremiumAfter, "Premium upgrade after"},
+	{rowLyricsAfter, "Fetch lyrics after"},
+	{rowLyricsLRCLIB, "Lyrics from LRCLIB"},
+	{rowLyricsNetEase, "Lyrics from NetEase"},
 	{rowVPN, "VPN"},
 	{rowAccount, "Proton account"},
 	{rowConns, "VPN connections"},
@@ -331,6 +343,12 @@ func (m *Settings) value(k rowKind) (val, hint string, dim bool) {
 		return onOff(!m.cfg.NoRetry), "songs that were unavailable last time are tried again (incl. on YouTube Music)", false
 	case rowTagAfter:
 		return onOff(!m.cfg.NoTagAfter), "the songs just downloaded get MusicBrainz tags (only when it is certain)", false
+	case rowLyricsAfter:
+		return onOff(!m.cfg.NoLyricsAfter), "new songs get line-synced lyrics (a .lrc beside the file and a tag in it), plain ones if that is all there is", false
+	case rowLyricsLRCLIB:
+		return onOff(!m.cfg.NoLyricsLRCLIB), "lrclib.net: free, community lyrics; it is told a song's title, artist, album and length, nothing else", false
+	case rowLyricsNetEase:
+		return onOff(m.cfg.LyricsNetEase), "unofficial: music.163.com, asked only if LRCLIB has nothing; it is told the title and artist", false
 	case rowPremiumAfter:
 		hint := "after downloading, upgrade songs to Premium quality (slow; uses your account)"
 		if !m.cfg.Premium {
@@ -452,6 +470,12 @@ func (m *Settings) describe(row *Row, k rowKind) {
 		toggle("Give the songs just downloaded their MusicBrainz tags, only when the match is certain.")
 	case rowPremiumAfter:
 		toggle("After downloading, upgrade songs to Premium quality. Slow, and uses your YouTube Premium sign-in.")
+	case rowLyricsAfter:
+		toggle("New songs get line-synced lyrics: a .lrc file beside the song and a lyrics tag in it. Plain lyrics if that is all there is.")
+	case rowLyricsLRCLIB:
+		toggle("lrclib.net: free, community lyrics. It is told a song's title, artist, album and length, nothing else.")
+	case rowLyricsNetEase:
+		toggle("Unofficial (music.163.com). Only asked when LRCLIB has nothing; it is told the title and artist.")
 	case rowVPN:
 		row.Group = "Network"
 		toggle("Send downloads through several Proton servers at once.")
@@ -505,7 +529,7 @@ func (m *Settings) SelectIndex(i int) {
 
 func isStepRow(k rowKind) bool {
 	switch k {
-	case rowFormat, rowAlbums, rowRetry, rowTagAfter, rowPremiumAfter, rowVPN, rowConns, rowJobs, rowCountries:
+	case rowFormat, rowAlbums, rowRetry, rowTagAfter, rowPremiumAfter, rowLyricsAfter, rowLyricsLRCLIB, rowLyricsNetEase, rowVPN, rowConns, rowJobs, rowCountries:
 		return true
 	}
 	return false

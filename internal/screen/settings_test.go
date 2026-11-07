@@ -229,3 +229,22 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+func TestLyricsSettingsRows(t *testing.T) {
+	m, last, _ := testModel(true)
+	for r, want := range map[rowKind]string{rowLyricsAfter: "on", rowLyricsLRCLIB: "on", rowLyricsNetEase: "off"} {
+		if v, _, _ := m.value(r); v != want {
+			t.Errorf("%v starts %q, want %q", r, v, want)
+		}
+	}
+	m.cur = int(rowLyricsLRCLIB)
+	press(m, "right")
+	if !last.NoLyricsLRCLIB || last.NoLyricsAfter || last.LyricsNetEase {
+		t.Fatalf("wrong setting toggled: %+v", *last)
+	}
+	m.cur = int(rowLyricsNetEase)
+	press(m, "right")
+	if !last.LyricsNetEase {
+		t.Fatal("NetEase should switch on")
+	}
+}

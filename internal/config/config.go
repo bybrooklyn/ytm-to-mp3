@@ -34,6 +34,13 @@ type Config struct {
 	NoTagAfter     bool `json:"no_tag_after,omitempty"`     // fix the new songs' tags with MusicBrainz
 	NoPremiumAfter bool `json:"no_premium_after,omitempty"` // run the Premium upgrade (when signed in)
 
+	// Lyrics: fetched after a download and by "Fetch lyrics for my library". Providers only
+	// ever get a song's title, artist, album and length. LRCLIB is on until switched off;
+	// NetEase (an unofficial, Chinese third-party service) is off until switched on.
+	NoLyricsAfter  bool `json:"no_lyrics_after,omitempty"`  // fetch lyrics for the new songs
+	NoLyricsLRCLIB bool `json:"no_lyrics_lrclib,omitempty"` // don't ask LRCLIB
+	LyricsNetEase  bool `json:"lyrics_netease,omitempty"`   // also ask NetEase (unofficial)
+
 	// Apple Music (optional, native AAC path). The media-user-token itself is a secret
 	// and lives in AppleTokenPath(), not here.
 	AppleStorefront string `json:"apple_storefront,omitempty"` // e.g. "us"; "" = us

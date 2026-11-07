@@ -99,6 +99,16 @@ Everything YouTube knows is kept: title, artist(s), album, release or upload dat
 - Anything less certain is left exactly as YouTube tagged it.
 - It shows what it would change first and writes only when you say so; **Undo the last fix** restores the previous tags, cover art and file names. It can also move files into `Artist/Album/01 - Title.ext`, and work offline (no MusicBrainz).
 
+## Lyrics
+
+New songs get lyrics after they download (a "Fetch lyrics after" row in Settings, on by default), and **Fetch lyrics for my library** (More tools) does the songs you already have. It prints a line per song, can be stopped and run again (finished songs are skipped), and asks two songs at a time with a short pause between requests.
+
+- **Line-synced whenever a source has it.** Synced lyrics are stored as LRC text (`[01:23.45]line`, with `[ti:]`, `[ar:]`, `[al:]`, `[length:]` and a `[by:]` source credit) in a `.lrc` file next to the song with the same name (what most players, Navidrome and Jellyfin read) **and** in the file's lyrics tag. Plain lyrics, when that is all there is, go in a `.txt` beside the song and the same tag. Opus, Ogg and FLAC keep this in a Vorbis comment `LYRICS`; MP3 in an ID3 unsynchronised-lyrics frame; M4A in `©lyr`. A player that does not read LRC from the tag shows it as text; one that reads the sidecar shows it synced.
+- **Careful matching.** Title and artist have to match (ignoring `feat.`, `(Remastered)`, `- Topic`), a different version is refused (a live take does not get the studio version's timing, nor a remix), and synced lyrics are used only when their length is within 3 seconds of your file's, so the lines do not drift. Otherwise the words alone are used when the length is within 15 seconds, else nothing. Songs that are only instrumental get no file.
+- **Sources.** [LRCLIB](https://lrclib.net) (free, community, on by default). NetEase Cloud Music is an unofficial, undocumented service in China: it is off until you switch it on in Settings, and is only asked if LRCLIB has nothing. Each is a row in Settings.
+- **Privacy.** A source is told a song's title, artist, album and length, nothing else: no file path, no account, no library list. Lookups go straight from your computer (not through the VPN) with a plain `ytm` user agent.
+- **Cached.** Everything found is kept in `.ytm/lyrics` in your music folder, keyed by the song (not by file name), so a song is never fetched twice, and a renamed file or one upgraded to a better source (Apple Music over YouTube) takes its lyrics along. "No lyrics found" is remembered for 14 days before it is asked again. Lyrics already in a file, or a `.lrc` you put there yourself, are never replaced.
+
 ## Good to know
 
 - Songs you uploaded yourself (not public on YouTube) usually can't be downloaded.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/lyrics"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
@@ -38,6 +39,14 @@ func runTag(ctx context.Context, u *ui.UI, o opts, dir string, files ...string) 
 		defer st.Close()
 		onMove = func(from, to string) { _ = st.MovePath(from, to) }
 		trackNo = albumNumbers(st)
+	}
+	// a renamed song takes its lyrics file with it
+	moved := onMove
+	onMove = func(from, to string) {
+		lyrics.MoveSidecars(from, to)
+		if moved != nil {
+			moved(from, to)
+		}
 	}
 	return tag.Run(ctx, tag.Options{
 		Dir: dir, Apply: o.apply, Rename: o.rename, Undo: o.undo, Offline: o.offline,

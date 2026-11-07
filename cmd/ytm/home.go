@@ -115,6 +115,7 @@ func toolsMenu(ctx context.Context, u *ui.UI, o opts) error {
 	if err := one(ctx, huh.NewSelect[string]().Title("More tools").Options(
 		huh.NewOption("Fix tags in my music folder (MusicBrainz)", "tag"),
 		huh.NewOption("Tidy file names (Artist/Album/01 - Title)", "tidy"),
+		huh.NewOption("Fetch lyrics for my library", "lyrics"),
 		huh.NewOption("YouTube Premium upgrade now (experimental, slow)", "premium"),
 		huh.NewOption("Update yt-dlp, ffmpeg and deno", "update"),
 		huh.NewOption("Check that everything works", "doctor"),
@@ -127,6 +128,8 @@ func toolsMenu(ctx context.Context, u *ui.UI, o opts) error {
 		return tagFlow(ctx, u, o)
 	case "tidy":
 		return tidyFlow(ctx, u, o)
+	case "lyrics":
+		return lyricsLibraryFlow(ctx, u, o)
 	case "premium":
 		if !config.Load().Premium {
 			if err := premiumSetup(ctx, u); err != nil || !config.Load().Premium {
@@ -163,6 +166,7 @@ func refreshOpts(o opts) opts {
 	set("retry", &o.retry, !cfg.NoRetry)
 	set("tag-after", &o.tagAfter, !cfg.NoTagAfter)
 	set("premium-after", &o.premiumAfter, !cfg.NoPremiumAfter)
+	set("lyrics-after", &o.lyricsAfter, !cfg.NoLyricsAfter)
 	return o
 }
 
@@ -177,6 +181,9 @@ func extras(o opts) string {
 	}
 	if o.tagAfter {
 		on = append(on, "fix tags")
+	}
+	if o.lyricsAfter {
+		on = append(on, "fetch lyrics")
 	}
 	if o.premiumAfter {
 		if config.Load().Premium {

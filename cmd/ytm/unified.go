@@ -17,6 +17,7 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/catalog"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/lyrics"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/spotify"
@@ -551,9 +552,20 @@ func runAppleItems(ctx context.Context, u *ui.UI, o opts, ac *apple.Client, st *
 		}
 	}
 	err := appleRun(ctx, u, o, s, jobs)
+	var fresh []string
 	for _, it := range items {
 		if ast := st.Apple(it.match.ID); ast.Done && fileExists(ast.Path) {
 			_ = st.LibraryPut(it.key, it.t.Title, it.t.PrimaryArtist(), string(catalog.Apple), catalog.Rank(catalog.Apple), ast.Path)
+			fresh = append(fresh, ast.Path)
+		}
+	}
+	if o.lyricsAfter && err == nil && len(fresh) > 0 {
+		u.Head("Fetching lyrics for %s · turn off in settings", count(len(fresh), "Apple Music song"))
+		if lerr := fetchLyrics(ctx, u, o.out, fresh); lerr != nil {
+			if ctx.Err() != nil {
+				return context.Canceled
+			}
+			u.Bad("lyrics: %v", lerr)
 		}
 	}
 	return err
@@ -595,6 +607,9 @@ func runYouTubeItems(ctx context.Context, u *ui.UI, o opts, st *store.Store, ex 
 	}, todo)
 	for id, it := range byID {
 		if done, path := st.TrackStatus(id); done && path != "" {
+			if it.upgrade {
+				lyrics.MoveSidecars(it.oldPath, path) // the lyrics follow the song to its new file
+			}
 			_ = st.LibraryPut(it.key, it.t.Title, it.t.PrimaryArtist(), string(catalog.YouTube), catalog.Rank(catalog.YouTube), path)
 		}
 	}

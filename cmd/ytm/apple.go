@@ -18,6 +18,7 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/lyrics"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
@@ -542,6 +543,7 @@ func appleSave(ctx context.Context, s *appleSession, ffmpeg, ffprobe, root strin
 	_ = s.st.AppleDone(t.ID, t.Title, t.Artist, j.dest)
 	if j.replace && j.ytID != "" {
 		_ = s.st.ReplaceWithApple(j.ytID, t.Title, t.Artist, j.dest)
+		lyrics.MoveSidecars(j.ytPath, j.dest) // the lyrics follow the song to its new file
 	}
 	return nil
 }
