@@ -24,6 +24,7 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/export"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/screen"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/spotify"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
@@ -38,7 +39,7 @@ const usage = `ytm - your music library from YouTube Music, Apple Music and Spot
 downloaded as tagged audio through Proton VPN
 
   ytm                     open ytm: downloads, your library, settings and tools in one place
-  ytm <link or file>...   download right away: YouTube, Apple Music or Spotify links (songs,
+  ytm <link or file>...   download right away: YouTube, Apple Music, Spotify, SoundCloud or Bandcamp links (songs,
                           albums, playlists), a Takeout .zip, folder or .csv, or a text file
                           of links. Each song comes from the best source you have: Apple Music
                           (256 kbps AAC) when you're signed in there and it has it, else YouTube.
@@ -116,7 +117,9 @@ type opts struct {
 	replace, maybe bool
 	// source forces the audio source for a unified (Spotify) import: "" = best available
 	// (Apple when signed in, else YouTube), "youtube" = always YouTube.
-	source     string
+	source string
+	// preset are tracks already read (a live library): they are downloaded like an export.
+	preset     []model.Track
 	version    bool   // --version
 	completion string // --completion SHELL
 	// given is which flags were on the command line: they win over saved settings for the
@@ -419,12 +422,26 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 
 	// Spotify and Apple Music links name songs; the unified pipeline fetches each from the
 	// best source there is (Apple Music when signed in and matched, otherwise YouTube).
-	var catalogLinks, rest []string
+	var catalogLinks, webLinks, rest []string
 	for _, in := range inputs {
 		if t := strings.Trim(in, `"' `); spotify.IsURL(t) || apple.IsURL(t) {
 			catalogLinks = append(catalogLinks, t)
+		} else if engine.WebSite(t) != "" {
+			webLinks = append(webLinks, t)
 		} else {
 			rest = append(rest, in)
+		}
+	}
+	// SoundCloud and Bandcamp links: yt-dlp finds the songs, ytm files and tags them.
+	if len(webLinks) > 0 {
+		if err := downloadWeb(ctx, u, o, ex, webLinks); err != nil {
+			return err
+		}
+		if len(catalogLinks) == 0 && len(rest) == 0 {
+			return nil
+		}
+		if len(catalogLinks) == 0 {
+			inputs = rest
 		}
 	}
 	if len(catalogLinks) > 0 {
@@ -489,6 +506,10 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 			fromExport = true
 			slots[i] = ts
 		}
+	}
+	if len(o.preset) > 0 {
+		slots = append(slots, o.preset)
+		fromExport = true
 	}
 	if len(lookups) > 0 {
 		if err := ensure(); err != nil {
@@ -753,7 +774,7 @@ func connections(cfg config.Config, pc *proton.Client) int {
 		account = vpn.AccountID(pc.Session.Username)
 	}
 	if _, limit := vpn.LoadCache(vpn.DefaultCachePath(), account).Servers(); limit > 1 {
-		return min(limit-1, maxConns)
+		return min(limit-1, screen.MaxConns)
 	}
 	return 3
 }
@@ -778,7 +799,7 @@ func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 	}
 	n := connections(cfg, pc)
 	if o.conns > 0 {
-		n = min(o.conns, maxConns)
+		n = min(o.conns, screen.MaxConns)
 	}
 	// A live line while the tunnels come up: how many are up, how long it's been. The run
 	// goes on at the first one, so this is usually a few seconds.

@@ -51,6 +51,15 @@ var youTubeHosts = []string{".youtube.com", "youtube.com", ".music.youtube.com",
 // appleMusicHosts are the cookie hosts read for the Apple Music login.
 var appleMusicHosts = []string{"music.apple.com", ".music.apple.com", ".apple.com"}
 
+// bandcampHosts are the cookie hosts read for a Bandcamp login.
+var bandcampHosts = []string{"bandcamp.com", ".bandcamp.com"}
+
+// BandcampIdentityCookie is the cookie that carries a Bandcamp login.
+const BandcampIdentityCookie = "identity"
+
+// ErrNoBandcamp means the browser is not signed in to Bandcamp.
+var ErrNoBandcamp = errors.New("not signed in to Bandcamp in that browser")
+
 // AppleUserTokenCookie is the cookie that carries the Apple Music login.
 const AppleUserTokenCookie = "media-user-token"
 
@@ -191,6 +200,25 @@ func FindAppleMusicCookies() (cookies []Cookie, browser string, err error) {
 		}
 	}
 	return nil, "", ErrNoAppleToken
+}
+
+// BandcampCookies returns the bandcamp.com cookies of the newest profile of b that is signed
+// in to Bandcamp (has an "identity" cookie).
+func (b Browser) BandcampCookies() ([]Cookie, error) {
+	var last error = ErrNoBandcamp
+	for _, d := range b.dbs {
+		cs, err := b.readHosts(d, bandcampHosts)
+		if err != nil {
+			last = err
+			continue
+		}
+		for _, c := range cs {
+			if c.Name == BandcampIdentityCookie && strings.TrimSpace(c.Value) != "" {
+				return cs, nil
+			}
+		}
+	}
+	return nil, last
 }
 
 // CookieHeader renders cs as an HTTP Cookie header value ("name=value; ...").

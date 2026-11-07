@@ -55,6 +55,9 @@ func FindAlbum(ctx context.Context, tools deps.Tools, proxy, artist, album strin
 	if q == "" {
 		return nil, nil
 	}
+	if a, ok, err := y.nativeFindAlbum(ctx, q, album, saved); ok {
+		return a, err
+	}
 	b, err := y.run(ctx, "--ignore-config", "--no-plugin-dirs", "--no-warnings", "--flat-playlist",
 		"--playlist-items", "1:"+strconv.Itoa(albumCandidates), "-J", "--",
 		"https://music.youtube.com/search?q="+url.QueryEscape(q)+"#albums")

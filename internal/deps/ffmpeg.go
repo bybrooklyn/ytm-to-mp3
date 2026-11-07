@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/ulikunitz/xz"
 )
@@ -68,20 +69,43 @@ func ensureFFmpeg(ctx context.Context, bin string, logf Logger) (string, string,
 
 func fileExists(p string) bool { st, err := os.Stat(p); return err == nil && !st.IsDir() }
 
-// lookTool finds name on PATH, and on macOS also in the usual Homebrew prefixes
-// (GUI-launched shells often lack them).
+// lookTool finds a copy of name on PATH that actually runs, and on macOS also in the usual
+// Homebrew prefixes (GUI-launched shells often lack them). A copy that can't start (a
+// missing shared library, say) is skipped in favour of the next one on PATH, and failing
+// that the caller downloads its own.
 func lookTool(name string) string {
+	var cands []string
 	if p, err := exec.LookPath(name); err == nil {
-		return p
+		cands = append(cands, p)
+	}
+	for _, d := range filepath.SplitList(os.Getenv("PATH")) {
+		if d == "" {
+			continue
+		}
+		if p := filepath.Join(d, exe(name)); fileExists(p) {
+			cands = append(cands, p)
+		}
 	}
 	if runtime.GOOS == "darwin" {
 		for _, d := range []string{"/opt/homebrew/bin", "/usr/local/bin"} {
 			if p := filepath.Join(d, name); fileExists(p) {
-				return p
+				cands = append(cands, p)
 			}
 		}
 	}
+	for _, c := range cands {
+		if toolRuns(c) {
+			return c
+		}
+	}
 	return ""
+}
+
+// toolRuns reports whether the program starts and answers "-version".
+func toolRuns(path string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, path, "-version").Run() == nil
 }
 
 // ffSource is one downloadable archive. sums is the upstream checksum listing

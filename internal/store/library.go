@@ -80,11 +80,12 @@ type HeldCopy struct {
 	ID     string // YouTube video id (or a synthetic id) for youtube; Apple catalog id for apple
 	Title  string
 	Artist string
-	Source string // apple | youtube
+	Source string // apple | youtube | soundcloud | bandcamp
 	Path   string
 }
 
-// Held lists every downloaded song: Apple Music downloads first, then YouTube ones. A
+// Held lists every downloaded song: Apple Music downloads first, then YouTube ones, then
+// SoundCloud and Bandcamp ones. A
 // YouTube row whose file is now an Apple copy (ytm apple match --replace) is reported
 // once, as apple.
 func (s *Store) Held() ([]HeldCopy, error) {
@@ -93,6 +94,10 @@ func (s *Store) Held() ([]HeldCopy, error) {
 	for _, q := range []struct{ source, sql string }{
 		{"apple", `SELECT id, title, artist, path FROM apple_tracks WHERE status='done' AND path!=''`},
 		{"youtube", `SELECT id, title, artist, path FROM tracks WHERE status='done' AND path!=''`},
+		// Songs from other sites are recorded only in the cross-source library table.
+		{"soundcloud", `SELECT key, title, artist, path FROM library_tracks WHERE source='soundcloud' AND path!=''`},
+		{"bandcamp", `SELECT key, title, artist, path FROM library_tracks WHERE source='bandcamp' AND path!=''`},
+		{"bandcamp-purchase", `SELECT key, title, artist, path FROM library_tracks WHERE source='bandcamp-purchase' AND path!=''`},
 	} {
 		rows, err := s.db.Query(q.sql)
 		if err != nil {

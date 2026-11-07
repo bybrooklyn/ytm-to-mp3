@@ -18,6 +18,8 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+      - name: desktop app build dependencies (OpenGL and X11 headers)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1-mesa-dev xorg-dev
       - run: go vet ./...
       - run: go test ./...
 
@@ -52,3 +54,61 @@ jobs:
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-checksums: dist/checksums.txt
+
+  # The desktop app is a native window (Fyne) that needs a C compiler, so each OS builds its
+  # own and attaches it to the release goreleaser created above, with a checksum and a build
+  # provenance attestation.
+  desktop:
+    needs: goreleaser
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, name: linux_amd64 }
+          - { os: macos-latest, name: darwin_arm64 }
+          - { os: windows-latest, name: windows_amd64, ext: .exe, ldflags: "-H=windowsgui" }
+    name: desktop ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write      # attach assets to the release
+      id-token: write      # build provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: build dependencies (OpenGL and X11 headers)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1-mesa-dev xorg-dev
+      - name: build and package
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p out
+          go build -trimpath -ldflags="-s -w ${{ matrix.ldflags }}" -o "out/ytm-desktop${{ matrix.ext }}" ./cmd/ytm-desktop
+          name="ytm-desktop_${TAG#v}_${{ matrix.name }}"
+          cp README.md LICENSE out/
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            (cd out && 7z a "../${name}.zip" "ytm-desktop.exe" README.md LICENSE)
+            asset="${name}.zip"
+          else
+            tar -C out -czf "${name}.tar.gz" ytm-desktop README.md LICENSE
+            asset="${name}.tar.gz"
+          fi
+          if command -v sha256sum >/dev/null; then sha256sum "$asset" > "${asset}.sha256"; else shasum -a 256 "$asset" > "${asset}.sha256"; fi
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: ${{ env.ASSET }}
+      - name: attach to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" "$ASSET" "${ASSET}.sha256" --clobber

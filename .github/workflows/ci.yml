@@ -22,6 +22,9 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+      - name: desktop app build dependencies (OpenGL and X11 headers)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1-mesa-dev xorg-dev
       - name: gofmt
         if: runner.os == 'Linux'
         run: test -z "$(gofmt -l .)" || (gofmt -d . && exit 1)
@@ -84,6 +87,40 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # The desktop app is a native window (Fyne), which needs a C compiler, so it is built on
+  # each OS itself instead of cross-compiled with the command-line ytm above.
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, name: linux-amd64 }
+          - { os: macos-latest, name: darwin-arm64 }
+          - { os: windows-latest, name: windows-amd64, ext: .exe, ldflags: "-H=windowsgui" }
+    name: desktop ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: build dependencies (OpenGL and X11 headers)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1-mesa-dev xorg-dev
+      - name: build
+        env:
+          CGO_ENABLED: "1"
+        run: go build -trimpath -ldflags="-s -w ${{ matrix.ldflags }}" -o out/ytm-desktop${{ matrix.ext }} ./cmd/ytm-desktop
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ytm-desktop-${{ matrix.name }}
+          path: out/ytm-desktop${{ matrix.ext }}
+          if-no-files-found: error
+          retention-days: 30
+
   govulncheck:
     runs-on: ubuntu-latest
     steps:
@@ -94,6 +131,8 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+      - name: desktop app build dependencies (OpenGL and X11 headers)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1-mesa-dev xorg-dev
       - name: govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.9.0

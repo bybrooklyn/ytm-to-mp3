@@ -7,9 +7,9 @@ ytm                                # a short menu: your library, links, Apple Mu
 ytm "https://youtu.be/..."         # or download a link straight away (keep the quotes)
 ```
 
-There are no subcommands to remember: everything is in the menu that plain `ytm` opens in a terminal. It is short: **Download my YouTube Music library**, **Download a link** (YouTube, Apple Music or Spotify), **Apple Music...** (sign in, find your library there, check or remove the sign-in), **Settings**, and **More tools...** (fix tags, tidy file names, the Premium upgrade, updating yt-dlp/ffmpeg/deno, a self-check). Esc goes back a step; Ctrl-C quits.
+There are no subcommands to remember: everything is in the menu that plain `ytm` opens in a terminal. It is short: **Download my YouTube Music library**, **Download a link** (YouTube, Apple Music, Spotify, SoundCloud or Bandcamp), **Apple Music...** (sign in, find your library there, check or remove the sign-in), **Settings**, and **More tools...** (fix tags, tidy file names, the Premium upgrade, updating yt-dlp/ffmpeg/deno, a self-check). Esc goes back a step; Ctrl-C quits.
 
-**Download my YouTube Music library** looks through your Downloads, Desktop and Documents folders (including renamed folders like `~/Téléchargements`) for anything that contains YouTube Music data, whatever it is called, lists what it found with track counts, and shows a preview before it downloads. Exports split over several zips (`-001`, `-002`) are combined. You can also drag a zip, folder, `.csv` or text file of links into the terminal, or pass one on the command line. If you have no export yet, it walks you through getting one.
+**Download my YouTube Music library** can read your library straight from a browser that is signed in to YouTube Music, with no export at all: pick **Read it from my signed-in browser** and ytm reads that browser's youtube.com sign-in once, in memory (only the browser's name is remembered), and lists your Liked music, songs saved to your library, saved albums and playlists, from your own connection (not the VPN). Otherwise it looks through your Downloads, Desktop and Documents folders (including renamed folders like `~/Téléchargements`) for anything that contains YouTube Music data, whatever it is called, lists what it found with track counts, and shows a preview before it downloads. Exports split over several zips (`-001`, `-002`) are combined. You can also drag a zip, folder, `.csv` or text file of links into the terminal, or pass one on the command line. If you have no export yet, it walks you through getting one.
 
 Albums come whole by default: a pasted song link (YouTube, Apple Music or Spotify) downloads the album it is from, numbered, and a library or playlist download (YouTube, Apple Music or Spotify) offers the rest of every album it has a song from (after showing how many songs and how much space). Spotify doesn't say which album a song is on, so ytm finds that in Apple Music's catalog (no sign-in needed), else on YouTube Music. `--song` gets just the songs given for one run; the "Complete albums" setting turns it off for good. A download also does these by default, each one switchable in Settings (or for one run with `--albums=false`, `--retry=false`, `--tag-after=false`, `--premium-after=false`): it retries songs that were unavailable before (including a YouTube Music search), gives the songs it just downloaded MusicBrainz tags when it's certain of them, and runs the Premium upgrade if you've set one up.
 
@@ -34,7 +34,7 @@ Pick **Download my YouTube Music library**, then "I don't have one yet". It open
 
 ## From the command line
 
-`ytm <link or file>...` downloads without the menu: YouTube, Apple Music or Spotify links, a Takeout `.zip`/folder/`.csv`, or a text file of links, mixed as you like. Options for one run (your defaults live in Settings):
+`ytm <link or file>...` downloads without the menu: YouTube, Apple Music, Spotify, SoundCloud or Bandcamp links, a Takeout `.zip`/folder/`.csv`, or a text file of links, mixed as you like. Options for one run (your defaults live in Settings):
 
 `-o DIR` (default `~/Music`), `-f mp3|m4a|opus|flac`, `-j N` max parallel downloads, `--no-vpn`, `--connections N` (VPN exits this run), `--dry-run`, `--retry`, `--song` (just the songs given, no albums; `--albums-min N` limits album completion to albums with N or more of your songs), `--all`, `--source youtube`, `--maybe`, `--premium-upgrade`, `-y`. `ytm --completion bash|zsh|fish|powershell` prints tab completion (e.g. `source <(ytm --completion bash)`); `ytm --version`, `ytm --help`. Flags can go before or after the links.
 
@@ -48,6 +48,10 @@ Re-running is always safe: finished tracks are skipped, temporary failures retry
 - Audio is pulled in parallel ranged requests (about four per song), which avoids YouTube's per-connection throttling. If a stream can't be fetched directly from one exit it moves to another; failing that, yt-dlp downloads it.
 - Concurrency is adaptive: it ramps up while requests succeed, halves and pauses with jittered backoff the moment YouTube pushes back (HTTP 429, "confirm you're not a bot"). `-j` only sets the ceiling.
 - Songs are looked up with one request to YouTube's player API (about 0.2 s) instead of a yt-dlp process (about 2 s); anything that can't be handled that way still goes through yt-dlp. In testing, 120 songs through 6 VPN exits took 37 s this way, against 3-4 minutes with yt-dlp lookups. `YTM_RESOLVER=yt-dlp` switches it off.
+
+## What runs in Go, and what doesn't
+
+ytm itself is Go. Searching YouTube Music, listing albums and playlists, reading your library, and looking songs up and fetching their audio are done in Go, with no other program. Audio files themselves are never parsed or rewritten by ytm: **ffmpeg** and **ffprobe** do that (remuxing, tags, cover art, mp3 and flac), and **yt-dlp** is the fallback for videos ytm's own client can't open, the Premium upgrade, and SoundCloud and Bandcamp. ytm fetches whatever is missing itself, and skips a copy on your PATH that doesn't run. `YTM_SEARCH=yt-dlp` and `YTM_RESOLVER=yt-dlp` switch the Go lookups off. The menu's **More tools** > self-check shows what is installed.
 
 ## Quality and files
 
@@ -75,6 +79,14 @@ Paste a YouTube, Apple Music or Spotify link (or several, mixed) into **Download
 - **Spotify** gives only the song list (its audio is DRM'd and never downloaded); it needs no login, and works for public albums, playlists and tracks.
 - **Apple Music and Spotify songs** come from Apple Music (256 kbps AAC) when you're signed in there and it has the song (an Apple link's own songs need no search), otherwise from YouTube Music by search. Without an Apple sign-in, Apple links still work: they come from YouTube. `--source youtube` always uses YouTube; `--maybe` also takes less certain Apple matches.
 - **No duplicates:** a song you already have, however it was downloaded (your YouTube library, Apple Music, an earlier link), is skipped. The same album pasted from two services is one set of songs. A song you have from YouTube that Apple Music now gives is upgraded; the YouTube file moves to `.ytm/replaced/` and library runs won't fetch it again.
+
+## SoundCloud and Bandcamp
+
+Paste a SoundCloud or Bandcamp link (a song, an album or playlist, or an artist's page) into **Download a link**, or give it to `ytm <link>`. yt-dlp finds the songs (these sites change often, and Bandcamp shows non-browser programs a bot check that only yt-dlp keeps up with); everything else is ytm: songs you already have are skipped (whichever service they came from), and each file is tagged with the album, track number and date the site gives, square cover art up to 1200 px, and filed as `Artist/Album/01 - Title`.
+
+**Music you have bought on Bandcamp** can come in its original quality instead of the stream: under **Connections** > **Bandcamp**, pick the browser that is signed in to bandcamp.com (only the browser's name is remembered). From then on a Bandcamp link to something you own downloads the best original offered (FLAC, else 320 kbps MP3), exactly as Bandcamp serves it, and a lower-quality copy you already have of the same song is moved to `.ytm/replaced`. Paste your own profile link (`https://bandcamp.com/yourname`) to get your whole collection. Anything you haven't bought still streams. The sign-in is read from the browser each time, kept in memory, and only ever sent to Bandcamp.
+
+Otherwise they serve music at stream quality (Bandcamp 128 kbps MP3, SoundCloud 128 kbps MP3 or AAC/Opus), so files keep the format the site serves rather than being re-encoded. These downloads go out from your own connection, not the VPN. SoundCloud's terms don't allow copying tracks whose uploader hasn't enabled downloads: the same applies here as to any yt-dlp use, so only download what you have the right to.
 
 ## Metadata
 
@@ -110,6 +122,10 @@ Sign in once in Settings (**Proton account**); from then on every download goes 
 Signing in uses your Proton account (the password goes only to Proton and is never saved; 2FA codes are supported) and registers WireGuard keys for ytm under your account, one per connection (Proton routes a key through only one server at a time, so connections can't share one). Every run connects 3 servers near you (change the number in settings; "Auto" uses as many as your plan allows, minus one kept as a spare, though in testing 10 were no faster than 6; distance matters, since every lookup is several round trips through the tunnel) and spreads tracks over them. The connecting starts the moment a run begins, alongside the yt-dlp/ffmpeg check and reading your export, and the run goes on as soon as the first server is up (links are looked up through it, several at once); the others join a few seconds later. A server that gets rate-limited rests, and after repeated trouble ytm swaps it for a fresh server.
 
 The tunnels are userspace WireGuard inside ytm itself: no root, no WireGuard install, no system changes, and the same on Linux, macOS and Windows. If the VPN is on but can't connect, ytm stops rather than falling back to your own IP. Needs single-password mode on your Proton account and a plan that includes VPN.
+
+## Desktop app (early)
+
+`ytm-desktop` is a native window (built with [Fyne](https://fyne.io), not a web page) that shows ytm's screens instead of a terminal. The screens are defined once, in `internal/screen`, as plain descriptions of what to show and how keys change it; the terminal UI and the window each just draw that description, so they look and behave the same: same rows, same colours, same keys (arrows, vi keys, Enter), plus the mouse. So far Connections and Settings are on it; sign-in steps still happen in the terminal, and the window says so. Release builds for Linux, macOS and Windows are attached to each [release](https://github.com/bybrooklyn/ytm-to-mp3/releases) as `ytm-desktop_<version>_<os>_<arch>` with a checksum. To build it yourself, `just build-desktop` needs a C compiler (and on Linux the OpenGL and X11 development packages), which the `ytm` command itself does not.
 
 ## Development
 

@@ -572,6 +572,9 @@ type musicHit struct {
 // SearchMusic looks query up on YouTube Music's song search and returns up to n results.
 // It finds the current upload of a song whose old video id has been taken down.
 func (y ytdlp) SearchMusic(ctx context.Context, query string, n int) ([]musicHit, error) {
+	if hits, ok := y.nativeSearchMusic(ctx, query, n); ok {
+		return hits, nil
+	}
 	u := "https://music.youtube.com/search?q=" + url.QueryEscape(query) + "#songs"
 	args := []string{"--ignore-config", "--no-plugin-dirs", "--no-warnings", "--flat-playlist",
 		"--playlist-items", fmt.Sprintf("1:%d", n), "-J", "--", u}
@@ -599,6 +602,9 @@ func (y ytdlp) SearchMusic(ctx context.Context, query string, n int) ([]musicHit
 
 // Expand turns a playlist / album URL into tracks.
 func (y ytdlp) Expand(ctx context.Context, url string) ([]model.Track, error) {
+	if ts, ok := y.nativeExpand(ctx, url); ok {
+		return ts, nil
+	}
 	args := []string{"--ignore-config", "--no-plugin-dirs", "--no-warnings", "--flat-playlist", "-J", "--", url}
 	b, err := y.run(ctx, args...)
 	if err != nil {

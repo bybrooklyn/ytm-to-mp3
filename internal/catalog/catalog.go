@@ -19,16 +19,25 @@ const (
 	Apple   Source = "apple"   // Apple Music (256 kbps AAC)
 	YouTube Source = "youtube" // YouTube / YouTube Music (Opus/AAC)
 	Spotify Source = "spotify" // metadata only; Spotify audio is never downloaded
+
+	SoundCloud Source = "soundcloud" // stream quality (128 kbps MP3 / 64 kbps Opus), via yt-dlp
+	Bandcamp   Source = "bandcamp"   // stream quality (128 kbps MP3), via yt-dlp
+
+	BandcampPurchase Source = "bandcamp-purchase" // the original files of music the user bought (FLAC when offered)
 )
 
 // Rank orders audio sources by quality for best-source selection (higher is
 // better). Spotify is metadata only, so it is not a download source.
 func Rank(s Source) int {
 	switch s {
+	case BandcampPurchase:
+		return 4 // lossless or 320 kbps originals beat every stream
 	case Apple:
 		return 3
 	case YouTube:
 		return 2
+	case SoundCloud, Bandcamp:
+		return 1
 	default:
 		return 0
 	}

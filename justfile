@@ -9,6 +9,14 @@ default:
 build:
     go build -ldflags "-s -w -X main.version={{version}}" -o ytm ./cmd/ytm
 
+# build ./ytm-desktop, the native desktop window (Fyne: needs a C compiler and OpenGL/X11 headers on Linux)
+build-desktop:
+    CGO_ENABLED=1 go build -ldflags "-s -w" -o ytm-desktop ./cmd/ytm-desktop
+
+# cross-compile ytm.exe for Windows (amd64)
+build-win:
+    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X main.version={{version}}" -o ytm.exe ./cmd/ytm
+
 # install to $GOBIN / ~/go/bin (make sure it's on PATH), then use `ytm <url>`
 install:
     go install -ldflags "-s -w -X main.version={{version}}" ./cmd/ytm
@@ -42,5 +50,5 @@ snapshot:
     goreleaser release --snapshot --clean
 
 clean:
-    rm -rf ytm ytm.exe dist
+    rm -rf ytm ytm.exe ytm-desktop dist
 

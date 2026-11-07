@@ -20,6 +20,12 @@ type Config struct {
 	// Premium turns on the optional YouTube Premium upgrade pass; its cookies are in
 	// PremiumCookiesPath(). Never used for normal downloads.
 	Premium bool `json:"premium,omitempty"`
+	// YouTubeBrowser is the browser (browsercookies ID) the live library read uses; the
+	// choice is remembered, the cookies never are.
+	YouTubeBrowser string `json:"youtube_browser,omitempty"`
+	// BandcampBrowser is the browser whose Bandcamp sign-in is used to download music the
+	// user has bought in its original quality. Remembered the same way: never the cookies.
+	BandcampBrowser string `json:"bandcamp_browser,omitempty"`
 
 	// What a library download also does. All on by default (the zero value), so they're
 	// stored as "No...": off only when switched off in settings.
@@ -242,4 +248,18 @@ func DefaultOut() string {
 		return filepath.Join(h, "Music")
 	}
 	return "Music"
+}
+
+// Tilde shortens p to "~/..." when it is inside the home folder (with the system's own
+// separators, so Windows shows ~\Music).
+func Tilde(p string) string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if rel, err := filepath.Rel(home, p); err == nil && !strings.HasPrefix(rel, "..") {
+			if rel == "." {
+				return "~"
+			}
+			return "~" + string(filepath.Separator) + rel
+		}
+	}
+	return p
 }

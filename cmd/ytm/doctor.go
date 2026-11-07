@@ -42,11 +42,18 @@ func runDoctor(ctx context.Context, u *ui.UI, o opts) error {
 	}
 
 	u.Head("Tools · ytm downloads any that are missing on first use")
-	for _, t := range []string{"yt-dlp", "ffmpeg", "ffprobe", "deno", "node", "bun"} {
-		if p, err := exec.LookPath(t); err == nil {
-			ok("%s: %s", t, p)
+	for _, t := range []struct{ name, why string }{
+		{"yt-dlp", "fallback for videos ytm's own client can't open, and Premium downloads"},
+		{"ffmpeg", "remuxes downloads and writes tags and cover art; makes mp3/flac"},
+		{"ffprobe", "reads the tags and cover art of files you already have"},
+		{"deno", "optional: helps yt-dlp with YouTube's JavaScript challenges"},
+		{"node", "optional: same, if deno is missing"},
+		{"bun", "optional: same, if deno is missing"},
+	} {
+		if p, err := exec.LookPath(t.name); err == nil {
+			ok("%s: %s · %s", t.name, p, t.why)
 		} else {
-			note("%s: not on PATH", t)
+			note("%s: not on PATH · %s", t.name, t.why)
 		}
 	}
 

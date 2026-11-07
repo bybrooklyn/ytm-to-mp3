@@ -14,7 +14,9 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/apple"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/export"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/screen"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/spotify"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/takeout"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
@@ -53,8 +55,9 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 		var choice string
 		err := one(ctx, huh.NewSelect[string]().Title("What do you want to do?").Options(
 			huh.NewOption("Download my YouTube Music library", "library"),
-			huh.NewOption("Download a link (YouTube, Apple Music or Spotify)", "link"),
+			huh.NewOption("Download a link (YouTube, Apple Music, Spotify, SoundCloud, Bandcamp)", "link"),
 			huh.NewOption("Apple Music...", "apple"),
+			huh.NewOption("Connections (accounts and sources)", "connections"),
 			huh.NewOption("Settings", "settings"),
 			huh.NewOption("More tools...", "tools"),
 			huh.NewOption("Quit", "quit"),
@@ -67,6 +70,8 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 			err = libraryFlow(ctx, u, o)
 		case "link":
 			err = linkFlow(ctx, u, o)
+		case "connections":
+			err = runConnections(ctx, u)
 		case "settings":
 			if err = runSettings(ctx, u); err == nil {
 				o = refreshOpts(o)
@@ -195,7 +200,7 @@ func header(o opts, width int) string {
 		dot = ui.Green("●")
 		n := connectionsLabel(cfg, pc)
 		if o.conns > 0 { // --connections for this run
-			n = fmt.Sprint(min(o.conns, maxConns))
+			n = fmt.Sprint(min(o.conns, screen.MaxConns))
 		}
 		vpn, vpnShort = "Proton VPN, "+n+" connections", "VPN ×"+n
 		if n == "1" {
@@ -228,7 +233,7 @@ func tilde(p string) string {
 			if rel == "." {
 				return "~"
 			}
-			return "~/" + rel
+			return "~" + string(filepath.Separator) + rel // native separators, so Windows isn't ~/AppData\Roaming
 		}
 	}
 	return p
@@ -236,6 +241,20 @@ func tilde(p string) string {
 
 // libraryFlow finds (or helps get) a Takeout export, shows what's in it, and downloads it.
 func libraryFlow(ctx context.Context, u *ui.UI, o opts) error {
+	var how string
+	if err := one(ctx, huh.NewSelect[string]().Title("Where is your YouTube Music library?").Options(
+		huh.NewOption("Read it from my signed-in browser (no export needed)", "live"),
+		huh.NewOption("From a Google Takeout export", "takeout"),
+		huh.NewOption("Back", "back"),
+	).Value(&how)); err != nil {
+		return err
+	}
+	switch how {
+	case "back":
+		return errBack
+	case "live":
+		return liveLibraryFlow(ctx, u, o)
+	}
 	src, err := chooseExport(ctx, u)
 	if err != nil {
 		return err
@@ -351,7 +370,7 @@ func askForExport(ctx context.Context) (takeout.Source, error) {
 	return found, err
 }
 
-// linkFlow asks for one or more YouTube, Apple Music or Spotify links and downloads them.
+// linkFlow asks for one or more YouTube, Apple Music, Spotify, SoundCloud or Bandcamp links and downloads them.
 func linkFlow(ctx context.Context, u *ui.UI, o opts) error {
 	var in string
 	var links []string
@@ -360,19 +379,19 @@ func linkFlow(ctx context.Context, u *ui.UI, o opts) error {
 		where = "Apple and Spotify songs come from Apple Music when it has them, else YouTube."
 	}
 	if err := one(ctx, huh.NewInput().Title("Paste a link").
-		Description("A song, album or playlist from YouTube, Apple Music or Spotify.\n"+
+		Description("A song, album or playlist from YouTube, Apple Music, Spotify, SoundCloud or Bandcamp.\n"+
 			"Paste several separated by spaces.\n"+where).
 		Value(&in).Validate(func(s string) error {
 		links = links[:0]
 		for _, f := range strings.Fields(s) {
 			f = strings.Trim(f, `"'`)
-			if apple.IsURL(f) || spotify.IsURL(f) {
+			if apple.IsURL(f) || spotify.IsURL(f) || engine.WebSite(f) != "" {
 				links = append(links, f)
 				continue
 			}
 			l, ok := asURL(f)
 			if !ok {
-				return fmt.Errorf("%q isn't a YouTube, Apple Music or Spotify link", f)
+				return fmt.Errorf("%q isn't a YouTube, Apple Music, Spotify, SoundCloud or Bandcamp link", f)
 			}
 			links = append(links, l)
 		}

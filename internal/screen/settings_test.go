@@ -1,50 +1,34 @@
-package main
+package screen
 
 import (
 	"errors"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
-
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 )
 
-func press(m *settingsModel, keys ...string) {
+func press(m *Settings, keys ...string) {
+	named := map[string]bool{"up": true, "down": true, "left": true, "right": true, "enter": true, "esc": true, "backspace": true}
 	for _, k := range keys {
-		var msg tea.KeyPressMsg
-		switch k {
-		case "up":
-			msg = tea.KeyPressMsg{Code: tea.KeyUp}
-		case "down":
-			msg = tea.KeyPressMsg{Code: tea.KeyDown}
-		case "left":
-			msg = tea.KeyPressMsg{Code: tea.KeyLeft}
-		case "right":
-			msg = tea.KeyPressMsg{Code: tea.KeyRight}
-		case "enter":
-			msg = tea.KeyPressMsg{Code: tea.KeyEnter}
-		case "esc":
-			msg = tea.KeyPressMsg{Code: tea.KeyEscape}
-		case "backspace":
-			msg = tea.KeyPressMsg{Code: tea.KeyBackspace}
-		default:
-			msg = tea.KeyPressMsg{Code: rune(k[0]), Text: k}
+		if !named[k] && m.Editing() {
+			m.Type(k)
+		} else {
+			m.Key(k)
 		}
-		m.Update(msg)
 	}
 }
 
-func testModel(signedIn bool) (*settingsModel, *config.Config, *int) {
+func testModel(signedIn bool) (*Settings, *config.Config, *int) {
 	var last config.Config
 	n := 0
-	m := newSettingsModel(config.Config{}, signedIn, "me", 0)
-	m.save = func(c config.Config) error { last = c; n++; return nil }
-	m.check = func(s string) error {
-		if s == "bad" {
-			return errors.New("nope")
-		}
-		return nil
-	}
+	m := NewSettings(config.Config{}, signedIn, "me", 0,
+		func(c config.Config) error { last = c; n++; return nil },
+		func(s string) error {
+			if s == "bad" {
+				return errors.New("nope")
+			}
+			return nil
+		})
 	return m, &last, &n
 }
 
@@ -85,7 +69,7 @@ func TestClamping(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		press(m, "right")
 	}
-	if last.Connections != maxConns {
+	if last.Connections != MaxConns {
 		t.Fatalf("conns=%d", last.Connections)
 	}
 	for i := 0; i < 20; i++ {
@@ -107,9 +91,9 @@ func TestClamping(t *testing.T) {
 	if last.Jobs != 2 {
 		t.Fatalf("jobs=%d", last.Jobs)
 	}
-	m.cfg.Jobs = maxJobs
+	m.cfg.Jobs = MaxJobs
 	press(m, "right")
-	if last.Jobs != maxJobs {
+	if last.Jobs != MaxJobs {
 		t.Fatalf("jobs=%d", last.Jobs)
 	}
 }
@@ -226,7 +210,7 @@ func TestActionsAndQuit(t *testing.T) {
 
 func TestRenderMentionsEverything(t *testing.T) {
 	m, _, _ := testModel(true)
-	s := m.render()
+	s := m.Render()
 	for _, r := range settingsRows {
 		if !contains(s, r.label) {
 			t.Errorf("missing %q", r.label)

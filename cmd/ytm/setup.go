@@ -14,9 +14,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	"charm.land/huh/v2/spinner"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/screen"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/vpn"
 )
@@ -28,21 +30,7 @@ func protonClient() *proton.Client {
 
 // checkFolder makes sure the music folder can be created and written, so a typo shows up
 // here instead of after a long download.
-func checkFolder(s string) error {
-	if strings.TrimSpace(s) == "" {
-		return errors.New("required")
-	}
-	dir := config.ExpandPath(s)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("can't create that folder: %v", err)
-	}
-	f, err := os.CreateTemp(dir, ".ytm-write-test-*")
-	if err != nil {
-		return fmt.Errorf("can't write there: %v", err)
-	}
-	f.Close()
-	return os.Remove(f.Name())
-}
+func checkFolder(s string) error { return screen.CheckFolder(s) }
 
 func one(ctx context.Context, f huh.Field) error {
 	return runForm(ctx, huh.NewForm(huh.NewGroup(f)))
@@ -82,6 +70,9 @@ func runForm(ctx context.Context, f *huh.Form) error {
 }
 
 func working(ctx context.Context, title string, f func(context.Context) error) error {
+	if !term.IsTerminal(os.Stdin.Fd()) || !term.IsTerminal(os.Stdout.Fd()) {
+		return f(ctx) // no terminal to draw a spinner on (piped, CI, a script)
+	}
 	var err error
 	if serr := spinner.New().WithTheme(ytmSpinner).Title(title).Context(ctx).ActionWithErr(func(c context.Context) error {
 		err = f(c)
