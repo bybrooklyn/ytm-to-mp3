@@ -248,3 +248,16 @@ func TestLyricsSettingsRows(t *testing.T) {
 		t.Fatal("NetEase should switch on")
 	}
 }
+
+func TestPrivateModeRowToggles(t *testing.T) {
+	m, last, n := testModel(false)
+	m.cur = int(rowPrivate)
+	press(m, "right")
+	if !last.Private || *n != 1 {
+		t.Fatalf("private not saved: %+v", last)
+	}
+	press(m, "right")
+	if last.Private {
+		t.Fatal("private did not toggle back")
+	}
+}

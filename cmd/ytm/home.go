@@ -31,7 +31,7 @@ func runHome(ctx context.Context, u *ui.UI, o opts) error {
 	if !config.Exists() {
 		first := true
 		if err := one(ctx, huh.NewConfirm().Title("Welcome to ytm. Set it up first? (takes a minute)").
-			Description("Pick your music folder and sign in to Proton VPN. You can skip and change it later.").
+			Description("Pick your music folder and set up a VPN (Proton, Mullvad or your own WireGuard config). You can skip and change it later.").
 			Affirmative("Set up").Negative("Skip").Value(&first)); err != nil {
 			if !errors.Is(err, errBack) {
 				return err
@@ -199,19 +199,20 @@ func extras(o opts) string {
 }
 
 func header(o opts, width int) string {
-	pc := protonClient()
 	cfg := config.Load()
+	v := currentVPN(cfg)
 	vpn, vpnShort := "VPN off", "no VPN"
 	dot := ui.Dim("○")
-	if pc.SignedIn() && !cfg.NoVPN && !o.noVPN {
+	if v.SignedIn && !cfg.NoVPN && !o.noVPN {
 		dot = ui.Green("●")
-		n := connectionsLabel(cfg, pc)
+		n := connectionsLabel(cfg, v)
 		if o.conns > 0 { // --connections for this run
 			n = fmt.Sprint(min(o.conns, screen.MaxConns))
 		}
-		vpn, vpnShort = "Proton VPN, "+n+" connections", "VPN ×"+n
+		name := providerLabel(providerID(cfg))
+		vpn, vpnShort = name+", "+n+" connections", "VPN ×"+n
 		if n == "1" {
-			vpn = "Proton VPN, 1 connection"
+			vpn = name + ", 1 connection"
 		}
 	}
 	// Never wrap: on a narrow terminal shorten the VPN part, then the folder.

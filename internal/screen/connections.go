@@ -5,7 +5,6 @@ import (
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/browsercookies"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
 )
 
 // Connection is one account or source ytm can use, and what state it is in.
@@ -53,18 +52,16 @@ func DetectConnections() []Connection {
 	}
 	out = append(out, ap)
 
-	pr := Connection{ID: "proton", Name: "Proton VPN", Action: "signin", Button: "Sign in",
-		Help: "Optional, but much faster: downloads go through several servers at once."}
-	if p, err := proton.SessionPath(); err == nil {
-		if c := proton.New(p); c.SignedIn() {
-			pr.Button = "Sign out"
-			pr.Status, pr.Good, pr.Action = "signed in as "+c.Session.Username, true, "signout"
-			pr.Hint = "downloads go through several servers at once; enter to sign out"
-		}
-	}
-	if pr.Status == "" {
-		pr.Status = "not signed in"
-		pr.Hint = "optional but much faster; enter to sign in"
+	vp := DetectVPN(cfg)
+	pr := Connection{ID: "vpn", Name: "VPN", Action: "signin", Button: "Set up",
+		Help: "Optional, but much faster: downloads go through several servers at once. Proton, Mullvad, or any WireGuard config."}
+	if vp.SignedIn {
+		pr.Button = "Sign out"
+		pr.Status, pr.Good, pr.Action = vp.Provider+" · "+vp.Who, true, "signout"
+		pr.Hint = "downloads go through several servers at once; enter to sign out"
+	} else {
+		pr.Status = "not set up"
+		pr.Hint = "optional but much faster; enter to choose Proton, Mullvad or your own WireGuard config"
 	}
 	out = append(out, pr)
 

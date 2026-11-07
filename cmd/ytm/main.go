@@ -23,7 +23,6 @@ import (
 	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/export"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/screen"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/spotify"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
@@ -225,8 +224,8 @@ func parse(name string, args []string) (opts, []string, error) {
 // movedInto says where each old subcommand lives now: everything is in ytm itself.
 var movedInto = map[string]string{
 	"setup":  "Settings",
-	"login":  "Settings (Proton account)",
-	"logout": "Settings (Proton account)",
+	"login":  "Settings (VPN account)",
+	"logout": "Settings (VPN account)",
 	"status": "Settings (Test VPN)",
 	"doctor": "More tools > Check that everything works",
 	"export": "\"Download my YouTube Music library\" (it helps you get the export)",
@@ -404,6 +403,8 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 	ex := &runExits{ctx: ctx, u: u, o: o}
 	ex.tools = sync.OnceValues(func() (deps.Tools, error) { return deps.Ensure(ctx, logf) })
 	defer ex.Close()
+	setCurrentRun(ex) // the tag fixing that follows reuses these exits
+	defer setCurrentRun(nil)
 	var xs exitSet
 	connect := func() (err error) { xs, err = ex.get(); return err }
 	ensure := func() (err error) {
@@ -646,7 +647,7 @@ func download(ctx context.Context, u *ui.UI, o opts, inputs ...string) error {
 // would take an hour at MusicBrainz's one request a second), then the Premium upgrade if
 // a sign-in is set up.
 func afterDownload(ctx context.Context, u *ui.UI, o opts, st *store.Store, since time.Time) error {
-	if o.tagAfter {
+	if o.tagAfter && !config.Load().Private {
 		if files := st.DoneSince(since); len(files) > 0 {
 			u.Head("Fixing the tags of %s with MusicBrainz · turn off in settings", count(len(files), "new song"))
 			t := o
@@ -778,42 +779,39 @@ type exitSet struct {
 // connections is how many VPN exits to open: the saved number (3 when unset), or with
 // "auto" (-1) the Proton plan's device limit minus one kept free for a spare. Auto is not
 // the default: in a 120-song test 10 exits were no faster than 6 (2026-11-04).
-func connections(cfg config.Config, pc *proton.Client) int {
+func connections(cfg config.Config, v vpnState) int {
 	if cfg.Connections > 0 {
 		return cfg.Connections
 	}
 	if cfg.Connections == 0 {
 		return 3
 	}
-	account := ""
-	if pc.Session != nil {
-		account = vpn.AccountID(pc.Session.Username)
-	}
-	if _, limit := vpn.LoadCache(vpn.DefaultCachePath(), account).Servers(); limit > 1 {
+	if _, limit := vpn.LoadCache(vpn.CachePathFor(v.Prov.ID()), v.Prov.AccountID()).Servers(); limit > 1 {
 		return min(limit-1, screen.MaxConns)
 	}
 	return 3
 }
 
 // connectionsLabel is connections for display: "auto (10)" or the saved number.
-func connectionsLabel(cfg config.Config, pc *proton.Client) string {
+func connectionsLabel(cfg config.Config, v vpnState) string {
 	if cfg.Connections >= 0 {
-		return fmt.Sprint(connections(cfg, pc))
+		return fmt.Sprint(connections(cfg, v))
 	}
-	return fmt.Sprintf("auto (%d)", connections(cfg, pc))
+	return fmt.Sprintf("auto (%d)", connections(cfg, v))
 }
 
 func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 	none := exitSet{Close: func() {}}
 	cfg := config.Load()
-	pc := protonClient()
-	if o.noVPN || cfg.NoVPN || !pc.SignedIn() {
+	v := currentVPN(cfg)
+	pc, label := v.Prov, providerLabel(providerID(cfg))
+	if o.noVPN || cfg.NoVPN || !v.SignedIn {
 		if !o.noVPN && !cfg.NoVPN {
-			u.Note("no VPN · sign in to Proton in ytm's Settings to download faster")
+			u.Note("no VPN · set one up in ytm's Settings to download faster")
 		}
 		return none, nil
 	}
-	n := connections(cfg, pc)
+	n := connections(cfg, v)
 	if o.conns > 0 {
 		n = min(o.conns, screen.MaxConns)
 	}
@@ -828,7 +826,7 @@ func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 		tick := time.NewTicker(120 * time.Millisecond)
 		defer tick.Stop()
 		for {
-			u.Status("Connecting to Proton VPN · %d of %d up · %ds", up.Load(), n, int(time.Since(began).Seconds()))
+			u.Status("Connecting to %s · %d of %d up · %ds", label, up.Load(), n, int(time.Since(began).Seconds()))
 			select {
 			case <-stopStatus:
 				return
@@ -872,7 +870,7 @@ func buildExits(ctx context.Context, u *ui.UI, o opts) (exitSet, error) {
 	if err != nil {
 		return none, fmt.Errorf("%w (use --no-vpn to download without it)", err)
 	}
-	u.Styled(fmt.Sprintf("  %s Proton VPN %s", ui.Green("●"),
+	u.Styled(fmt.Sprintf("  %s %s %s", ui.Green("●"), label,
 		ui.Dim(fmt.Sprintf("· %s up, %d more joining", count(len(pool.Exits()), "server"), max(0, n-len(pool.Exits()))))))
 	var once sync.Once
 	return exitSet{

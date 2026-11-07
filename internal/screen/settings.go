@@ -20,7 +20,8 @@ import (
 type Settings struct {
 	cfg      config.Config
 	signedIn bool
-	appleIn  bool // an Apple Music login is saved
+	appleIn  bool   // an Apple Music login is saved
+	provider string // the VPN provider's name for the account row ("" = Proton VPN)
 	user     string
 	cur      int
 
@@ -41,6 +42,9 @@ type Settings struct {
 func NewSettings(cfg config.Config, signedIn bool, user string, cur int, save func(config.Config) error, check func(string) error) *Settings {
 	return &Settings{cfg: cfg, signedIn: signedIn, user: user, cur: cur, save: save, check: check}
 }
+
+// SetProvider tells the screen which VPN provider the account row is about ("" = Proton).
+func (m *Settings) SetProvider(name string) { m.provider = name }
 
 // SetApple tells the screen whether an Apple Music login is saved.
 func (m *Settings) SetApple(in bool) { m.appleIn = in }
@@ -168,7 +172,7 @@ func (m *Settings) activate() {
 		}
 	case rowTest:
 		if !m.signedIn {
-			m.err = "sign in to Proton first"
+			m.err = "set up a VPN first"
 			return
 		}
 		m.action = "test"
@@ -201,9 +205,11 @@ func (m *Settings) change(d int) {
 		m.cfg.NoLyricsLRCLIB = !m.cfg.NoLyricsLRCLIB
 	case rowLyricsNetEase:
 		m.cfg.LyricsNetEase = !m.cfg.LyricsNetEase
+	case rowPrivate:
+		m.cfg.Private = !m.cfg.Private
 	case rowVPN:
 		if !m.vpnUsable() {
-			m.err = "sign in to Proton first"
+			m.err = "set up a VPN first"
 			return
 		}
 		m.cfg.NoVPN = !m.cfg.NoVPN
@@ -259,6 +265,7 @@ const (
 	rowCountries
 	rowPremium
 	rowApple
+	rowPrivate
 	rowTest
 )
 
@@ -284,12 +291,13 @@ var settingsRows = []struct {
 	{rowLyricsLRCLIB, "Lyrics from LRCLIB"},
 	{rowLyricsNetEase, "Lyrics from NetEase"},
 	{rowVPN, "VPN"},
-	{rowAccount, "Proton account"},
+	{rowAccount, "VPN account"},
 	{rowConns, "VPN connections"},
 	{rowJobs, "Parallel downloads"},
 	{rowCountries, "Exit countries"},
 	{rowPremium, "YouTube Premium"},
 	{rowApple, "Apple Music"},
+	{rowPrivate, "Private mode"},
 	{rowTest, "Test VPN"},
 }
 
@@ -357,7 +365,7 @@ func (m *Settings) value(k rowKind) (val, hint string, dim bool) {
 		return onOff(!m.cfg.NoPremiumAfter), hint, !m.cfg.Premium // greyed: inert until the sign-in
 	case rowVPN:
 		if !m.signedIn {
-			return "off", "sign in to Proton below to use it", true
+			return "off", "set up a VPN below to use it (Proton, Mullvad or your own WireGuard config)", true
 		}
 		if m.cfg.NoVPN {
 			return "off", "", false
@@ -365,12 +373,16 @@ func (m *Settings) value(k rowKind) (val, hint string, dim bool) {
 		return "on", "", false
 	case rowAccount:
 		if m.signedIn {
-			return "signed in as " + m.user, "enter to sign out", false
+			who := m.user
+			if m.provider != "" {
+				who = m.provider + " · " + m.user
+			}
+			return "signed in as " + who, "enter to sign out", false
 		}
-		return "not signed in", "enter to sign in", false
+		return "not signed in", "enter to choose Proton, Mullvad or your own WireGuard config", false
 	case rowConns:
 		if m.cfg.Connections < 0 {
-			return "Auto", "your Proton plan's device limit, minus one kept as a spare", !m.signedIn || m.cfg.NoVPN
+			return "Auto", "your VPN account's device limit, minus one kept as a spare", !m.signedIn || m.cfg.NoVPN
 		}
 		return fmt.Sprint(orInt(m.cfg.Connections, 3)), "exits used at once; below 1 is Auto (all your plan allows)", !m.signedIn || m.cfg.NoVPN
 	case rowJobs:
@@ -393,6 +405,8 @@ func (m *Settings) value(k rowKind) (val, hint string, dim bool) {
 			return "signed in (store " + strings.ToUpper(orDefault(m.cfg.AppleStorefront, "us")) + ")", "enter to sign out", false
 		}
 		return "not signed in", "optional: 256 kbps AAC with your Apple Music subscription; enter to sign in", false
+	case rowPrivate:
+		return onOff(m.cfg.Private), "no MusicBrainz tag or cover lookups at all (see PRIVACY.md); downloading still contacts your music source", false
 	case rowTest:
 		if !m.signedIn {
 			return "", "sign in first", true
@@ -478,13 +492,13 @@ func (m *Settings) describe(row *Row, k rowKind) {
 		toggle("Unofficial (music.163.com). Only asked when LRCLIB has nothing; it is told the title and artist.")
 	case rowVPN:
 		row.Group = "Network"
-		toggle("Send downloads through several Proton servers at once.")
+		toggle("Send downloads through several VPN servers at once.")
 	case rowAccount:
 		row.Kind, row.Button = KindAction, "Sign in"
 		if m.signedIn {
 			row.Button = "Sign out"
 		}
-		row.Help = "Your Proton VPN account."
+		row.Help = "Your VPN account: Proton, Mullvad, or your own WireGuard config."
 	case rowConns:
 		row.Kind, row.Help = KindNumber, "Servers used at once. Auto uses all your plan allows, minus one kept spare."
 	case rowJobs:
@@ -507,11 +521,13 @@ func (m *Settings) describe(row *Row, k rowKind) {
 			row.Button = "Sign out"
 		}
 		row.Help = "Optional. 256 kbps AAC with your own Apple Music subscription."
+	case rowPrivate:
+		toggle("No MusicBrainz tag or cover lookups at all. Downloading still contacts your music source. See PRIVACY.md.")
 	case rowTest:
 		row.Kind, row.Button, row.Help = KindAction, "Run test", "Connect and show each server downloads would use."
 		row.Status = "Not run yet" // Value is the terminal's "press enter..." text
 		if !m.signedIn {
-			row.Status = "Needs a Proton sign-in"
+			row.Status = "Needs a VPN set up"
 		}
 	}
 }
@@ -529,7 +545,7 @@ func (m *Settings) SelectIndex(i int) {
 
 func isStepRow(k rowKind) bool {
 	switch k {
-	case rowFormat, rowAlbums, rowRetry, rowTagAfter, rowPremiumAfter, rowLyricsAfter, rowLyricsLRCLIB, rowLyricsNetEase, rowVPN, rowConns, rowJobs, rowCountries:
+	case rowFormat, rowAlbums, rowRetry, rowTagAfter, rowPremiumAfter, rowLyricsAfter, rowLyricsLRCLIB, rowLyricsNetEase, rowVPN, rowConns, rowJobs, rowCountries, rowPrivate:
 		return true
 	}
 	return false

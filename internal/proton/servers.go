@@ -3,42 +3,23 @@ package proton
 import (
 	"context"
 	"errors"
+
+	"github.com/bybrooklyn/ytm-to-mp3/internal/vpnprovider"
 )
 
-// Server is one usable WireGuard endpoint.
-type Server struct {
-	Name      string  `json:"name"`
-	Country   string  `json:"country"`
-	City      string  `json:"city"`
-	IP        string  `json:"ip"`         // entry IP
-	PublicKey string  `json:"public_key"` // WireGuard (X25519) public key, base64
-	Score     float64 `json:"score"`      // Proton's own rating; lower is better
-	Load      int     `json:"load"`       // percent, 0-100
-	Tier      int     `json:"tier"`
-	Features  int     `json:"features"`
-	Status    int     `json:"status"`
-	Lat       float64 `json:"lat,omitempty"` // where the server is (0,0 = unknown, e.g. an older cache)
-	Long      float64 `json:"long,omitempty"`
-}
-
-// Location is where Proton places this connection (the user's own IP).
-type Location struct {
-	Lat, Long float64
-	Country   string
-}
+// Server, Location and ServerList are the provider-neutral types (internal/vpnprovider);
+// Proton fills them in from its API.
+type (
+	Server     = vpnprovider.Server
+	Location   = vpnprovider.Location
+	ServerList = vpnprovider.ServerList
+)
 
 // Location asks Proton where the current connection is, for ranking servers by distance.
 func (c *Client) Location(ctx context.Context) (Location, error) {
 	var l Location
 	err := c.do(ctx, "GET", "/vpn/v1/location", true, nil, &l)
 	return l, err
-}
-
-// ServerList is what the API reports about the account and its servers.
-type ServerList struct {
-	Servers    []Server
-	MaxConnect int // devices the plan allows at once (0 = unknown)
-	MaxTier    int
 }
 
 type logical struct {

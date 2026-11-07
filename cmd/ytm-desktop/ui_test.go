@@ -107,7 +107,7 @@ func TestControlsSetValues(t *testing.T) {
 	if last.Format != "flac" {
 		t.Fatalf("format = %q", last.Format)
 	}
-	v.send(screen.Event{Set: &screen.Set{Row: 9, Step: 1}}) // parallel downloads stepper
+	v.send(screen.Event{Set: &screen.Set{Row: 12, Step: 1}}) // parallel downloads stepper
 	if last.Jobs != 1 {
 		t.Fatalf("jobs = %d", last.Jobs)
 	}

@@ -80,10 +80,7 @@ func premiumSetup(ctx context.Context, u *ui.UI) error {
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(dst, b, 0o600); err != nil {
+		if err := config.WriteSecret(dst, b); err != nil {
 			return err
 		}
 	} else {

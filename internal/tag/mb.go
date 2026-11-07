@@ -81,8 +81,12 @@ type Client struct {
 	gap      time.Duration
 }
 
+// Transport, when set, carries every MusicBrainz and cover-art request (ytm sets it to a
+// VPN exit so lookups don't leave from the user's own IP). nil is the default transport.
+var Transport http.RoundTripper
+
 func NewClient(cacheDir string) *Client {
-	return &Client{HTTP: &http.Client{Timeout: 30 * time.Second}, Base: "https://musicbrainz.org", CacheDir: cacheDir, gap: 1100 * time.Millisecond}
+	return &Client{HTTP: &http.Client{Timeout: 30 * time.Second, Transport: Transport}, Base: "https://musicbrainz.org", CacheDir: cacheDir, gap: 1100 * time.Millisecond}
 }
 
 func (c *Client) get(ctx context.Context, u string) ([]byte, error) {

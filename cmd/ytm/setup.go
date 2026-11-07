@@ -83,34 +83,9 @@ func working(ctx context.Context, title string, f func(context.Context) error) e
 	return err
 }
 
-func signIn(ctx context.Context, pc *proton.Client, cfg *config.Config) error {
-	if pc.SignedIn() {
-		keep := true
-		if err := one(ctx, huh.NewConfirm().Title("Signed in to Proton as "+pc.Session.Username+".").
-			Affirmative("Keep").Negative("Change").Value(&keep)); err != nil {
-			return err
-		}
-		if keep {
-			cfg.NoVPN = false
-			return nil
-		}
-	}
-	return loginFlow(ctx, pc, cfg)
-}
-
-// loginFlow asks whether to use the VPN and, if so, signs in (with 2FA and retries).
+// loginFlow signs in to Proton (with 2FA and retries); vpnFlow has already asked which
+// provider to use.
 func loginFlow(ctx context.Context, pc *proton.Client, cfg *config.Config) error {
-	useVPN := true
-	if err := one(ctx, huh.NewConfirm().Title("Download through Proton VPN?").
-		Description("Uses several servers at once so YouTube can't throttle you. Needs a Proton VPN account.").
-		Value(&useVPN)); err != nil {
-		return err
-	}
-	if !useVPN {
-		cfg.NoVPN = true
-		pc.Revoke(ctx) // end the session at Proton too, not just here
-		return nil
-	}
 	cfg.NoVPN = false
 	for {
 		var user, pass string
@@ -180,21 +155,22 @@ func ask2FA(ctx context.Context, pc *proton.Client) error {
 // runStatus connects the configured tunnels and shows where each one exits.
 func runStatus(ctx context.Context, u *ui.UI) error {
 	cfg := config.Load()
-	pc := protonClient()
+	v := currentVPN(cfg)
+	label := providerLabel(providerID(cfg))
 	u.Head("Settings · %s", tilde(config.Path()))
 	u.Item("music folder", "%s", tilde(config.ExpandPath(orDefault(cfg.Out, config.DefaultOut()))))
 	u.Item("format      ", "%s", orDefault(cfg.Format, config.DefaultFormat))
-	u.Item("VPN exits   ", "%s", connectionsLabel(cfg, pc))
-	if !pc.SignedIn() {
+	u.Item("VPN exits   ", "%s", connectionsLabel(cfg, v))
+	if !v.SignedIn {
 		u.Warn("VPN: not signed in · sign in in Settings")
 		return nil
 	}
 	if cfg.NoVPN {
-		u.Note("VPN: signed in as %s, but turned off", pc.Session.Username)
+		u.Note("VPN: %s (%s), but turned off", label, v.Who)
 		return nil
 	}
-	u.Note("VPN: signed in as %s · connecting...", pc.Session.Username)
-	pool, err := vpn.Open(ctx, pc, connections(cfg, pc), u.Logf)
+	u.Note("VPN: %s (%s) · connecting...", label, v.Who)
+	pool, err := vpn.OpenWith(ctx, v.Prov, connections(cfg, v), u.Logf, vpn.Options{})
 	if err != nil {
 		return err
 	}

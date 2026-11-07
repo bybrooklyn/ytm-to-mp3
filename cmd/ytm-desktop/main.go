@@ -13,21 +13,14 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/theme"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/screen"
 )
 
 func main() {
-	signedIn, user := false, ""
-	if p, err := proton.SessionPath(); err == nil {
-		if c := proton.New(p); c.SignedIn() {
-			signedIn, user = true, c.Session.Username
-		}
-	}
 	a := app.NewWithID("io.github.bybrooklyn.ytm")
 	a.Settings().SetTheme(ytmTheme{Theme: theme.DefaultTheme()})
 	win := a.NewWindow("ytm")
 	win.Resize(fyne.NewSize(980, 720))
-	newView(win, screen.NewHost(screen.DefaultTabs(signedIn, user)...))
+	newView(win, screen.NewHost(screen.DefaultTabs()...))
 	win.ShowAndRun()
 }

@@ -57,8 +57,17 @@ func runDoctor(ctx context.Context, u *ui.UI, o opts) error {
 		}
 	}
 
+	cfg := config.Load()
+	v := currentVPN(cfg)
 	u.Head("Network")
-	for _, h := range []string{"https://github.com", "https://www.youtube.com", "https://vpn-api.proton.me"} {
+	hosts := []string{"https://github.com", "https://www.youtube.com"}
+	if v.SignedIn {
+		hosts = append(hosts, providerAPIHost(providerID(cfg)))
+	}
+	for _, h := range hosts {
+		if h == "" {
+			continue
+		}
 		if err := reach(ctx, h); err != nil {
 			bad("check your internet connection, proxy or firewall", "%s: %v", h, err)
 		} else {
@@ -66,15 +75,16 @@ func runDoctor(ctx context.Context, u *ui.UI, o opts) error {
 		}
 	}
 
-	u.Head("Proton VPN")
-	pc := protonClient()
-	switch {
-	case !pc.SignedIn():
-		note("not signed in (optional): sign in in Settings")
-	case config.Load().NoVPN:
-		note("signed in as %s, VPN turned off in settings", pc.Session.Username)
-	default:
-		ok("signed in as %s (Settings > Test VPN shows each exit)", pc.Session.Username)
+	u.Head("VPN and privacy")
+	for _, l := range privacyLines(cfg, v, o) {
+		switch l.kind {
+		case lineGood:
+			ok("%s", l.text)
+		case lineWarn:
+			bad(l.fix, "%s", l.text)
+		default:
+			note("%s", l.text)
+		}
 	}
 
 	u.Head("Apple Music")

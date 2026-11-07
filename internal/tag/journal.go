@@ -110,7 +110,7 @@ func getURL(ctx context.Context, url, dst string) error {
 		return err
 	}
 	req.Header.Set("User-Agent", "ytm-to-mp3/1 ( https://github.com/bybrooklyn/ytm-to-mp3 )")
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second, Transport: Transport}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

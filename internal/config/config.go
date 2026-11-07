@@ -17,6 +17,12 @@ type Config struct {
 	NoVPN       bool   `json:"no_vpn,omitempty"`      // sign-in is kept but VPN is off
 	Jobs        int    `json:"jobs,omitempty"`        // parallel downloads; 0 = auto
 	Countries   string `json:"countries,omitempty"`   // preferred exit country code; "" = auto/best
+	// Provider is the VPN service: "proton" (or "", the original default), "mullvad" or
+	// "wireguard" (your own .conf files). Its credentials live in their own 0600 files.
+	Provider string `json:"provider,omitempty"`
+	// Private is private mode: no optional lookups (MusicBrainz tags and cover art) at
+	// all. Downloading itself still contacts the music source you asked for.
+	Private bool `json:"private,omitempty"`
 	// Premium turns on the optional YouTube Premium upgrade pass; its cookies are in
 	// PremiumCookiesPath(). Never used for normal downloads.
 	Premium bool `json:"premium,omitempty"`
@@ -108,10 +114,44 @@ func SaveAppleCookies(jar string) error {
 		}
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+	return WriteSecret(p, []byte(jar+"\n"))
+}
+
+// WriteSecret writes data to path atomically with mode 0600 in a 0700 directory. A file
+// that already exists with looser permissions is replaced, not reused (os.WriteFile
+// would keep its old mode).
+func WriteSecret(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(p, []byte(jar+"\n"), 0o600)
+	tmp := path + ".tmp"
+	_ = os.Remove(tmp)
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// WireGuardDir is where imported WireGuard config files are kept (mode 0600 each).
+func WireGuardDir() string {
+	d, err := dir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "wireguard")
+}
+
+// MullvadPath is where the Mullvad account number and device keys are kept (mode 0600).
+func MullvadPath() string {
+	d, err := dir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "mullvad.json")
 }
 
 // SaveAppleToken writes the media-user-token (mode 0600), or removes it when empty.
@@ -128,10 +168,7 @@ func SaveAppleToken(token string) error {
 		}
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(p, []byte(token+"\n"), 0o600)
+	return WriteSecret(p, []byte(token+"\n"))
 }
 
 // PremiumCookiesPath is where ytm keeps its copy of the user's YouTube Premium cookies
@@ -216,18 +253,11 @@ func (c Config) Save() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return err
-	}
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, p)
+	return WriteSecret(p, b)
 }
 
 // ExpandPath turns "~/x" into an absolute path under the home directory and makes

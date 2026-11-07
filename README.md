@@ -125,9 +125,11 @@ Any video, playlist or album URL works, and you can pass several at once:
 ytm "https://music.youtube.com/playlist?list=..." "https://youtu.be/dQw4w9WgXcQ" -o ~/Music
 ```
 
-## Proton VPN (optional, much faster)
+## VPN (optional, much faster)
 
-Sign in once in Settings (**Proton account**); from then on every download goes through several VPN servers at once. **Test VPN** in Settings shows the servers in use and the IP each one exits from; `--no-vpn` skips the VPN for one run.
+Proton VPN, Mullvad or your own WireGuard config: set one up in Settings (**VPN account**). Mullvad needs only your account number; a WireGuard config is any standard `wg-quick` `.conf` (IVPN, Windscribe, AirVPN, your own server...; one file is one connection). What ytm sends where, and the private mode that turns off optional lookups, is in [PRIVACY.md](PRIVACY.md). The details below are for Proton; with Mullvad, ytm registers one key per connection under your account (it allows 5 devices, so at most the free ones are used, and signing out removes them).
+
+Sign in once in Settings (**VPN account**); from then on every download goes through several VPN servers at once. **Test VPN** in Settings shows the servers in use and the IP each one exits from; `--no-vpn` skips the VPN for one run.
 
 Signing in uses your Proton account (the password goes only to Proton and is never saved; 2FA codes are supported) and registers WireGuard keys for ytm under your account, one per connection (Proton routes a key through only one server at a time, so connections can't share one). Every run connects 3 servers near you (change the number in settings; "Auto" uses as many as your plan allows, minus one kept as a spare, though in testing 10 were no faster than 6; distance matters, since every lookup is several round trips through the tunnel) and spreads tracks over them. The connecting starts the moment a run begins, alongside the yt-dlp/ffmpeg check and reading your export, and the run goes on as soon as the first server is up (links are looked up through it, several at once); the others join a few seconds later. A server that gets rate-limited rests, and after repeated trouble ytm swaps it for a fresh server.
 

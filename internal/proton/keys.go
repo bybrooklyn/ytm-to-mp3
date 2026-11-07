@@ -10,15 +10,14 @@ import (
 	"encoding/pem"
 	"errors"
 	"time"
+
+	"github.com/bybrooklyn/ytm-to-mp3/internal/vpnprovider"
 )
 
 func b64(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
 
 // WGKey is our WireGuard identity, derived from an Ed25519 key that Proton certifies.
-type WGKey struct {
-	Private [32]byte // X25519, clamped
-	PEM     string   // Ed25519 public key (SPKI) sent to Proton
-}
+type WGKey = vpnprovider.Key
 
 // X25519FromSeed converts an Ed25519 seed to a clamped X25519 private key (RFC 7748),
 // which is what Proton's own client does to make the WireGuard key.

@@ -4,39 +4,37 @@ import (
 	"context"
 	"errors"
 	"sync"
-
-	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
 )
 
-// keyRing hands each tunnel its own WireGuard identity. Proton routes a key's traffic only
-// through the connection that handshook most recently, so tunnels sharing one key knock
-// each other out: with six open, most "stall" or can't connect at all, and the ones that
-// work change from minute to minute. A tunnel holds its slot until it is closed.
+// keyRing hands each tunnel its own WireGuard identity. Providers route (Proton) or count
+// (Mullvad's device limit) a key per tunnel: tunnels sharing one key knock each other out,
+// so with six open most "stall" or can't connect at all. A tunnel holds its slot until it
+// is closed.
 type keyRing struct {
 	mu   sync.Mutex
-	get  func(ctx context.Context, slot int) (*proton.WGKey, error)
+	get  func(ctx context.Context, slot int) (*Key, error)
 	size int
 	used []bool
-	keys map[int]*proton.WGKey
+	keys map[int]*Key
 }
 
 var errNoKeySlot = errors.New("all WireGuard keys are in use")
 
-func newKeyRing(size int, get func(context.Context, int) (*proton.WGKey, error)) *keyRing {
-	size = min(max(size, 1), proton.MaxSlots)
-	return &keyRing{get: get, size: size, used: make([]bool, size), keys: map[int]*proton.WGKey{}}
+func newKeyRing(size, maxSlots int, get func(context.Context, int) (*Key, error)) *keyRing {
+	size = min(max(size, 1), max(maxSlots, 1))
+	return &keyRing{get: get, size: size, used: make([]bool, size), keys: map[int]*Key{}}
 }
 
 // seed records a key already fetched for slot (the one checked at startup).
-func (r *keyRing) seed(slot int, k *proton.WGKey) {
+func (r *keyRing) seed(slot int, k *Key) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.keys[slot] = k
 }
 
-// acquire takes a free slot and returns its key, registering it with Proton the first
-// time. release must be called when the tunnel using it is closed (or never came up).
-func (r *keyRing) acquire(ctx context.Context) (k *proton.WGKey, release func(), err error) {
+// acquire takes a free slot and returns its key, registering it with the provider the
+// first time. release must be called when the tunnel using it is closed (or never came up).
+func (r *keyRing) acquire(ctx context.Context) (k *Key, release func(), err error) {
 	r.mu.Lock()
 	slot := -1
 	for i, u := range r.used {

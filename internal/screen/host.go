@@ -171,13 +171,16 @@ func (h *Host) set(m Model, s Set) {
 	}
 }
 
-// DefaultTabs are the screens of the desktop window: connections and settings. signedIn and
-// user say whether a Proton session exists (for the settings screen).
-func DefaultTabs(signedIn bool, user string) []*Tab {
+// DefaultTabs are the screens of the desktop window: connections and settings.
+func DefaultTabs() []*Tab {
 	return []*Tab{
 		{Name: "connections", Make: func() Model { return NewConnections(DetectConnections(), 0) }},
 		{Name: "settings", Keep: true, Make: func() Model {
-			return NewSettings(config.Load(), signedIn, user, 0, func(c config.Config) error { return c.Save() }, CheckFolder)
+			cfg := config.Load()
+			v := DetectVPN(cfg)
+			m := NewSettings(cfg, v.SignedIn, v.Who, 0, func(c config.Config) error { return c.Save() }, CheckFolder)
+			m.SetProvider(v.Provider)
+			return m
 		}},
 	}
 }

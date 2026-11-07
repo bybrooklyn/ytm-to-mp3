@@ -48,10 +48,19 @@ func runTag(ctx context.Context, u *ui.UI, o opts, dir string, files ...string) 
 			moved(from, to)
 		}
 	}
-	return tag.Run(ctx, tag.Options{
-		Dir: dir, Apply: o.apply, Rename: o.rename, Undo: o.undo, Offline: o.offline,
-		FFmpeg: ffmpeg, FFprobe: ffprobe, UI: u, OnMove: onMove, Files: files, TrackNumber: trackNo,
-	})
+	// Private mode means no online lookups at all. Otherwise, with the VPN on, they go out
+	// through it (and stop if it can't connect) rather than from your own IP.
+	offline := o.offline || config.Load().Private || o.undo
+	run := func() error {
+		return tag.Run(ctx, tag.Options{
+			Dir: dir, Apply: o.apply, Rename: o.rename, Undo: o.undo, Offline: offline,
+			FFmpeg: ffmpeg, FFprobe: ffprobe, UI: u, OnMove: onMove, Files: files, TrackNumber: trackNo,
+		})
+	}
+	if offline {
+		return run()
+	}
+	return withTagNetwork(ctx, u, o, run)
 }
 
 // tidyFlow renames the music folder to the current scheme (Artist/Album/NN - Title.ext,

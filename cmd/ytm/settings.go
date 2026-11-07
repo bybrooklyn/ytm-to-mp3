@@ -10,7 +10,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/screen"
 	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
 )
@@ -74,16 +73,13 @@ func runSettings(ctx context.Context, u *ui.UI) error {
 	if !u.Interactive() {
 		return errors.New("settings need a terminal")
 	}
-	pc := protonClient()
 	cur := 0
-	landOnAccount := !pc.SignedIn()
+	landOnAccount := !currentVPN(config.Load()).SignedIn
 	for {
 		cfg := config.Load()
-		user := ""
-		if pc.SignedIn() {
-			user = pc.Session.Username
-		}
-		sm := screen.NewSettings(cfg, pc.SignedIn(), user, cur, func(c config.Config) error { return c.Save() }, checkFolder)
+		v := currentVPN(cfg)
+		sm := screen.NewSettings(cfg, v.SignedIn, v.Who, cur, func(c config.Config) error { return c.Save() }, checkFolder)
+		sm.SetProvider(providerLabel(providerID(cfg)))
 		sm.SetApple(appleSignedIn())
 		if landOnAccount {
 			sm.SelectAccount() // first run: land on the sign-in row
@@ -101,7 +97,7 @@ func runSettings(ctx context.Context, u *ui.UI) error {
 			}
 			return nil
 		}
-		if err := doAction(ctx, u, pc, sm.Action()); err != nil {
+		if err := doAction(ctx, u, sm.Action()); err != nil {
 			return err
 		}
 	}
@@ -113,7 +109,6 @@ func runConnections(ctx context.Context, u *ui.UI) error {
 	if !u.Interactive() {
 		return errors.New("connections need a terminal")
 	}
-	pc := protonClient()
 	cur := 0
 	for {
 		cm := screen.NewConnections(screen.DetectConnections(), cur)
@@ -124,7 +119,7 @@ func runConnections(ctx context.Context, u *ui.UI) error {
 		if cm.Action() == "" {
 			return nil
 		}
-		if err := doAction(ctx, u, pc, cm.Action()); err != nil {
+		if err := doAction(ctx, u, cm.Action()); err != nil {
 			return err
 		}
 	}
@@ -133,15 +128,15 @@ func runConnections(ctx context.Context, u *ui.UI) error {
 // doAction runs the work a screen asked for ("signin", "premium", ...) in the plain terminal.
 // Only a real failure (saving settings) is returned; a flow the user backs out of or that
 // fails is reported and the screen comes back.
-func doAction(ctx context.Context, u *ui.UI, pc *proton.Client, action string) error {
+func doAction(ctx context.Context, u *ui.UI, action string) error {
 	switch action {
 	case "signout":
-		// Ends the session at Proton too, not just here; the WireGuard device key stays
-		// listed in the account until it is removed at account.protonvpn.com.
-		pc.Revoke(ctx)
+		// Ends the session at the provider too, not just here. Mullvad's device keys are
+		// removed from the account; Proton's stay listed until removed at account.protonvpn.com.
+		signOutVPN(ctx, config.Load())
 	case "signin":
 		c := config.Load()
-		if err := loginFlow(ctx, pc, &c); err != nil {
+		if err := vpnFlow(ctx, &c); err != nil {
 			printErr(err)
 		}
 		return c.Save()

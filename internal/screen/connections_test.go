@@ -59,7 +59,7 @@ func TestDetectConnectionsListsEverySource(t *testing.T) {
 	for _, c := range DetectConnections() {
 		got[c.ID] = true
 	}
-	for _, id := range []string{"youtube", "apple", "proton", "premium", "spotify", "soundcloud", "bandcamp"} {
+	for _, id := range []string{"youtube", "apple", "vpn", "premium", "spotify", "soundcloud", "bandcamp"} {
 		if !got[id] {
 			t.Errorf("missing %s", id)
 		}

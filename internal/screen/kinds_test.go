@@ -49,12 +49,12 @@ func TestSetEventsAreKeys(t *testing.T) {
 	if last.Format != "flac" {
 		t.Fatalf("format %q", last.Format)
 	}
-	h.Do(Event{Set: &Set{Row: 10, Value: "DE"}})
+	h.Do(Event{Set: &Set{Row: 13, Value: "DE"}})
 	if last.Countries != "DE" {
 		t.Fatalf("countries %q", last.Countries)
 	}
-	h.Do(Event{Set: &Set{Row: 9, Step: 1}})
-	h.Do(Event{Set: &Set{Row: 9, Step: 1}})
+	h.Do(Event{Set: &Set{Row: 12, Step: 1}})
+	h.Do(Event{Set: &Set{Row: 12, Step: 1}})
 	if last.Jobs != 2 {
 		t.Fatalf("jobs %d", last.Jobs)
 	}
@@ -65,7 +65,7 @@ func TestSetEventsAreKeys(t *testing.T) {
 	if v := h.Do(Event{Set: &Set{Row: 99, Press: true}}); v.Editing {
 		t.Fatal("an out-of-range row must do nothing")
 	}
-	if v := h.Do(Event{Set: &Set{Row: 7, Press: true}}); v.Notice == "" {
+	if v := h.Do(Event{Set: &Set{Row: 10, Press: true}}); v.Notice == "" {
 		t.Fatal("pressing the Proton button should explain the terminal step")
 	}
 }

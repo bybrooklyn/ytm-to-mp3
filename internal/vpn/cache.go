@@ -1,8 +1,6 @@
 package vpn
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"math"
 	"math/rand"
@@ -14,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/vpnprovider"
 )
 
 const cacheVersion = 1
@@ -128,12 +127,16 @@ func DefaultCachePath() string {
 
 // AccountID is a short non-reversible tag for a username, so one account's server list
 // (which depends on its plan) is never used for another.
-func AccountID(username string) string {
-	if username == "" {
-		return ""
+func AccountID(username string) string { return vpnprovider.AccountHash(username) }
+
+// CachePathFor is the server cache file for a provider: Proton keeps the file it always
+// has, other providers get their own, so switching providers never mixes up server lists.
+func CachePathFor(providerID string) string {
+	p := DefaultCachePath()
+	if p == "" || providerID == "" || providerID == "proton" {
+		return p
 	}
-	sum := sha256.Sum256([]byte(strings.ToLower(username)))
-	return hex.EncodeToString(sum[:6])
+	return filepath.Join(filepath.Dir(p), "servers-"+providerID+".json")
 }
 
 // LoadCache reads path. A missing, corrupt, wrong-version or other-account file just
