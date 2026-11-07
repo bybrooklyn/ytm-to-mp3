@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -264,11 +265,48 @@ func downloadPlan(ctx context.Context, u *ui.UI, o opts, st *store.Store, srcs [
 	proxies := exitProxies(xs)
 	_ = apple.SetProxy(proxies[0])
 	ac := appleForUnified(ctx, u, o)
-	items := decideSources(ctx, u, ac, proxies, tracks, fromApple, o.maybe)
+	tc := tidalForUnified(ctx, u, o) // nil unless signed in to Tidal: then it is a candidate best source
+	items := decideSources(ctx, u, ac, proxies, tracks, fromApple, o.maybe, tc, nil)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	appleItems, ytItems, _, _ := planUnified(st, items, true)
+	// planUnified files everything that is not Apple under YouTube: peel the Tidal songs off,
+	// as downloadUnified does.
+	var tidalItems []*item
+	ytItems = slices.DeleteFunc(ytItems, func(it *item) bool {
+		if it.target == catalog.Tidal {
+			tidalItems = append(tidalItems, it)
+			return true
+		}
+		return false
+	})
+	if len(tidalItems) > 0 {
+		tools, err := ex.ensureTools(ctx, u)
+		if err != nil {
+			return err
+		}
+		failed, err := runTidalItems(ctx, u, o, st, tools.FFmpeg, tools.FFprobe, tc, tidalItems)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		// What Tidal couldn't give comes from the next best source, never dropped.
+		for _, it := range failed {
+			next := catalog.YouTube
+			if it.match.ID != "" {
+				next = catalog.Apple
+			}
+			if it.upgrade && it.heldRank >= catalog.Rank(next) {
+				continue // the copy already held is as good as the fallback
+			}
+			it.target = next
+			if next == catalog.Apple {
+				appleItems = append(appleItems, it)
+			} else {
+				ytItems = append(ytItems, it)
+			}
+		}
+	}
 	if len(appleItems) > 0 {
 		if err := runAppleItems(ctx, u, o, ac, st, proxies, appleItems); err != nil && firstErr == nil {
 			firstErr = err
