@@ -109,23 +109,38 @@ func Find(since time.Time) (string, bool) {
 	return cs[0].path, true
 }
 
+// TakeoutURL is where the export is requested.
+const TakeoutURL = takeoutURL
+
+// GuideTitle and GuideSteps are how to request the export; a screen shows them next to a
+// link to TakeoutURL, then calls WaitForZip.
+const GuideTitle = "Get your library from Google Takeout · free, a few minutes; Google may email you when it's ready"
+
+var GuideSteps = []string{
+	`On the page that opens, click "Deselect all".`,
+	`Scroll to "YouTube and YouTube Music" and tick it.`,
+	`Click "All YouTube data included", untick everything, then tick "music (library and uploads)" (and "playlists" if you want those). OK.`,
+	`Click "Next step", keep "Export once" and ".zip", then "Create export".`,
+	`When it's ready, download the zip into your Downloads folder.`,
+}
+
 // Guide explains how to request the export, opens the browser, and waits for the zip.
 func Guide(ctx context.Context, u *ui.UI) (string, error) {
-	u.Head("Get your library from Google Takeout · free, a few minutes; Google may email you when it's ready")
-	for i, step := range []string{
-		`On the page that opens, click "Deselect all".`,
-		`Scroll to "YouTube and YouTube Music" and tick it.`,
-		`Click "All YouTube data included", untick everything, then tick "music (library and uploads)" (and "playlists" if you want those). OK.`,
-		`Click "Next step", keep "Export once" and ".zip", then "Create export".`,
-		`When it's ready, download the zip into your Downloads folder.`,
-	} {
+	u.Head("%s", GuideTitle)
+	for i, step := range GuideSteps {
 		u.Styled(fmt.Sprintf("    %s %s", ui.Cyan(fmt.Sprintf("%d.", i+1)), step))
 	}
 	u.Hint("mfetchy notices the zip and carries on by itself. (Ctrl-C to stop waiting.)")
-	started := time.Now().Add(-2 * time.Minute) // tolerate a clock/mtime skew
 	if err := OpenBrowser(takeoutURL); err != nil {
 		u.Note("Open this page in your browser: %s", takeoutURL)
 	}
+	return WaitForZip(ctx, u)
+}
+
+// WaitForZip waits until a Takeout zip has finished arriving in the download folders, and
+// returns its path. It ends with ctx.
+func WaitForZip(ctx context.Context, u *ui.UI) (string, error) {
+	started := time.Now().Add(-2 * time.Minute) // tolerate a clock/mtime skew
 	u.Status("Waiting for the Takeout zip in your Downloads folder")
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()

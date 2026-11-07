@@ -10,6 +10,7 @@ import (
 
 	"github.com/bybrooklyn/mfetchy/internal/apple"
 	"github.com/bybrooklyn/mfetchy/internal/config"
+	"github.com/bybrooklyn/mfetchy/internal/core"
 	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
 
@@ -27,7 +28,7 @@ func appleMenu(ctx context.Context, u *ui.UI, o opts) error {
 		if !in {
 			return errBack
 		}
-		if err := appleLogin(ctx, u); err != nil {
+		if err := core.AppleLogin(ctx, u, newPrompter(u)); err != nil {
 			return err
 		}
 	}
@@ -48,7 +49,7 @@ func appleMenu(ctx context.Context, u *ui.UI, o opts) error {
 	}
 	switch choice {
 	case "match":
-		src, err := chooseExport(ctx, u)
+		src, err := core.ChooseExport(ctx, u, newPrompter(u))
 		if err != nil {
 			return err
 		}
@@ -58,7 +59,7 @@ func appleMenu(ctx context.Context, u *ui.UI, o opts) error {
 	case "status":
 		return appleStatus(ctx, u)
 	case "logout":
-		return appleLogout(u)
+		return core.AppleLogout(u)
 	}
 	return errBack
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/bybrooklyn/mfetchy/internal/browsercookies"
@@ -20,15 +21,19 @@ func liveLibraryFlow(ctx context.Context, u *ui.UI, o opts) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("\n  %s %s songs %s\n    %s %s %s %s\n\n", ui.OK("✓"), ui.Bold(fmt.Sprint(len(lib.Tracks))),
+	u.Styled(fmt.Sprintf("\n  %s %s songs %s\n    %s %s %s %s\n", ui.OK("✓"), ui.Bold(fmt.Sprint(len(lib.Tracks))),
 		ui.Dim(fmt.Sprintf("(%d liked · %d saved to the library · %s · %s)", lib.Liked, lib.Saved,
 			count(lib.Albums, "album"), count(lib.Playlists, "playlist"))),
-		ui.Dim("saving to"), tilde(o.out), ui.Dim("as"), ui.Cyan(o.format))
+		ui.Dim("saving to"), tilde(o.out), ui.Dim("as"), ui.Cyan(o.format)))
+	detail := fmt.Sprintf("%s songs: %d liked, %d saved to the library, %s, %s.\nSaving to %s as %s.", fmt.Sprint(len(lib.Tracks)), lib.Liked, lib.Saved,
+		count(lib.Albums, "album"), count(lib.Playlists, "playlist"), tilde(o.out), o.format)
 	if lib.Skipped > 0 {
-		fmt.Printf("    %s%s couldn't be read and were left out%s\n", cDim, count(lib.Skipped, "album or playlist"), cReset)
+		u.Styled(fmt.Sprintf("    %s%s couldn't be read and were left out%s", cDim, count(lib.Skipped, "album or playlist"), cReset))
+		detail += "\n" + count(lib.Skipped, "album or playlist") + " couldn't be read and were left out."
 	}
-	fmt.Printf("    %s%s%s\n\n", cDim, extras(o), cReset)
-	ok, err := o.prompt.Confirm(ctx, Question{Title: "Download?", Yes: "Download", No: "Back", Default: true})
+	u.Styled(fmt.Sprintf("    %s%s%s\n", cDim, extras(o), cReset))
+	detail += "\n" + capitalFirst(strings.TrimSuffix(extras(o), "  (change in settings)")) + "."
+	ok, err := o.prompt.Confirm(ctx, Question{Title: "Download?", Detail: detail, Yes: "Download", No: "Back", Default: true})
 	if err != nil {
 		return err
 	}

@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/bybrooklyn/mfetchy/internal/config"
+	"github.com/bybrooklyn/mfetchy/internal/core"
 	"github.com/bybrooklyn/mfetchy/internal/screen"
 	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
@@ -134,29 +135,25 @@ func doAction(ctx context.Context, u *ui.UI, action string) error {
 	case "signout":
 		// Ends the session at the provider too, not just here. Mullvad's device keys are
 		// removed from the account; Proton's stay listed until removed at account.protonvpn.com.
-		signOutVPN(ctx, config.Load())
+		core.VPNSignOut(ctx)
 	case "signin":
-		c := config.Load()
-		if err := vpnFlow(ctx, &c); err != nil {
-			printErr(err)
-		}
-		return c.Save()
+		printErr(core.VPNSignIn(ctx, u, newPrompter(u)))
 	case "premium":
-		printErr(premiumSetup(ctx, u))
+		printErr(core.PremiumSetup(ctx, u, newPrompter(u)))
 	case "applein":
-		printErr(appleLogin(ctx, u))
+		printErr(core.AppleLogin(ctx, u, newPrompter(u)))
 	case "appleout":
-		printErr(appleLogout(u))
+		printErr(core.AppleLogout(u))
 	case "tidalin":
-		printErr(tidalLogin(ctx, u))
+		printErr(core.TidalLogin(ctx, u, newPrompter(u)))
 	case "tidalout":
-		printErr(tidalLogout(u))
+		printErr(core.TidalLogout(u))
 	case "youtube":
-		printErr(chooseYouTubeBrowser(ctx))
+		printErr(core.ChooseYouTubeBrowser(ctx, newPrompter(u)))
 	case "bandcamp":
-		printErr(chooseBandcampBrowser(ctx))
+		printErr(core.ChooseBandcampBrowser(ctx, newPrompter(u)))
 	case "test":
-		printErr(runStatus(ctx, u))
+		printErr(core.VPNTest(ctx, u))
 		fmt.Print("\n  " + ui.Dim("press enter to go back") + " ")
 		_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
 	}

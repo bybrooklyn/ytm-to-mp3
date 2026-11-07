@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/bybrooklyn/mfetchy/internal/config"
+	"github.com/bybrooklyn/mfetchy/internal/deps"
 	"github.com/bybrooklyn/mfetchy/internal/sidecar"
 	"github.com/bybrooklyn/mfetchy/internal/tidal"
 	"github.com/bybrooklyn/mfetchy/internal/ui"
@@ -36,10 +37,10 @@ func SignOutVPN(ctx context.Context, c config.Config) { signOutVPN(ctx, c) }
 func Connections(cfg config.Config, v VPNState) int         { return connections(cfg, v) }
 func ConnectionsLabel(cfg config.Config, v VPNState) string { return connectionsLabel(cfg, v) }
 
-func AppleSignedIn() bool                             { return appleSignedIn() }
-func AppleLogin(ctx context.Context, u *ui.UI) error  { return appleLogin(ctx, u) }
-func AppleLogout(u *ui.UI) error                      { return appleLogout(u) }
-func AppleStatus(ctx context.Context, u *ui.UI) error { return appleStatus(ctx, u) }
+func AppleSignedIn() bool                                        { return appleSignedIn() }
+func AppleLogin(ctx context.Context, u *ui.UI, p Prompter) error { return appleLogin(ctx, u, p) }
+func AppleLogout(u *ui.UI) error                                 { return appleLogout(u) }
+func AppleStatus(ctx context.Context, u *ui.UI) error            { return appleStatus(ctx, u) }
 
 // AppleMatch finds a YouTube library on Apple Music and downloads the chosen matches. If p
 // also has a SelectBoth method, the two questions it asks are shown as one form.
@@ -87,6 +88,9 @@ func RunDoctor(ctx context.Context, u *ui.UI, o Options) error {
 func RunTag(ctx context.Context, u *ui.UI, o Options, dir string, files ...string) error {
 	return runTag(ctx, u, o.internal(nil), dir, files...)
 }
+
+// UpdateTools fetches the newest yt-dlp (ffmpeg and deno are fetched when first needed).
+func UpdateTools(ctx context.Context, u *ui.UI) error { return deps.Update(ctx, u.Logf) }
 
 // AudioFiles lists the songs under dir.
 func AudioFiles(dir string) []string { return audioFiles(dir) }

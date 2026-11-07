@@ -34,24 +34,28 @@ func albumMarkKey(url string) string { return "bcalbum:" + url }
 // song has: a Bandcamp purchase's original files, then Apple Music, then YouTube.
 func allAccountsFlow(ctx context.Context, u *ui.UI, o opts) error {
 	srcs := library.Sources()
-	fmt.Println()
+	u.Styled("")
 	setUp := 0
+	var status []string // the same lines as plain text, for a dialog
 	for _, s := range srcs {
 		if st := s.Detect(); st.SetUp {
 			setUp++
-			fmt.Printf("  %s %s %s\n", ui.OK("✓"), ui.Bold(s.Name()), ui.Dim(st.Detail))
+			u.Styled(fmt.Sprintf("  %s %s %s", ui.OK("✓"), ui.Bold(s.Name()), ui.Dim(st.Detail)))
+			status = append(status, "Ready: "+s.Name()+" ("+st.Detail+")")
 		} else {
-			fmt.Printf("  %s %s %s\n", ui.Dim("–"), s.Name(), ui.Dim("skipped: "+st.Hint))
+			u.Styled(fmt.Sprintf("  %s %s %s", ui.Dim("–"), s.Name(), ui.Dim("skipped: "+st.Hint)))
+			status = append(status, "Skipped: "+s.Name()+" ("+st.Hint+")")
 		}
 	}
-	fmt.Println()
+	u.Styled("")
 	if setUp == 0 {
 		return errors.New("no account is set up yet: pick a browser or sign in under Connections")
 	}
 	ok, err := o.prompt.Confirm(ctx, Question{
-		Title:  "Read the library of " + count(setUp, "account") + "?",
-		Detail: "Each account is read only from its own service, from your own connection (not the VPN).\nBrowser sign-ins are read once, stay in memory and are never saved.",
-		Yes:    "Read", No: "Back", Default: true,
+		Title: "Read the library of " + count(setUp, "account") + "?",
+		Detail: strings.Join(status, "\n") + "\n\nEach account is read only from its own service, from your own connection (not the VPN).\n" +
+			"Browser sign-ins are read once, stay in memory and are never saved.",
+		Yes: "Read", No: "Back", Default: true,
 	})
 	if err != nil {
 		return err
@@ -76,7 +80,7 @@ func allAccountsFlow(ctx context.Context, u *ui.UI, o opts) error {
 			u.Bad("%s · %v", r.Name, r.Err)
 		default:
 			read++
-			fmt.Printf("  %s %s %s\n", ui.OK("✓"), r.Name, ui.Dim(count(r.Songs, "song")))
+			u.Styled(fmt.Sprintf("  %s %s %s", ui.OK("✓"), r.Name, ui.Dim(count(r.Songs, "song"))))
 		}
 	}
 	if read == 0 {
@@ -98,7 +102,7 @@ func allAccountsFlow(ctx context.Context, u *ui.UI, o opts) error {
 		defer st.Close()
 	}
 	plan := library.MakePlan(entries, heldForPlan(st))
-	printPlan(plan, o)
+	summary := printPlan(u, plan, o)
 
 	todo := plan.Todo()
 	if o.dryRun {
@@ -114,7 +118,7 @@ func allAccountsFlow(ctx context.Context, u *ui.UI, o opts) error {
 	if len(todo) == 0 {
 		return nil
 	}
-	ok, err = o.prompt.Confirm(ctx, Question{Title: "Download?", Yes: "Download", No: "Back", Default: true})
+	ok, err = o.prompt.Confirm(ctx, Question{Title: "Download?", Detail: summary, Yes: "Download", No: "Back", Default: true})
 	if err != nil {
 		return err
 	}
@@ -137,19 +141,23 @@ func sourceLabel(s catalog.Source) string {
 
 // printPlan shows the counts: songs per account, how many are new, how many would be
 // upgrades, where the downloads come from and roughly how big they are.
-func printPlan(p library.Plan, o opts) {
+func printPlan(u *ui.UI, p library.Plan, o opts) string {
 	c := p.Counts()
-	fmt.Printf("\n  %s %s %s\n", ui.OK("✓"), ui.Bold(count(c.Total, "song")+" in all your accounts"),
-		ui.Dim("(merged, duplicates removed)"))
+	var plain []string // the same lines as plain text, for a dialog
+	u.Styled(fmt.Sprintf("\n  %s %s %s", ui.OK("✓"), ui.Bold(count(c.Total, "song")+" in all your accounts"),
+		ui.Dim("(merged, duplicates removed)")))
+	plain = append(plain, count(c.Total, "song")+" in all your accounts (merged, duplicates removed)")
 	for _, a := range c.Accounts() {
 		only := ""
 		if n := c.OnlyOn[a]; n > 0 {
 			only = fmt.Sprintf(", %d only here", n)
 		}
-		fmt.Printf("    %s %s%s\n", ui.Dim("·"), fmt.Sprintf("%-14s %d", a, c.PerAccount[a]), ui.Dim(only))
+		u.Styled(fmt.Sprintf("    %s %s%s", ui.Dim("·"), fmt.Sprintf("%-14s %d", a, c.PerAccount[a]), ui.Dim(only)))
+		plain = append(plain, fmt.Sprintf("%s: %d%s", a, c.PerAccount[a], only))
 	}
-	fmt.Printf("\n    %s already in %s · %s new · %s to upgrade\n", ui.Bold(fmt.Sprint(c.Held)), tilde(o.out),
-		ui.Bold(fmt.Sprint(c.New)), ui.Bold(fmt.Sprint(c.Upgrades)))
+	u.Styled(fmt.Sprintf("\n    %s already in %s · %s new · %s to upgrade", ui.Bold(fmt.Sprint(c.Held)), tilde(o.out),
+		ui.Bold(fmt.Sprint(c.New)), ui.Bold(fmt.Sprint(c.Upgrades))))
+	plain = append(plain, "", fmt.Sprintf("%d already in %s, %d new, %d to upgrade", c.Held, tilde(o.out), c.New, c.Upgrades))
 	var from []string
 	for _, s := range []catalog.Source{catalog.BandcampPurchase, catalog.Apple, catalog.YouTube} {
 		if n := c.Download[s]; n > 0 {
@@ -158,15 +166,20 @@ func printPlan(p library.Plan, o opts) {
 		}
 	}
 	if len(from) > 0 {
-		fmt.Printf("    %s%s%s\n", cDim, strings.Join(from, " · "), cReset)
+		u.Styled(fmt.Sprintf("    %s%s%s", cDim, strings.Join(from, " · "), cReset))
+		plain = append(plain, strings.Join(from, ", "))
 		if c.EstimateOf > 0 {
-			fmt.Printf("    %sabout %s (estimated from %s with a known length)%s\n", cDim,
-				engine.HumanBytes(c.EstimateBytes), count(c.EstimateOf, "song"), cReset)
+			est := fmt.Sprintf("about %s (estimated from %s with a known length)", engine.HumanBytes(c.EstimateBytes), count(c.EstimateOf, "song"))
+			u.Styled(fmt.Sprintf("    %s%s%s", cDim, est, cReset))
+			plain = append(plain, est)
 		}
-		fmt.Printf("    %s%s%s\n\n", cDim, extras(o), cReset)
+		u.Styled(fmt.Sprintf("    %s%s%s\n", cDim, extras(o), cReset))
+		plain = append(plain, capitalFirst(strings.TrimSuffix(extras(o), "  (change in settings)"))+".")
 	} else {
-		fmt.Printf("    %sNothing to download.%s\n\n", cDim, cReset)
+		u.Styled(fmt.Sprintf("    %sNothing to download.%s\n", cDim, cReset))
+		plain = append(plain, "Nothing to download.")
 	}
+	return strings.Join(plain, "\n")
 }
 
 // heldForPlan looks entries up in the music folder: under their key, as the Apple song they

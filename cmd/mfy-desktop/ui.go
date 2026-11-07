@@ -39,6 +39,8 @@ type view struct {
 	// The Downloads page (see downloads.go).
 	dl    *screen.Downloads
 	entry *widget.Entry
+	// The Tools page runs tasks (see tools.go).
+	tools *screen.Menu
 }
 
 // minWindow is the smallest the window can be made.
@@ -552,10 +554,6 @@ func (v *view) draw(st screen.View) {
 		v.top.Add(gap(sp4))
 		v.top.Add(container.New(layout.NewCustomPaddedHBoxLayout(sp4), txt("Changes save as you make them, to", colMuted, 13, false), path))
 	}
-	if st.Notice != "" {
-		v.top.Add(gap(sp8))
-		v.top.Add(notice(st.Notice))
-	}
 	v.top.Add(gap(sp16))
 	v.top.Refresh()
 	v.header.Refresh()
@@ -584,6 +582,9 @@ func (v *view) draw(st screen.View) {
 		rows = append(rows, v.rowView(i, r))
 	}
 	flush()
+	if s.Task != nil && v.tools != nil {
+		secs = append([]fyne.CanvasObject{v.taskSection(*s.Task)}, secs...)
+	}
 	page := container.New(layout.NewCustomPaddedVBoxLayout(sp24), secs...)
 	v.scroll.Content = container.New(column{contentMax}, container.NewVBox(page, gap(sp16)))
 	v.scroll.Refresh()

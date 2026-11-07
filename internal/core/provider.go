@@ -20,7 +20,8 @@ const (
 // ProtonClient is the Proton API client with the saved session.
 func ProtonClient() *proton.Client { return protonClient() }
 
-func protonClient() *proton.Client {
+// protonClient (and the next few) are variables so a test can point them at a fake server.
+var protonClient = func() *proton.Client {
 	p, _ := proton.SessionPath()
 	return proton.New(p)
 }
@@ -52,7 +53,7 @@ func providerLabel(id string) string {
 	return "Proton VPN"
 }
 
-func mullvadProvider() *mullvad.Provider { return mullvad.New(config.MullvadPath()) }
+var mullvadProvider = func() *mullvad.Provider { return mullvad.New(config.MullvadPath()) }
 
 func wireguardProvider() *wgconf.Provider { return wgconf.New() }
 

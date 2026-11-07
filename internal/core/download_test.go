@@ -43,6 +43,7 @@ func (r *recSink) kinds(id string) []jobs.Kind {
 
 // fakePrompter answers from a script and remembers what it was asked.
 type fakePrompter struct {
+	AutoPrompter
 	mu      sync.Mutex
 	confirm []bool // answers, in order; then the default
 	asked   []Question

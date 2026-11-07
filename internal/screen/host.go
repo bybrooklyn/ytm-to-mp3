@@ -4,15 +4,19 @@ import (
 	"sync"
 
 	"github.com/bybrooklyn/mfetchy/internal/config"
+	"github.com/bybrooklyn/mfetchy/internal/tidal"
 )
 
 // Tab is one screen of a desktop window. Make builds it when the tab is opened (the
 // connections list re-reads its state, say); Keep reuses the same instance on every visit.
+// Remake, if set, builds the tab again after the state behind it changed (a sign-in), from
+// the old model so it can keep the cursor.
 type Tab struct {
-	Name  string
-	Make  func() Model
-	Keep  bool
-	model Model
+	Name   string
+	Make   func() Model
+	Keep   bool
+	Remake func(old Model) Model
+	model  Model
 }
 
 // Event is one thing the user did in a window: pick a tab, click a row, type, paste, or press
@@ -41,7 +45,6 @@ type View struct {
 	Editing bool     `json:"editing"`
 	Tabs    []string `json:"tabs"`
 	Current int      `json:"current"`
-	Notice  string   `json:"notice,omitempty"`
 }
 
 // Host holds the tabs of a desktop window and turns events into views. Every desktop front
@@ -50,7 +53,11 @@ type Host struct {
 	mu      sync.Mutex
 	tabs    []*Tab
 	current int
-	notice  string // a message for the window ("sign-in happens in the terminal")
+
+	// OnAction, if set, is called with the work a screen asks for ("signin", "premium", ...)
+	// after the event that asked. It must return at once: the window runs the work (dialogs
+	// and all) in the background.
+	OnAction func(action string)
 }
 
 // NewHost opens the first tab.
@@ -68,19 +75,6 @@ func (h *Host) open(i int) {
 	h.current = i
 }
 
-// ActionNotice explains an action a window can't run itself (the sign-ins are interactive
-// terminal flows for now).
-var ActionNotice = map[string]string{
-	"signin":   "Signing in to Proton happens in the terminal: run mfy, then Connections.",
-	"signout":  "Signing out happens in the terminal: run mfy, then Connections.",
-	"test":     "The VPN test runs in the terminal: run mfy, then Settings > Test VPN.",
-	"premium":  "The YouTube Premium setup runs in the terminal: run mfy, then Connections.",
-	"applein":  "Apple Music sign-in runs in the terminal: run mfy, then Connections.",
-	"appleout": "Apple Music sign-out runs in the terminal: run mfy, then Connections.",
-	"bandcamp": "Choosing the browser for your Bandcamp purchases happens in the terminal: run mfy, then Connections.",
-	"youtube":  "Choosing the browser for your YouTube Music library happens in the terminal: run mfy, then Connections.",
-}
-
 // View is the current state.
 func (h *Host) View() View {
 	h.mu.Lock()
@@ -90,18 +84,39 @@ func (h *Host) View() View {
 
 func (h *Host) view() View {
 	m := h.tabs[h.current].model
-	v := View{Screen: m.Screen(), Editing: m.Editing(), Current: h.current, Notice: h.notice}
+	v := View{Screen: m.Screen(), Editing: m.Editing(), Current: h.current}
 	for _, t := range h.tabs {
 		v.Tabs = append(v.Tabs, t.Name)
 	}
 	return v
 }
 
-// Do applies an event and returns the new state.
-func (h *Host) Do(ev Event) View {
+// Refresh builds the open tab again from the state on disk (after a sign-in or sign-out).
+func (h *Host) Refresh() View {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.notice = ""
+	t := h.tabs[h.current]
+	switch {
+	case t.Remake != nil:
+		t.model = t.Remake(t.model)
+	case !t.Keep:
+		t.model = t.Make()
+	}
+	return h.view()
+}
+
+// Do applies an event and returns the new state.
+func (h *Host) Do(ev Event) View {
+	act, v := h.do(ev)
+	if act != "" && h.OnAction != nil {
+		h.OnAction(act)
+	}
+	return v
+}
+
+func (h *Host) do(ev Event) (string, View) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	m := h.tabs[h.current].model
 	switch {
 	case ev.Set != nil:
@@ -124,14 +139,14 @@ func (h *Host) Do(ev Event) View {
 		}
 		m.Key(ev.Key)
 	}
-	// Work that needs the terminal can't run here: say so and carry on.
-	if act := m.Action(); act != "" {
-		h.notice = ActionNotice[act]
+	// Work for the window to do (a sign-in): hand it over and carry on.
+	act := m.Action()
+	if act != "" {
 		if c, ok := m.(interface{ ClearAction() }); ok {
 			c.ClearAction()
 		}
 	}
-	return h.view()
+	return act, h.view()
 }
 
 // set applies a click on a row's control as the keys the terminal would use.
@@ -174,20 +189,51 @@ func (h *Host) set(m Model, s Set) {
 // DefaultTabs are the screens of the desktop window: connections and settings.
 func DefaultTabs() []*Tab { return defaultTabs() }
 
-// DesktopTabs are the screens of the desktop window with the Downloads page first.
-func DesktopTabs(d *Downloads) []*Tab {
-	return append([]*Tab{{Name: "downloads", Keep: true, Make: func() Model { return d }}}, defaultTabs()...)
+// DesktopTabs are the screens of the desktop window: Downloads, the Library imports, the
+// Tools, then the connections and the settings.
+func DesktopTabs(d *Downloads, library, tools *Menu) []*Tab {
+	tabs := []*Tab{
+		{Name: "downloads", Keep: true, Make: func() Model { return d }},
+		{Name: "library", Keep: true, Make: func() Model { return library }},
+		{Name: "tools", Keep: true, Make: func() Model { return tools }},
+	}
+	return append(tabs, defaultTabs()...)
+}
+
+func tidalSignedIn() bool {
+	p, err := tidal.SessionPath()
+	return err == nil && tidal.New(p).SignedIn()
 }
 
 func defaultTabs() []*Tab {
 	return []*Tab{
-		{Name: "connections", Make: func() Model { return NewConnections(DetectConnections(), 0) }},
-		{Name: "settings", Keep: true, Make: func() Model {
-			cfg := config.Load()
-			v := DetectVPN(cfg)
-			m := NewSettings(cfg, v.SignedIn, v.Who, 0, func(c config.Config) error { return c.Save() }, CheckFolder)
-			m.SetProvider(v.Provider)
-			return m
-		}},
+		{Name: "connections",
+			Make: func() Model { return NewConnections(DetectConnections(), 0) },
+			Remake: func(old Model) Model {
+				cur := 0
+				if c, ok := old.(*Connections); ok {
+					cur = c.Cursor()
+				}
+				return NewConnections(DetectConnections(), cur)
+			}},
+		{Name: "settings", Keep: true,
+			Make: func() Model { return newSettingsModel(0) },
+			Remake: func(old Model) Model {
+				cur := 0
+				if s, ok := old.(*Settings); ok {
+					cur = s.Cursor()
+				}
+				return newSettingsModel(cur)
+			}},
 	}
+}
+
+func newSettingsModel(cur int) *Settings {
+	cfg := config.Load()
+	v := DetectVPN(cfg)
+	m := NewSettings(cfg, v.SignedIn, v.Who, cur, func(c config.Config) error { return c.Save() }, CheckFolder)
+	m.SetProvider(v.Provider)
+	m.SetApple(config.AppleToken() != "")
+	m.SetTidal(tidalSignedIn())
+	return m
 }

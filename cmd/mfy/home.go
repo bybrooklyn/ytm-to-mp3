@@ -4,18 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
-	"time"
 
 	"charm.land/huh/v2"
 
 	"github.com/bybrooklyn/mfetchy/internal/config"
-	"github.com/bybrooklyn/mfetchy/internal/deps"
-	"github.com/bybrooklyn/mfetchy/internal/export"
+	"github.com/bybrooklyn/mfetchy/internal/core"
 	batch "github.com/bybrooklyn/mfetchy/internal/inputs"
 	"github.com/bybrooklyn/mfetchy/internal/screen"
-	"github.com/bybrooklyn/mfetchy/internal/takeout"
 	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
 
@@ -123,22 +119,22 @@ func toolsMenu(ctx context.Context, u *ui.UI, o opts) error {
 	}
 	switch choice {
 	case "tag":
-		return tagFlow(ctx, u, o)
+		return core.TagFlow(ctx, u, o.core(), newPrompter(u))
 	case "tidy":
-		return tidyFlow(ctx, u, o)
+		return core.TidyFlow(ctx, u, o.core(), newPrompter(u))
 	case "lyrics":
 		return lyricsLibraryFlow(ctx, u, o)
 	case "sidecars":
-		return sidecarLibraryFlow(ctx, u, o)
+		return core.SidecarLibraryFlow(ctx, u, o.core(), newPrompter(u))
 	case "premium":
 		if !config.Load().Premium {
-			if err := premiumSetup(ctx, u); err != nil || !config.Load().Premium {
+			if err := core.PremiumSetup(ctx, u, newPrompter(u)); err != nil || !config.Load().Premium {
 				return err
 			}
 		}
 		return premiumUpgrade(ctx, u, o, false)
 	case "update":
-		return deps.Update(ctx, u.Logf)
+		return core.UpdateTools(ctx, u)
 	case "doctor":
 		return runDoctor(ctx, u, o)
 	}
@@ -226,119 +222,7 @@ func libraryFlow(ctx context.Context, u *ui.UI, o opts) error {
 	case "live":
 		return liveLibraryFlow(ctx, u, o)
 	}
-	src, err := chooseExport(ctx, u)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("\n  %s %s tracks %s in %s\n    %s %s %s %s\n\n", ui.OK("✓"), ui.Bold(fmt.Sprint(src.Tracks)),
-		ui.Dim(fmt.Sprintf("(%d with song details)", src.WithMeta)), src.Name(),
-		ui.Dim("saving to"), tilde(o.out), ui.Dim("as"), ui.Cyan(o.format))
-	fmt.Printf("    %s%s%s\n\n", cDim, extras(o), cReset)
-	go_ := true
-	if err := one(ctx, huh.NewConfirm().Title("Download?").Affirmative("Download").Negative("Back").Value(&go_)); err != nil {
-		return err
-	}
-	if !go_ {
-		return errBack
-	}
-	return download(ctx, u, o, src.Paths...)
-}
-
-// chooseExport finds the YouTube Music exports on this computer and lets you pick one
-// (or another file, or shows how to get one). errBack = backed out.
-func chooseExport(ctx context.Context, u *ui.UI) (takeout.Source, error) {
-	var srcs []takeout.Source
-	if err := working(ctx, "Looking for your export in Downloads, Desktop and Documents...", func(context.Context) error {
-		srcs = takeout.Discover(export.SearchDirs())
-		return nil
-	}); err != nil {
-		return takeout.Source{}, err
-	}
-
-	var opts []huh.Option[string]
-	for i, s := range srcs {
-		opts = append(opts, huh.NewOption(describeSource(s), fmt.Sprint(i)))
-	}
-	opts = append(opts,
-		huh.NewOption("Choose another file or folder...", "pick"),
-		huh.NewOption("I don't have one yet: show me how to get it", "guide"),
-		huh.NewOption("Back", "back"),
-	)
-	title := "Pick your export"
-	desc := "These look like YouTube Music exports on this computer."
-	if len(srcs) == 0 {
-		title = "No export found yet"
-		desc = "Looked in Downloads, Desktop and Documents."
-	}
-	var choice string
-	if err := one(ctx, huh.NewSelect[string]().Title(title).Description(desc).Options(opts...).Value(&choice)); err != nil {
-		return takeout.Source{}, err
-	}
-
-	switch choice {
-	case "back":
-		return takeout.Source{}, errBack
-	case "pick":
-		return askForExport(ctx)
-	case "guide":
-		p, err := export.Guide(ctx, u)
-		if err != nil {
-			return takeout.Source{}, err
-		}
-		var s takeout.Source
-		err = working(ctx, "Reading it...", func(context.Context) (e error) { s, e = takeout.Inspect([]string{p}); return })
-		return s, err
-	}
-	var i int
-	fmt.Sscan(choice, &i)
-	return srcs[i], nil
-}
-
-func describeSource(s takeout.Source) string {
-	where := tilde(filepath.Dir(s.Paths[0]))
-	kind := ""
-	if s.Kind == "folder" {
-		kind = "folder, "
-	}
-	return fmt.Sprintf("%s  ·  %d tracks  ·  %s%s ago  ·  %s", s.Name(), s.Tracks, kind, humanAgo(time.Since(s.Mod)), where)
-}
-
-func humanAgo(d time.Duration) string {
-	switch {
-	case d < time.Minute:
-		return "moments"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 48*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	}
-	return fmt.Sprintf("%dd", int(d.Hours()/24))
-}
-
-// askForExport asks for a path until it points at something with tracks in it.
-func askForExport(ctx context.Context) (takeout.Source, error) {
-	var path string
-	var found takeout.Source
-	err := one(ctx, huh.NewInput().Title("Where is it?").
-		Description("Drag the file or folder here, or paste its path. A Takeout .zip, an extracted folder,\na library .csv, or a text file of links all work.").
-		Value(&path).Validate(func(s string) error {
-		paths := takeout.SplitPaths(s)
-		if len(paths) == 0 {
-			return errors.New("type or paste a path")
-		}
-		for _, p := range paths {
-			if _, err := os.Stat(p); err != nil {
-				return fmt.Errorf("can't find %s", p)
-			}
-		}
-		src, err := takeout.Inspect(paths)
-		if err != nil {
-			return err
-		}
-		found = src
-		return nil
-	}))
-	return found, err
+	return core.TakeoutFlow(ctx, u, o.core(), newPrompter(u))
 }
 
 // linkFlow asks for one or more YouTube, Apple Music, Spotify, SoundCloud or Bandcamp links and downloads them.
