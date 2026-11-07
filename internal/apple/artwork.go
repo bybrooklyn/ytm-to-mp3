@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/apple/download"
+	"github.com/bybrooklyn/mfetchy/internal/apple/download"
 )
 
 // FetchArtwork downloads the cover art for t at px by px pixels as JPEG bytes.

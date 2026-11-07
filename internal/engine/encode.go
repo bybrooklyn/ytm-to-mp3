@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/names"
 )
 
 // Formats ytm can write.

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
+	"github.com/bybrooklyn/mfetchy/internal/tag"
 )
 
 // workingMedia finds an ffmpeg/ffprobe pair that really works (a broken one can shadow the

@@ -22,7 +22,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/names"
 )
 
 // Track is one Spotify song reduced to what ytm needs to find and tag it.

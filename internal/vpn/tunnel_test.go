@@ -17,7 +17,7 @@ import (
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
+	"github.com/bybrooklyn/mfetchy/internal/proton"
 )
 
 // Two userspace WireGuard peers over localhost UDP: the client tunnel must carry an HTTP

@@ -10,7 +10,7 @@ import (
 
 	"github.com/grafov/m3u8"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/apple/download"
+	"github.com/bybrooklyn/mfetchy/internal/apple/download"
 )
 
 // DefaultKeyFormat selects the EXT-X-KEY that the m3u8 parser reports for

@@ -26,7 +26,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/catalog"
+	"github.com/bybrooklyn/mfetchy/internal/catalog"
 )
 
 // Status is what Detect reports about an account without touching the network or asking

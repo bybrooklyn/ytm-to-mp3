@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please use GitHub private vulnerability reporting:
-<https://github.com/bybrooklyn/ytm-to-mp3/security/advisories/new>
+<https://github.com/bybrooklyn/mfetchy/security/advisories/new>
 
 Do not open a public issue for security problems. I will acknowledge reports
 as soon as I can and aim to ship a fix in the next release.

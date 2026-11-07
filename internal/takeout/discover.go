@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/model"
 )
 
 func isZip(p string) bool { return strings.EqualFold(filepath.Ext(p), ".zip") }

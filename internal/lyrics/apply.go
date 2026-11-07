@@ -9,12 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/store"
+	"github.com/bybrooklyn/mfetchy/internal/tag"
 )
 
 // CacheDir is where a music folder's lyrics cache lives.
-func CacheDir(musicDir string) string { return filepath.Join(musicDir, ".ytm", "lyrics") }
+func CacheDir(musicDir string) string { return filepath.Join(appname.StateDir(musicDir), "lyrics") }
 
 // Sidecar paths: synced lyrics go in "<song>.lrc" (read by most players, Navidrome and
 // Jellyfin), plain ones in "<song>.txt" (also read by Navidrome and Jellyfin; a plain
@@ -142,7 +143,7 @@ func (s *Service) embed(ctx context.Context, path, text string) error {
 }
 
 func writeFile(path, text string) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".ytm-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".mfy-*")
 	if err != nil {
 		return err
 	}

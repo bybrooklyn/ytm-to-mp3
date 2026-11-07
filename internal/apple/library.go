@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/apple/download"
+	"github.com/bybrooklyn/mfetchy/internal/apple/download"
 )
 
 // Where the library is read from, and the HTTP client used; both are variables so tests can

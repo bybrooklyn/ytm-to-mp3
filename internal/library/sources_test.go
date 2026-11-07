@@ -4,13 +4,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/apple"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/bandcamp"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/browsercookies"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/catalog"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/ytmusic"
+	"github.com/bybrooklyn/mfetchy/internal/apple"
+	"github.com/bybrooklyn/mfetchy/internal/bandcamp"
+	"github.com/bybrooklyn/mfetchy/internal/browsercookies"
+	"github.com/bybrooklyn/mfetchy/internal/catalog"
+	"github.com/bybrooklyn/mfetchy/internal/config"
+	"github.com/bybrooklyn/mfetchy/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/ytmusic"
 )
 
 var ffBrowser = func() []browsercookies.Browser { return []browsercookies.Browser{{ID: "firefox", Name: "Firefox"}} }

@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/jobs"
+	"github.com/bybrooklyn/mfetchy/internal/jobs"
 )
 
 // Options tune one download. The zero value is usable.

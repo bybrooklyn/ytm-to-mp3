@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/vpn"
+	"github.com/bybrooklyn/mfetchy/internal/deps"
+	"github.com/bybrooklyn/mfetchy/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/store"
+	"github.com/bybrooklyn/mfetchy/internal/ui"
+	"github.com/bybrooklyn/mfetchy/internal/vpn"
 )
 
 // fakeYtDlp is a shell script standing in for yt-dlp. Its behaviour follows the exit it

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
 
 // put writes a file with a modification time `age` ago (older = downloaded earlier).
@@ -95,9 +95,9 @@ func TestMergeCaseVariantFoldersKeepsFirstDownloaded(t *testing.T) {
 	if exists(root, "Master Boot Record") || exists(root, "Meganeko") {
 		t.Error("the newer spellings should be gone")
 	}
-	// the duplicate went to .ytm/replaced, not away
-	if !exists(root, ".ytm/replaced/Master Boot Record/album/01 - ALPHA.m4a") {
-		t.Error("duplicate not kept in .ytm/replaced")
+	// the duplicate went to .mfetchy/replaced, not away
+	if !exists(root, ".mfetchy/replaced/Master Boot Record/album/01 - ALPHA.m4a") {
+		t.Error("duplicate not kept in .mfetchy/replaced")
 	}
 	if len(*moved) != 3 {
 		t.Errorf("the store should hear of every move, got %v", *moved)
@@ -117,8 +117,8 @@ func TestMergeCaseVariantFoldersKeepsFirstDownloaded(t *testing.T) {
 			t.Errorf("undo did not restore %s", rel)
 		}
 	}
-	if exists(root, ".ytm/replaced/Master Boot Record/album/01 - ALPHA.m4a") {
-		t.Error("undo left the duplicate in .ytm/replaced")
+	if exists(root, ".mfetchy/replaced/Master Boot Record/album/01 - ALPHA.m4a") {
+		t.Error("undo left the duplicate in .mfetchy/replaced")
 	}
 }
 
@@ -147,7 +147,7 @@ func TestMergeEditionsPrefersFullest(t *testing.T) {
 		t.Error("standard edition folder should be merged away")
 	}
 	// Noid is already in the deluxe: the standard copy is kept aside, nothing is lost
-	if !exists(root, "Tyler, The Creator/CHROMAKOPIA +/3 - Noid.opus") || !exists(root, ".ytm/replaced/Tyler, The Creator/CHROMAKOPIA/02 - Noid.opus") {
+	if !exists(root, "Tyler, The Creator/CHROMAKOPIA +/3 - Noid.opus") || !exists(root, ".mfetchy/replaced/Tyler, The Creator/CHROMAKOPIA/02 - Noid.opus") {
 		t.Error("duplicate handling wrong")
 	}
 	if !exists(root, "Tyler, The Creator/CHROMAKOPIA (Instrumentals)/01 - St. Chroma.opus") {
@@ -185,7 +185,7 @@ func TestMergeArtistSpellingMovesAlbumsAndLooseFiles(t *testing.T) {
 	if exists(root, "meganeko") {
 		t.Error("variant folder not removed")
 	}
-	if strings.Contains(strings.Join(listAll(t, root), "\n"), ".ytm-") {
+	if strings.Contains(strings.Join(listAll(t, root), "\n"), ".mfy-") {
 		t.Error("stray temp files")
 	}
 }
@@ -220,8 +220,8 @@ func TestMergeCarriesSidecars(t *testing.T) {
 	if s, _ := os.ReadFile(filepath.Join(root, "Artist/Album/album.nfo")); string(s) != "Artist/Album/album.nfo" {
 		t.Errorf("the target's own album.nfo must stay: %q", s)
 	}
-	if !exists(root, ".ytm/replaced/artist/ALBUM/album.nfo") {
-		t.Error("the duplicate album.nfo should go to .ytm/replaced")
+	if !exists(root, ".mfetchy/replaced/artist/ALBUM/album.nfo") {
+		t.Error("the duplicate album.nfo should go to .mfetchy/replaced")
 	}
 }
 

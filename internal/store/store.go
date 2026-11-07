@@ -9,11 +9,13 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/names"
 )
 
 type Store struct{ db *sql.DB }
@@ -36,8 +38,19 @@ CREATE TABLE IF NOT EXISTS albums (           -- YouTube Music album lookups (--
   checked INTEGER NOT NULL DEFAULT 0
 );`
 
-// Open opens (creating if needed) <dir>/state.db.
+// Open opens (creating if needed) <dir>/state.db. When dir is a music folder's
+// ".mfetchy" folder and only the pre-rename ".ytm" folder exists beside it, that folder is
+// renamed first (state.db and its -wal/-shm files move together), and the absolute paths
+// the database stored under the old folder are rewritten to the new one. If the rename
+// fails the old folder is used as it is.
 func Open(dir string) (*Store, error) {
+	moved := false
+	if filepath.Base(dir) == appname.StateDirName {
+		root := filepath.Dir(dir)
+		var m bool
+		dir, m = appname.Migrate(dir, filepath.Join(root, appname.OldStateDirName))
+		moved = m || appname.TakeMoved(root)
+	}
 	if err := PrivateDir(dir); err != nil {
 		return nil, err
 	}
@@ -59,7 +72,32 @@ func Open(dir string) (*Store, error) {
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		_ = os.Chmod(dbPath+suffix, 0o600) // missing files are fine
 	}
+	if moved {
+		if err := rewritePrefix(db, filepath.Join(filepath.Dir(dir), appname.OldStateDirName), dir); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
 	return &Store{db}, nil
+}
+
+// rewritePrefix points every stored path under the folder oldDir at newDir instead, in
+// one transaction. Only the leading prefix changes.
+func rewritePrefix(db *sql.DB, oldDir, newDir string) error {
+	oldP, newP := oldDir+string(filepath.Separator), newDir+string(filepath.Separator)
+	n := utf8.RuneCountInString(oldP)
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	for _, t := range []string{"tracks", "library_tracks", "apple_tracks"} {
+		if _, err := tx.Exec(`UPDATE `+t+` SET path = ? || substr(path, ?) WHERE substr(path, 1, ?) = ?`,
+			newP, n+1, n, oldP); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // migrate adds columns that databases from older versions lack.

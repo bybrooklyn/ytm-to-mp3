@@ -3,10 +3,10 @@ package screen
 import (
 	"fmt"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/vpnprovider/mullvad"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/vpnprovider/wgconf"
+	"github.com/bybrooklyn/mfetchy/internal/config"
+	"github.com/bybrooklyn/mfetchy/internal/proton"
+	"github.com/bybrooklyn/mfetchy/internal/vpnprovider/mullvad"
+	"github.com/bybrooklyn/mfetchy/internal/vpnprovider/wgconf"
 )
 
 // VPNInfo is the chosen VPN provider and whether it is set up (no network involved).

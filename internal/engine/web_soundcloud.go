@@ -4,20 +4,20 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/soundcloud"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/vpn"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/soundcloud"
+	"github.com/bybrooklyn/mfetchy/internal/vpn"
 )
 
 // nativeSoundCloud reports whether SoundCloud links try ytm's own client first. yt-dlp is
 // the fallback whenever the native path errors or finds nothing, so a change on
 // SoundCloud's side costs speed, not results. YTM_SOUNDCLOUD=yt-dlp turns it off.
-func nativeSoundCloud() bool { return !strings.EqualFold(os.Getenv("YTM_SOUNDCLOUD"), "yt-dlp") }
+func nativeSoundCloud() bool { return !strings.EqualFold(appname.Getenv("SOUNDCLOUD"), "yt-dlp") }
 
 // scClients keeps one client per exit, so its client_id is found once per session.
 var (

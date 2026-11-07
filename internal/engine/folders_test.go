@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/model"
 )
 
 // A new song goes into the artist and album folders that are already there, whatever the

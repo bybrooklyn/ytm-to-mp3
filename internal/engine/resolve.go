@@ -17,9 +17,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/deps"
+	"github.com/bybrooklyn/mfetchy/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/names"
 )
 
 // kind classifies a failure so the pipeline knows whether to retry, back off, or give up.

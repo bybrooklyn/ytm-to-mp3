@@ -6,7 +6,7 @@
 // root is needed, on any OS.
 package vpn
 
-import "github.com/bybrooklyn/ytm-to-mp3/internal/vpnprovider"
+import "github.com/bybrooklyn/mfetchy/internal/vpnprovider"
 
 // Server, Key and Location are the provider-neutral types the pool works with.
 type (

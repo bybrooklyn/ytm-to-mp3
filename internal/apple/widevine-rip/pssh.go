@@ -7,7 +7,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	wv "github.com/bybrooklyn/ytm-to-mp3/internal/apple/widevine-rip/cdm"
+	wv "github.com/bybrooklyn/mfetchy/internal/apple/widevine-rip/cdm"
 )
 
 // widevineSystemID is the DRM system ID of Widevine in 'pssh' boxes.

@@ -23,10 +23,10 @@ Always put links in quotes on the command line: `&` and `?` mean things to your 
 
 | Platform | Command |
 |---|---|
-| Linux / macOS | `curl -fsSL https://raw.githubusercontent.com/bybrooklyn/ytm-to-mp3/main/install.sh \| sh` |
-| Windows (PowerShell) | `irm https://raw.githubusercontent.com/bybrooklyn/ytm-to-mp3/main/install.ps1 \| iex` |
-| Anything | download a binary from the [releases page](https://github.com/bybrooklyn/ytm-to-mp3/releases) (`.deb`/`.rpm` too) |
-| From source | `just install` (or `go install github.com/bybrooklyn/ytm-to-mp3/cmd/ytm@latest`) |
+| Linux / macOS | `curl -fsSL https://raw.githubusercontent.com/bybrooklyn/mfetchy/main/install.sh \| sh` |
+| Windows (PowerShell) | `irm https://raw.githubusercontent.com/bybrooklyn/mfetchy/main/install.ps1 \| iex` |
+| Anything | download a binary from the [releases page](https://github.com/bybrooklyn/mfetchy/releases) (`.deb`/`.rpm` too) |
+| From source | `just install` (or `go install github.com/bybrooklyn/mfetchy/cmd/ytm@latest`) |
 
 ## Getting your export
 
@@ -159,7 +159,7 @@ The tunnels are userspace WireGuard inside ytm itself: no root, no WireGuard ins
 
 ## Desktop app (early)
 
-`ytm-desktop` is a native window (built with [Fyne](https://fyne.io), not a web page) that shows ytm's screens instead of a terminal. The screens are defined once, in `internal/screen`, as plain descriptions of what to show and how keys change it; the terminal UI and the window each just draw that description, so they behave the same: same rows, same keys (arrows, vi keys, Space, Enter), plus the mouse and Ctrl+1/2 for the sidebar. The window draws them as a desktop app (sidebar, sections, switches, dropdowns, steppers, a folder picker; light and dark following the system) rather than as terminal text; the design rules are in [docs/DESIGN.md](docs/DESIGN.md). So far Connections and Settings are on it; sign-in steps still happen in the terminal, and the window says so. Release builds for Linux, macOS and Windows are attached to each [release](https://github.com/bybrooklyn/ytm-to-mp3/releases) as `ytm-desktop_<version>_<os>_<arch>` with a checksum. To build it yourself, `just build-desktop` needs a C compiler (and on Linux the OpenGL and X11 development packages), which the `ytm` command itself does not.
+`ytm-desktop` is a native window (built with [Fyne](https://fyne.io), not a web page) that shows ytm's screens instead of a terminal. The screens are defined once, in `internal/screen`, as plain descriptions of what to show and how keys change it; the terminal UI and the window each just draw that description, so they behave the same: same rows, same keys (arrows, vi keys, Space, Enter), plus the mouse and Ctrl+1/2 for the sidebar. The window draws them as a desktop app (sidebar, sections, switches, dropdowns, steppers, a folder picker; light and dark following the system) rather than as terminal text; the design rules are in [docs/DESIGN.md](docs/DESIGN.md). So far Connections and Settings are on it; sign-in steps still happen in the terminal, and the window says so. Release builds for Linux, macOS and Windows are attached to each [release](https://github.com/bybrooklyn/mfetchy/releases) as `ytm-desktop_<version>_<os>_<arch>` with a checksum. To build it yourself, `just build-desktop` needs a C compiler (and on Linux the OpenGL and X11 development packages), which the `ytm` command itself does not.
 
 ## Development
 

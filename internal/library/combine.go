@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/catalog"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/meta"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/catalog"
+	"github.com/bybrooklyn/mfetchy/internal/meta"
+	"github.com/bybrooklyn/mfetchy/internal/names"
 )
 
 // Entry is one song of the combined library: every account's copy of it, and the best

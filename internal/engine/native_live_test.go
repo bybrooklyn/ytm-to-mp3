@@ -2,17 +2,17 @@ package engine
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/deps"
+	"github.com/bybrooklyn/mfetchy/internal/model"
 )
 
 // YTM_LIVE=1 go test ./internal/engine -run NativeLive -v
 func TestNativeLiveFindAlbumAndSearch(t *testing.T) {
-	if os.Getenv("YTM_LIVE") == "" {
+	if appname.Getenv("LIVE") == "" {
 		t.Skip("set YTM_LIVE=1")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

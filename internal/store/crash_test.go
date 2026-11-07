@@ -8,13 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/model"
 )
 
 // The helper process writes as a download run would (plan, mark done, library puts) until
 // it is killed.
 func TestMain(m *testing.M) {
-	if dir := os.Getenv("YTM_STORE_CRASH_HELPER"); dir != "" {
+	if dir := appname.Getenv("STORE_CRASH_HELPER"); dir != "" {
 		crashHelper(dir)
 		return
 	}
@@ -55,9 +56,9 @@ func crashHelper(dir string) {
 func TestKill9LeavesConsistentState(t *testing.T) {
 	for round := 0; round < 3; round++ {
 		base := t.TempDir()
-		dir := filepath.Join(base, ".ytm")
+		dir := appname.StateDir(base)
 		cmd := exec.Command(os.Args[0])
-		cmd.Env = append(os.Environ(), "YTM_STORE_CRASH_HELPER="+dir)
+		cmd.Env = append(os.Environ(), "MFY_STORE_CRASH_HELPER="+dir)
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
@@ -118,7 +119,7 @@ func TestKill9LeavesConsistentState(t *testing.T) {
 // Two connections writing at once (two stages of one run each open the database) wait for
 // each other instead of failing with "database is locked".
 func TestConcurrentOpensDoNotLockOut(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), ".ytm")
+	dir := appname.StateDir(t.TempDir())
 	a, err := Open(dir)
 	if err != nil {
 		t.Fatal(err)

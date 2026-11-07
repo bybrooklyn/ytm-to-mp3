@@ -11,8 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
 
 // Folder merging is the migration for libraries that already hold the same artist or album
@@ -26,14 +27,14 @@ import (
 //   - Editions of one album: the fullest one (most files) takes the others, so the standard
 //     edition's songs end up with the deluxe's.
 //   - Nothing is deleted. A song that is already in the target (same title) is a duplicate:
-//     the copy being merged goes to .ytm/replaced, as every replaced file does.
+//     the copy being merged goes to .mfetchy/replaced, as every replaced file does.
 //
 // Every move is journaled like a rename, so "Undo the last fix" puts it all back.
 
 // MergeMove is one file's move.
 type MergeMove struct {
 	From, To string
-	// Duplicate: the target already has this song (Kept); From goes to .ytm/replaced
+	// Duplicate: the target already has this song (Kept); From goes to .mfetchy/replaced
 	// instead of To.
 	Duplicate bool
 	Kept      string
@@ -353,7 +354,7 @@ func describeMerge(g MergeGroup, root string) string {
 	if len(g.Moves) == 0 {
 		return strings.TrimRight(b.String(), "\n") // an artist folder whose albums follow
 	}
-	fmt.Fprintf(&b, "      %s", ui.Dim(fmt.Sprintf("%d files moved, %d already there (kept in .ytm/replaced)", len(g.Moves)-dups, dups)))
+	fmt.Fprintf(&b, "      %s", ui.Dim(fmt.Sprintf("%d files moved, %d already there (kept in .mfetchy/replaced)", len(g.Moves)-dups, dups)))
 	return b.String()
 }
 
@@ -366,7 +367,7 @@ func applyMerge(o Options, g MergeGroup, batch string) error {
 			if err != nil || strings.HasPrefix(rel, "..") {
 				rel = filepath.Base(m.From)
 			}
-			dst = uniquePath(filepath.Join(o.Dir, ".ytm", "replaced", rel))
+			dst = uniquePath(filepath.Join(appname.StateDir(o.Dir), "replaced", rel))
 		} else if _, err := os.Lstat(dst); err == nil {
 			dst = "" // appeared since the plan: leave this one where it is
 		}

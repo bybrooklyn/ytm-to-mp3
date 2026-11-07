@@ -4,15 +4,16 @@ import (
 	"context"
 	"errors"
 	"net/url"
-	"os"
 	"testing"
 	"time"
+
+	"github.com/bybrooklyn/mfetchy/internal/appname"
 )
 
 // TestLive resolves one public track against the real SoundCloud and reads the first 64 KiB
 // of its audio. Opt-in: YTM_LIVE=1.
 func TestLive(t *testing.T) {
-	if os.Getenv("YTM_LIVE") != "1" {
+	if appname.Getenv("LIVE") != "1" {
 		t.Skip("set YTM_LIVE=1")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

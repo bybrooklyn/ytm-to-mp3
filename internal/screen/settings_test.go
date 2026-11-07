@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
+	"github.com/bybrooklyn/mfetchy/internal/config"
 )
 
 func press(m *Settings, keys ...string) {

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/names"
 )
 
 func TestOutputPathCatalogMetadata(t *testing.T) {

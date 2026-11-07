@@ -2,11 +2,12 @@ package engine
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bybrooklyn/mfetchy/internal/appname"
 )
 
 // timings collects per-track stage durations for the YTM_DEBUG report, so a slow run can be
@@ -27,7 +28,7 @@ type trackTiming struct {
 func newTimings() *timings { return &timings{on: debugOn()} }
 
 // debugOn: YTM_DEBUG is set, so per-exit detail is shown.
-func debugOn() bool { return os.Getenv("YTM_DEBUG") != "" }
+func debugOn() bool { return appname.Getenv("DEBUG") != "" }
 
 // record notes a finished track. bytes is the size of the downloaded source.
 func (t *timings) record(ts *tstate, exit string, bytes int64, end time.Time) {

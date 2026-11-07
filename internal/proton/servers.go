@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/vpnprovider"
+	"github.com/bybrooklyn/mfetchy/internal/vpnprovider"
 )
 
 // Server, Location and ServerList are the provider-neutral types (internal/vpnprovider);

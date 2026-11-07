@@ -14,7 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/store"
 )
 
 type journalEntry struct {
@@ -25,7 +26,7 @@ type journalEntry struct {
 	CoverBackup string            `json:"cover_backup,omitempty"`
 }
 
-func journalPath(dir string) string { return filepath.Join(dir, ".ytm", "tag-journal.jsonl") }
+func journalPath(dir string) string { return filepath.Join(appname.StateDir(dir), "tag-journal.jsonl") }
 
 func appendJournal(dir string, e journalEntry) error {
 	_ = store.PrivateDir(filepath.Dir(journalPath(dir)))
@@ -109,7 +110,7 @@ func getURL(ctx context.Context, url, dst string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "ytm-to-mp3/1 ( https://github.com/bybrooklyn/ytm-to-mp3 )")
+	req.Header.Set("User-Agent", "ytm-to-mp3/1 ( https://github.com/bybrooklyn/mfetchy )")
 	client := &http.Client{Timeout: 30 * time.Second, Transport: Transport}
 	resp, err := client.Do(req)
 	if err != nil {

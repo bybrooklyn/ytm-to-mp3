@@ -1,4 +1,4 @@
-module github.com/bybrooklyn/ytm-to-mp3
+module github.com/bybrooklyn/mfetchy
 
 go 1.26.0
 

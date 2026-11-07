@@ -28,8 +28,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/browsercookies"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/browsercookies"
+	"github.com/bybrooklyn/mfetchy/internal/model"
 )
 
 const (

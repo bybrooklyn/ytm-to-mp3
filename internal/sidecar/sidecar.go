@@ -22,9 +22,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
+	"github.com/bybrooklyn/mfetchy/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/store"
+	"github.com/bybrooklyn/mfetchy/internal/tag"
 )
 
 // Marker is the text that says ytm wrote a file.
@@ -263,7 +263,7 @@ func writeText(p string, doc []byte, apply bool, counter, kept *int) {
 }
 
 func writeAtomic(p string, data []byte) error {
-	tf, err := os.CreateTemp(filepath.Dir(p), ".ytm-*")
+	tf, err := os.CreateTemp(filepath.Dir(p), ".mfy-*")
 	if err != nil {
 		return err
 	}
@@ -324,7 +324,7 @@ func syncCovers(ctx context.Context, o *Options, dir string, infos []tag.Info, a
 		}
 		return nil
 	}
-	work, err := os.MkdirTemp(dir, ".ytm-*")
+	work, err := os.MkdirTemp(dir, ".mfy-*")
 	if err != nil {
 		return nil
 	}

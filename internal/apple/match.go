@@ -8,7 +8,7 @@ import (
 
 	textnorm "golang.org/x/text/unicode/norm"
 
-	ampapi "github.com/bybrooklyn/ytm-to-mp3/internal/apple/amp-api"
+	ampapi "github.com/bybrooklyn/mfetchy/internal/apple/amp-api"
 )
 
 // Query is a library song to find on Apple Music.

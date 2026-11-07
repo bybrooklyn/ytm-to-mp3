@@ -3,7 +3,7 @@ package library
 import (
 	"sort"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/catalog"
+	"github.com/bybrooklyn/mfetchy/internal/catalog"
 )
 
 // State is where one song of the combined library stands against the music folder.

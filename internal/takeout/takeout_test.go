@@ -3,7 +3,7 @@ package takeout
 import (
 	"archive/zip"
 	"fmt"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/model"
 	"os"
 	"path/filepath"
 	"strings"

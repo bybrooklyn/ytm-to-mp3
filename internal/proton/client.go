@@ -27,6 +27,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bybrooklyn/mfetchy/internal/appname"
 )
 
 const baseURL = "https://vpn-api.proton.me"
@@ -36,7 +38,7 @@ const baseURL = "https://vpn-api.proton.me"
 type appID struct{ Version, UA string }
 
 func appIDs() []appID {
-	if v := os.Getenv("YTM_APP_VERSION"); v != "" { // escape hatch if Proton retires them all
+	if v := appname.Getenv("APP_VERSION"); v != "" { // escape hatch if Proton retires them all
 		ver, _, _ := strings.Cut(v[strings.IndexByte(v, '@')+1:], "+")
 		return []appID{{v, "ProtonVPN/" + ver + " (Linux; ubuntu/24.04)"}}
 	}
@@ -86,7 +88,7 @@ func newHTTP() *http.Client {
 		IdleConnTimeout:       60 * time.Second,
 		ForceAttemptHTTP2:     true,
 	}
-	if os.Getenv("YTM_NO_PIN") == "" {
+	if appname.Getenv("NO_PIN") == "" {
 		tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, VerifyPeerCertificate: verifyPin}
 	}
 	return &http.Client{Transport: tr, Timeout: 45 * time.Second,
@@ -381,7 +383,7 @@ func (c *Client) send(ctx context.Context, id appID, method, path string, authed
 	if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 {
 		ae.RetryAfter = time.Duration(s) * time.Second
 	}
-	if os.Getenv("YTM_DEBUG") != "" {
+	if appname.Getenv("DEBUG") != "" {
 		// Never print request bodies (they hold SRP proofs / tokens). Replies can carry
 		// identifiers, so long token-like strings are masked.
 		body := longHex.ReplaceAllString(strings.TrimSpace(string(raw[:min(len(raw), 400)])), "<redacted>")

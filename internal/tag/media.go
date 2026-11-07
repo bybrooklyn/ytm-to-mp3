@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
+	"github.com/bybrooklyn/mfetchy/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/store"
 )
 
 // Info is what we know about an audio file.
@@ -104,7 +104,7 @@ func Write(ctx context.Context, ffmpeg, ffprobe, path string, set map[string]str
 	}
 	// A fresh, uniquely named temp file next to the original (same filesystem, so the final
 	// rename is atomic). Its name stays short so long file names can't push it over limits.
-	tf, err := os.CreateTemp(filepath.Dir(path), ".ytm-*"+ext)
+	tf, err := os.CreateTemp(filepath.Dir(path), ".mfy-*"+ext)
 	if err != nil {
 		return err
 	}
@@ -185,7 +185,7 @@ func writeOgg(ctx context.Context, ffmpeg, ffprobe, path string, set map[string]
 		tags[k] = v // an empty value clears the tag (used by undo)
 	}
 	tags = names.TagsFor(filepath.Ext(path), tags)
-	work, err := os.MkdirTemp(filepath.Dir(path), ".ytm-*")
+	work, err := os.MkdirTemp(filepath.Dir(path), ".mfy-*")
 	if err != nil {
 		return err
 	}
@@ -237,7 +237,7 @@ func ReplaceAudio(ctx context.Context, ffmpeg, ffprobe, src, path string) error 
 	}
 	ext := strings.ToLower(filepath.Ext(path))
 	srcExt := strings.ToLower(filepath.Ext(src))
-	work, err := os.MkdirTemp(filepath.Dir(path), ".ytm-*")
+	work, err := os.MkdirTemp(filepath.Dir(path), ".mfy-*")
 	if err != nil {
 		return err
 	}

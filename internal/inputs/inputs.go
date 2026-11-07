@@ -10,12 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/apple"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/spotify"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/takeout"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/tidal"
+	"github.com/bybrooklyn/mfetchy/internal/apple"
+	"github.com/bybrooklyn/mfetchy/internal/engine"
+	"github.com/bybrooklyn/mfetchy/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/spotify"
+	"github.com/bybrooklyn/mfetchy/internal/takeout"
+	"github.com/bybrooklyn/mfetchy/internal/tidal"
 )
 
 // Kind says which part of ytm handles an input.

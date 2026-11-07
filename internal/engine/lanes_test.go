@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/vpn"
+	"github.com/bybrooklyn/mfetchy/internal/ui"
+	"github.com/bybrooklyn/mfetchy/internal/vpn"
 )
 
 func testEngine(n int) *engine {

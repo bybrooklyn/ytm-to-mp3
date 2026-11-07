@@ -3,8 +3,8 @@ package ytmusic
 import (
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/names"
 )
 
 // Everything here works on the decoded JSON as any (maps and slices), looking for a few

@@ -9,10 +9,11 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/deps"
+	"github.com/bybrooklyn/mfetchy/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/store"
+	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
 
 func TestClassifySanitizes(t *testing.T) {
@@ -65,7 +66,7 @@ func TestBaseArgsDisablePlugins(t *testing.T) {
 
 func TestRunDropsInvalidIDs(t *testing.T) {
 	out := t.TempDir()
-	s, err := store.Open(filepath.Join(out, ".ytm"))
+	s, err := store.Open(appname.StateDir(out))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +78,7 @@ func TestRunDropsInvalidIDs(t *testing.T) {
 	}
 	ents, _ := os.ReadDir(out)
 	for _, e := range ents {
-		if e.Name() != ".ytm" {
+		if e.Name() != appname.StateDirName {
 			t.Errorf("unexpected file %q", e.Name())
 		}
 	}

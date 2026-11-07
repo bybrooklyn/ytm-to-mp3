@@ -13,8 +13,8 @@ import (
 
 	"github.com/grafov/m3u8"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/apple/download"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/apple/widevine-rip/key"
+	"github.com/bybrooklyn/mfetchy/internal/apple/download"
+	"github.com/bybrooklyn/mfetchy/internal/apple/widevine-rip/key"
 )
 
 const (

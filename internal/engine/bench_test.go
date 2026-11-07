@@ -8,14 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/deps"
 )
 
 // TestBenchResolve compares resolving N ids one process each against batches.
 // Hits YouTube for real, so it only runs when YTM_BENCH_IDS (a Takeout-style csv, first
 // column = id) and YTM_BENCH_YTDLP are set.
 func TestBenchResolve(t *testing.T) {
-	csvPath, bin := os.Getenv("YTM_BENCH_IDS"), os.Getenv("YTM_BENCH_YTDLP")
+	csvPath, bin := appname.Getenv("BENCH_IDS"), appname.Getenv("BENCH_YTDLP")
 	if csvPath == "" || bin == "" {
 		t.Skip("set YTM_BENCH_IDS and YTM_BENCH_YTDLP to run")
 	}

@@ -10,9 +10,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/engine"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+	"github.com/bybrooklyn/mfetchy/internal/config"
+	"github.com/bybrooklyn/mfetchy/internal/engine"
+	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
 
 // Settings is the settings screen: every setting on one screen, changed with the arrow keys
@@ -619,7 +619,7 @@ func CheckFolder(s string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("can't create that folder: %v", err)
 	}
-	f, err := os.CreateTemp(dir, ".ytm-write-test-*")
+	f, err := os.CreateTemp(dir, ".mfy-write-test-*")
 	if err != nil {
 		return fmt.Errorf("can't write there: %v", err)
 	}

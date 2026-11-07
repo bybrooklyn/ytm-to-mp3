@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/apple/download"
+	"github.com/bybrooklyn/mfetchy/internal/apple/download"
 )
 
 func GetAlbumResp(ctx context.Context, storefront string, id string, language string, token string) (*AlbumResp, error) {

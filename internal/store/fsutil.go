@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
+
+	"github.com/bybrooklyn/mfetchy/internal/appname"
 )
 
 // CreateExcl creates a brand-new file (O_EXCL, never following a symlink where the
@@ -31,10 +33,10 @@ func PrivateDir(dir string) error {
 	return nil
 }
 
-// NewTempDir makes a fresh private temp directory under <root>/.ytm and sweeps stale
-// ones (older than a day) left by crashed runs. It never touches a live run's directory.
+// NewTempDir makes a fresh private temp directory under <root>/.mfetchy and sweeps
+// stale ones (older than a day) left by crashed runs. It never touches a live run's directory.
 func NewTempDir(root string) (string, error) {
-	base := filepath.Join(root, ".ytm")
+	base := appname.StateDir(root)
 	if err := PrivateDir(base); err != nil {
 		return "", err
 	}

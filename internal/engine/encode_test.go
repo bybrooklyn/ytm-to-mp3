@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/names"
 )
 
 func writeJPEG(t *testing.T) string {

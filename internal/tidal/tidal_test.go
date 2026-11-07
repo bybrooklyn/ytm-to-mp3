@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/catalog"
+	"github.com/bybrooklyn/mfetchy/internal/catalog"
 )
 
 // fake is a stand-in for Tidal's auth and API hosts.

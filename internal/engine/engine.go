@@ -20,13 +20,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/verify"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/vpn"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/deps"
+	"github.com/bybrooklyn/mfetchy/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/store"
+	"github.com/bybrooklyn/mfetchy/internal/ui"
+	"github.com/bybrooklyn/mfetchy/internal/verify"
+	"github.com/bybrooklyn/mfetchy/internal/vpn"
 )
 
 // Options configures a run.
@@ -1210,7 +1211,7 @@ func (e *engine) tryDirect(ctx context.Context, j *job) error {
 		return nil
 	}
 	_ = os.Remove(dst)
-	if os.Getenv("YTM_DEBUG") != "" {
+	if appname.Getenv("DEBUG") != "" {
 		e.UI.Note("debug: direct fetch of %s on %s failed: %v", j.tr.ID, ln.exitName(), err)
 	}
 	if errors.Is(err, errStalled) {

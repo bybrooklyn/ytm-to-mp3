@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/jobs"
+	"github.com/bybrooklyn/mfetchy/internal/jobs"
 )
 
 // Lanes stack their rows; clearing one leaves the others; with none left the block is gone.

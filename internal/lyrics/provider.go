@@ -14,7 +14,7 @@ import (
 )
 
 // UserAgent names ytm to the services it asks (LRCLIB asks clients to).
-const UserAgent = "ytm (https://github.com/bybrooklyn/ytm-to-mp3)"
+const UserAgent = "ytm (https://github.com/bybrooklyn/mfetchy)"
 
 // Provider is one lyrics source. It is handed a Query (title, artist, album, length) and
 // nothing else, and returns every record it found; Choose does the ranking. Not finding

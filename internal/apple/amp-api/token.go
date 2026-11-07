@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/apple/download"
+	"github.com/bybrooklyn/mfetchy/internal/apple/download"
 )
 
 func GetToken() (string, error) {

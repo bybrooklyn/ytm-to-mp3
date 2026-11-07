@@ -14,7 +14,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/names"
 )
 
 // Provider names. They match catalog.Source where one exists.

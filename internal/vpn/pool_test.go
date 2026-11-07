@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
+	"github.com/bybrooklyn/mfetchy/internal/proton"
 )
 
 type fakeAPI struct {

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/jobs"
+	"github.com/bybrooklyn/mfetchy/internal/jobs"
 )
 
 func write(t *testing.T, name string, b []byte) string {

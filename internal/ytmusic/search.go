@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/model"
 )
 
 // Search filters (the "params" YouTube Music's own search box sends for "Songs" and "Albums").

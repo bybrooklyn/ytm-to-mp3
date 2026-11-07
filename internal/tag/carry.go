@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/meta"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/meta"
+	"github.com/bybrooklyn/mfetchy/internal/names"
 )
 
 // carriedTags are the canonical tags a replacement keeps from the file it replaces (see
@@ -64,7 +64,7 @@ func CarryTags(ctx context.Context, ffmpeg, ffprobe, newPath, newSource, oldPath
 	delete(set, "musicbrainz_recordingid")
 	cover := ""
 	if merged.Cover == 1 && oldInfo.HasCover {
-		tmp, err := os.CreateTemp(filepath.Dir(newPath), ".ytm-carry-*.jpg")
+		tmp, err := os.CreateTemp(filepath.Dir(newPath), ".mfy-carry-*.jpg")
 		if err == nil {
 			tmp.Close()
 			defer os.Remove(tmp.Name())

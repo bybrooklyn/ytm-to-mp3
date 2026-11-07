@@ -3,7 +3,7 @@ package apple
 import (
 	"testing"
 
-	ampapi "github.com/bybrooklyn/ytm-to-mp3/internal/apple/amp-api"
+	ampapi "github.com/bybrooklyn/mfetchy/internal/apple/amp-api"
 )
 
 func TestIsURL(t *testing.T) {

@@ -2,18 +2,18 @@ package ytmusic
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/browsercookies"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/browsercookies"
 )
 
 // Reads the real library of whichever installed browser is signed in to YouTube Music
 // (most recently used first). It prints counts only, never cookies or account details.
 // Run with: YTM_LIVE_ACCOUNT=1 go test ./internal/ytmusic -run LiveAccount -v
 func TestLiveAccountLibrary(t *testing.T) {
-	if os.Getenv("YTM_LIVE_ACCOUNT") == "" {
+	if appname.Getenv("LIVE_ACCOUNT") == "" {
 		t.Skip("set YTM_LIVE_ACCOUNT=1")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

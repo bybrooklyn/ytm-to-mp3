@@ -2,8 +2,9 @@ package spotify
 
 import (
 	"context"
-	"os"
 	"testing"
+
+	"github.com/bybrooklyn/mfetchy/internal/appname"
 )
 
 func TestTracksFromList(t *testing.T) {
@@ -54,10 +55,10 @@ func TestSplitArtists(t *testing.T) {
 
 // TestLiveResolve hits real Spotify embed pages. Skipped unless YTM_SPOTIFY_LIVE=1.
 func TestLiveResolve(t *testing.T) {
-	if os.Getenv("YTM_SPOTIFY_LIVE") != "1" {
+	if appname.Getenv("SPOTIFY_LIVE") != "1" {
 		t.Skip("set YTM_SPOTIFY_LIVE=1 to run the live Spotify test")
 	}
-	if err := SetProxy(os.Getenv("YTM_SPOTIFY_PROXY")); err != nil {
+	if err := SetProxy(appname.Getenv("SPOTIFY_PROXY")); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()

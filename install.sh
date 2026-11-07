@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install the latest ytm release for Linux or macOS.
-#   curl -fsSL https://raw.githubusercontent.com/bybrooklyn/ytm-to-mp3/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/bybrooklyn/mfetchy/main/install.sh | sh
 # Pin a version:  YTM_VERSION=v1.2.3 sh install.sh
 # Custom dir:     YTM_INSTALL_DIR=/usr/local/bin sh install.sh
 #
@@ -9,11 +9,11 @@
 # (cosign keyless, signed by the release workflow). To verify manually:
 #   cosign verify-blob checksums.txt \
 #     --signature checksums.txt.sig --certificate checksums.txt.pem \
-#     --certificate-identity-regexp '^https://github.com/bybrooklyn/ytm-to-mp3/\.github/workflows/release\.yml@refs/tags/v' \
+#     --certificate-identity-regexp '^https://github.com/bybrooklyn/mfetchy/\.github/workflows/release\.yml@refs/tags/v' \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 # then: sha256sum -c --ignore-missing checksums.txt
 set -eu
-repo="bybrooklyn/ytm-to-mp3"
+repo="bybrooklyn/mfetchy"
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 case "$os" in linux|darwin) ;; *) echo "unsupported OS: $os (Windows: use install.ps1)" >&2; exit 1 ;; esac
 case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) echo "unsupported CPU: $(uname -m)" >&2; exit 1 ;; esac

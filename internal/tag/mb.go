@@ -111,7 +111,7 @@ func (c *Client) get(ctx context.Context, u string) ([]byte, error) {
 		c.last = time.Now()
 		c.mu.Unlock()
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-		req.Header.Set("User-Agent", "ytm-to-mp3/1 ( https://github.com/bybrooklyn/ytm-to-mp3 )")
+		req.Header.Set("User-Agent", "ytm-to-mp3/1 ( https://github.com/bybrooklyn/mfetchy )")
 		req.Header.Set("Accept", "application/json")
 		resp, err := c.HTTP.Do(req)
 		if err != nil {

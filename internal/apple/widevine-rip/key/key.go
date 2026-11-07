@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 
-	wv "github.com/bybrooklyn/ytm-to-mp3/internal/apple/widevine-rip/cdm"
+	wv "github.com/bybrooklyn/mfetchy/internal/apple/widevine-rip/cdm"
 )
 
 // ExchangeFunc sends a serialized Widevine license request (the challenge)

@@ -22,9 +22,9 @@ import (
 	"strings"
 	"sync"
 
-	ampapi "github.com/bybrooklyn/ytm-to-mp3/internal/apple/amp-api"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/apple/download"
-	widevinerip "github.com/bybrooklyn/ytm-to-mp3/internal/apple/widevine-rip"
+	ampapi "github.com/bybrooklyn/mfetchy/internal/apple/amp-api"
+	"github.com/bybrooklyn/mfetchy/internal/apple/download"
+	widevinerip "github.com/bybrooklyn/mfetchy/internal/apple/widevine-rip"
 )
 
 // ErrNotAppleURL is returned by ResolveURL for a link that is not a

@@ -10,8 +10,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/apple/download"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/apple/fsutil"
+	"github.com/bybrooklyn/mfetchy/internal/apple/download"
+	"github.com/bybrooklyn/mfetchy/internal/apple/fsutil"
 )
 
 const (

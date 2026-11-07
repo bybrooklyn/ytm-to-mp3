@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/vpnprovider"
+	"github.com/bybrooklyn/mfetchy/internal/vpnprovider"
 )
 
 // fakeProvider is a provider that knows nothing about Proton: the pool must work with

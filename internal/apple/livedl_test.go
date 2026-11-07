@@ -7,16 +7,17 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/browsercookies"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/browsercookies"
 )
 
 // TestLiveDownload performs one real Apple Music download using the
 // media-user-token found in a browser. Skipped unless YTM_APPLE_DL=1.
 func TestLiveDownload(t *testing.T) {
-	if os.Getenv("YTM_APPLE_DL") != "1" {
+	if appname.Getenv("APPLE_DL") != "1" {
 		t.Skip("set YTM_APPLE_DL=1 to run the live Apple download test")
 	}
-	if err := SetProxy(os.Getenv("YTM_APPLE_PROXY")); err != nil {
+	if err := SetProxy(appname.Getenv("APPLE_PROXY")); err != nil {
 		t.Fatalf("SetProxy: %v", err)
 	}
 	ctx := context.Background()

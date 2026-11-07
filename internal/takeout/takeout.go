@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/model"
 )
 
 var idRe = regexp.MustCompile(`(?:v=|youtu\.be/|/shorts/|/embed/|^)([\w-]{11})(?:[^\w-]|$)`)

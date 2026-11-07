@@ -6,7 +6,7 @@ import (
 	"net/netip"
 	"strconv"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/vpnprovider"
+	"github.com/bybrooklyn/mfetchy/internal/vpnprovider"
 )
 
 // Client is a vpnprovider.Provider.

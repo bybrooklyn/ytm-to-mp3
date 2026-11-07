@@ -45,7 +45,7 @@ nfpms:
   - id: packages
     package_name: ytm
     vendor: ytm-to-mp3
-    homepage: https://github.com/bybrooklyn/ytm-to-mp3
+    homepage: https://github.com/bybrooklyn/mfetchy
     maintainer: bybrooklyn
     description: Download your YouTube Music library as tagged audio files
     license: MIT
@@ -60,7 +60,7 @@ homebrew_casks:
       owner: bybrooklyn
       name: homebrew-tap
       token: '{{ with index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}{{ . }}{{ end }}'
-    homepage: https://github.com/bybrooklyn/ytm-to-mp3
+    homepage: https://github.com/bybrooklyn/mfetchy
     description: Download your YouTube Music library as tagged audio files
     skip_upload: '{{ if index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}auto{{ else }}true{{ end }}'
     hooks:
@@ -77,7 +77,7 @@ scoops:
       owner: bybrooklyn
       name: scoop-bucket
       token: '{{ with index .Env "SCOOP_BUCKET_GITHUB_TOKEN" }}{{ . }}{{ end }}'
-    homepage: https://github.com/bybrooklyn/ytm-to-mp3
+    homepage: https://github.com/bybrooklyn/mfetchy
     description: Download your YouTube Music library as tagged audio files
     license: MIT
     skip_upload: '{{ if index .Env "SCOOP_BUCKET_GITHUB_TOKEN" }}auto{{ else }}true{{ end }}'

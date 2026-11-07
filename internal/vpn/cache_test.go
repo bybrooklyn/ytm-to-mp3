@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
+	"github.com/bybrooklyn/mfetchy/internal/proton"
 )
 
 func srv(name, cc string, score float64, load int) proton.Server {

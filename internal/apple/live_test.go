@@ -2,10 +2,10 @@ package apple
 
 import (
 	"context"
-	"os"
 	"testing"
 
-	ampapi "github.com/bybrooklyn/ytm-to-mp3/internal/apple/amp-api"
+	ampapi "github.com/bybrooklyn/mfetchy/internal/apple/amp-api"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
 )
 
 // TestLiveCatalog hits real Apple Music servers to validate the account-free
@@ -13,10 +13,10 @@ import (
 // It is skipped unless YTM_APPLE_LIVE=1. Set YTM_APPLE_PROXY to a socks5 URL to
 // route through a VPN exit.
 func TestLiveCatalog(t *testing.T) {
-	if os.Getenv("YTM_APPLE_LIVE") != "1" {
+	if appname.Getenv("APPLE_LIVE") != "1" {
 		t.Skip("set YTM_APPLE_LIVE=1 to run the live Apple catalog test")
 	}
-	if err := SetProxy(os.Getenv("YTM_APPLE_PROXY")); err != nil {
+	if err := SetProxy(appname.Getenv("APPLE_PROXY")); err != nil {
 		t.Fatalf("SetProxy: %v", err)
 	}
 	ctx := context.Background()

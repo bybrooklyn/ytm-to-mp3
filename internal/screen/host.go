@@ -3,7 +3,7 @@ package screen
 import (
 	"sync"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
+	"github.com/bybrooklyn/mfetchy/internal/config"
 )
 
 // Tab is one screen of a desktop window. Make builds it when the tab is opened (the

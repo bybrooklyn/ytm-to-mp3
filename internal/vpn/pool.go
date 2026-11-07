@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/vpnprovider"
+	"github.com/bybrooklyn/mfetchy/internal/proton"
+	"github.com/bybrooklyn/mfetchy/internal/vpnprovider"
 )
 
 // Options tunes OpenWith. The zero value behaves like Open.

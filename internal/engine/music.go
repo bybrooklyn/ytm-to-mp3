@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/names"
 )
 
 // featTail is an unbracketed featured-artist credit at the end of a title ("Song ft. X"):

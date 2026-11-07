@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
+	"github.com/bybrooklyn/mfetchy/internal/deps"
 )
 
 // Sites other than YouTube that ytm can take music from. yt-dlp does the extraction (these

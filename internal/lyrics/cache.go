@@ -18,7 +18,7 @@ const (
 )
 
 // Cache keeps what was found per song as small JSON files in one directory (the music
-// folder's .ytm/lyrics). The key is the song's normalised title and artist, not its file
+// folder's .mfetchy/lyrics). The key is the song's normalised title and artist, not its file
 // path, so the entry survives renames and upgrades to a better source: the new file just
 // gets the cached lyrics. A song asked about is never fetched twice; "no lyrics found" is
 // remembered too, until its retry-after has passed.

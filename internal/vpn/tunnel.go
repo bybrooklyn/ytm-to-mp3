@@ -17,7 +17,7 @@ import (
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/vpnprovider"
+	"github.com/bybrooklyn/mfetchy/internal/vpnprovider"
 )
 
 // Tunnel is one userspace WireGuard connection (no root, no system changes) with a

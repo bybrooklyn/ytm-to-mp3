@@ -18,7 +18,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/apple/widevine-rip/key"
+	"github.com/bybrooklyn/mfetchy/internal/apple/widevine-rip/key"
 )
 
 // AcquireContentKey requests a license for playlist's key ID through

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/bybrooklyn/mfetchy/internal/appname"
 )
 
 type Config struct {
@@ -192,20 +194,15 @@ func PremiumCookiesPath() string {
 }
 
 func dir() (string, error) {
-	d, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(d, "ytm"), nil
+	return appname.ConfigDir()
 }
 
 // CacheDir is where managed tools and the server cache live.
 func CacheDir() (string, error) {
-	d, err := os.UserCacheDir()
+	p, err := appname.CacheDir()
 	if err != nil {
 		return "", err
 	}
-	p := filepath.Join(d, "ytm")
 	return p, os.MkdirAll(p, 0o700)
 }
 

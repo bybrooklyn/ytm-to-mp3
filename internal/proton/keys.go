@@ -11,7 +11,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/vpnprovider"
+	"github.com/bybrooklyn/mfetchy/internal/vpnprovider"
 )
 
 func b64(b []byte) string { return base64.StdEncoding.EncodeToString(b) }

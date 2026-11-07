@@ -1,6 +1,6 @@
 package ui
 
-import "github.com/bybrooklyn/ytm-to-mp3/internal/jobs"
+import "github.com/bybrooklyn/mfetchy/internal/jobs"
 
 // Sink returns a jobs.Sink that shows events the way ytm always has: a finished song is a
 // "✓ Artist - Title · detail" line, a failed one "✗ Artist - Title · reason". Other events

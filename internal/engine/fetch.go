@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
+	"github.com/bybrooklyn/mfetchy/internal/store"
 )
 
 const (

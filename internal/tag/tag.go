@@ -13,9 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/store"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/store"
+	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
 
 type Options struct {
@@ -63,7 +64,7 @@ func Run(ctx context.Context, o Options) error {
 		return undo(ctx, o)
 	}
 	if o.MB == nil && !o.Offline {
-		o.MB = NewClient(filepath.Join(o.Dir, ".ytm", "mb"))
+		o.MB = NewClient(filepath.Join(appname.StateDir(o.Dir), "mb"))
 	}
 	var files []string
 	for _, p := range o.Files {
@@ -392,7 +393,7 @@ func apply(ctx context.Context, o Options, pr *proposal, batch string) error {
 	}
 	var cover string
 	if pr.coverURL != "" {
-		dir := filepath.Join(o.Dir, ".ytm", "tag-backup")
+		dir := filepath.Join(appname.StateDir(o.Dir), "tag-backup")
 		_ = store.PrivateDir(dir)
 		newCover := filepath.Join(dir, batch+"-new.jpg")
 		if err := getURL(ctx, pr.coverURL, newCover); err == nil {

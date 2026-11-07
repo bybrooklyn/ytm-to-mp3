@@ -3,22 +3,22 @@ package engine
 import (
 	"context"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/names"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/vpn"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/ytmusic"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/names"
+	"github.com/bybrooklyn/mfetchy/internal/vpn"
+	"github.com/bybrooklyn/mfetchy/internal/ytmusic"
 )
 
 // nativeSearch reports whether searches and album/playlist listings try ytm's own
 // YouTube Music client first (about 0.3 s, against ~2 s for a yt-dlp process). yt-dlp is
 // always the fallback when the native answer is an error or empty, so a change in
 // YouTube's response format costs speed, not results. YTM_SEARCH=yt-dlp turns it off.
-func nativeSearch() bool { return !strings.EqualFold(os.Getenv("YTM_SEARCH"), "yt-dlp") }
+func nativeSearch() bool { return !strings.EqualFold(appname.Getenv("SEARCH"), "yt-dlp") }
 
 const nativeTimeout = 25 * time.Second
 

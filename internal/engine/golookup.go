@@ -3,18 +3,18 @@ package engine
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/innertube"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/innertube"
+	"github.com/bybrooklyn/mfetchy/internal/model"
 )
 
 // goLookup reports whether lookups try the native player API first: the default since it
 // did 120 songs through 6 VPN exits in 37 s with no failures, against 3-4 minutes with
 // yt-dlp lookups (2026-11-04). YTM_RESOLVER=yt-dlp turns it off; yt-dlp is always the
 // fallback for whatever the native path can't handle.
-func goLookup() bool { return !strings.EqualFold(os.Getenv("YTM_RESOLVER"), "yt-dlp") }
+func goLookup() bool { return !strings.EqualFold(appname.Getenv("RESOLVER"), "yt-dlp") }
 
 // resolveGo looks t up with one player API request on the least-loaded exit: about 0.2 s,
 // against ~2 s for a yt-dlp process. Any failure (bot check, age gate, no plain audio

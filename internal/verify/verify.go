@@ -12,8 +12,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/jobs"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
+	"github.com/bybrooklyn/mfetchy/internal/jobs"
+	"github.com/bybrooklyn/mfetchy/internal/tag"
 )
 
 // Want describes what the file should be. Zero fields are not checked.

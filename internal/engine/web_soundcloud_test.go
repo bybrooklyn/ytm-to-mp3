@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/deps"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/soundcloud"
+	"github.com/bybrooklyn/mfetchy/internal/deps"
+	"github.com/bybrooklyn/mfetchy/internal/soundcloud"
 )
 
 // scServer fakes soundcloud.com plus api-v2 for one public track; with broken set, the API
@@ -101,12 +101,12 @@ func TestSoundCloudFallsBackToYtDlp(t *testing.T) {
 func TestSoundCloudEnvForcesYtDlpAndBandcampSkipsNative(t *testing.T) {
 	scServer(t, false)
 	tools := scFakeYtDlp(t)
-	t.Setenv("YTM_SOUNDCLOUD", "yt-dlp")
+	t.Setenv("MFY_SOUNDCLOUD", "yt-dlp")
 	ts, err := ListWeb(context.Background(), tools, "", "https://soundcloud.com/u/native")
 	if err != nil || ts[0].Title != "Fallback" {
 		t.Fatal(ts, err)
 	}
-	t.Setenv("YTM_SOUNDCLOUD", "")
+	t.Setenv("MFY_SOUNDCLOUD", "")
 	ts, err = ListWeb(context.Background(), tools, "", "https://artist.bandcamp.com/track/x")
 	if err != nil || ts[0].Title != "Fallback" {
 		t.Fatalf("bandcamp must go to yt-dlp: %v %v", ts, err)

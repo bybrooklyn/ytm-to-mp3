@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/catalog"
+	"github.com/bybrooklyn/mfetchy/internal/catalog"
 )
 
 // Track is a Tidal song with what ytm tags and files it by.

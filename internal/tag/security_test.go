@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/ui"
+	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
 
 func TestInside(t *testing.T) {

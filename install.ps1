@@ -1,11 +1,11 @@
 # Install the latest ytm release for Windows.
-#   irm https://raw.githubusercontent.com/bybrooklyn/ytm-to-mp3/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/bybrooklyn/mfetchy/main/install.ps1 | iex
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 $tmp = $null
 try {
-    $repo = 'bybrooklyn/ytm-to-mp3'
+    $repo = 'bybrooklyn/mfetchy'
     $isArm = ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') -or ($env:PROCESSOR_ARCHITEW6432 -eq 'ARM64')
     $arch = if ($isArm) { 'arm64' } else { 'amd64' }
 

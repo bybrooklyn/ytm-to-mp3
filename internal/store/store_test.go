@@ -7,7 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/model"
+	"github.com/bybrooklyn/mfetchy/internal/appname"
+	"github.com/bybrooklyn/mfetchy/internal/model"
 )
 
 func TestPlanLifecycle(t *testing.T) {
@@ -144,7 +145,7 @@ func TestImportDisk(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "Artist", "Song [dQw4w9WgXcQ].mp3"), nil, 0o644)
 	os.WriteFile(filepath.Join(dir, "Artist", "Other.mp3"), nil, 0o644)
 	os.WriteFile(filepath.Join(dir, "Artist", "01 - Tagged.opus"), nil, 0o644)
-	s, _ := Open(filepath.Join(dir, ".ytm"))
+	s, _ := Open(appname.StateDir(dir))
 	defer s.Close()
 	// a fresh database: names first, then tags for files without an id in the name
 	probed := map[string]bool{}
@@ -209,7 +210,7 @@ func TestPathClaimsAndMoves(t *testing.T) {
 }
 
 func TestPlanSkipsInvalidIDs(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), ".ytm"))
+	s, err := Open(appname.StateDir(t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +232,7 @@ func TestPlanSkipsInvalidIDs(t *testing.T) {
 
 func TestPermsAndRedaction(t *testing.T) {
 	root := t.TempDir()
-	dir := filepath.Join(root, ".ytm")
+	dir := appname.StateDir(root)
 	s, err := Open(dir)
 	if err != nil {
 		t.Fatal(err)

@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
+	"github.com/bybrooklyn/mfetchy/internal/tag"
 )
 
 // The element names follow Kodi's music NFO files (kodi.wiki "NFO files/Albums" and

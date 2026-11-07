@@ -2,15 +2,16 @@ package ytmusic
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
+
+	"github.com/bybrooklyn/mfetchy/internal/appname"
 )
 
 // Live checks against the real YouTube Music (anonymous: no account, public searches).
 // Run with YTM_LIVE=1 go test ./internal/ytmusic -run Live -v
 func TestLiveSearchAlbumPlaylist(t *testing.T) {
-	if os.Getenv("YTM_LIVE") == "" {
+	if appname.Getenv("LIVE") == "" {
 		t.Skip("set YTM_LIVE=1")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

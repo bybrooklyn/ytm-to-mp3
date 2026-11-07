@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
+	"github.com/bybrooklyn/mfetchy/internal/config"
 )
 
 // Tools are absolute paths to the external programs ytm drives.

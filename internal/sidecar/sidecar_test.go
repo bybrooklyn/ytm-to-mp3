@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/tag"
+	"github.com/bybrooklyn/mfetchy/internal/tag"
 )
 
 // fake is a pretend library: file path -> what ffprobe would say, and the picture the file

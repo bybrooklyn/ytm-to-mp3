@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/browsercookies"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/catalog"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
+	"github.com/bybrooklyn/mfetchy/internal/browsercookies"
+	"github.com/bybrooklyn/mfetchy/internal/catalog"
+	"github.com/bybrooklyn/mfetchy/internal/config"
 )
 
 func yt(id, title, artist, album string) Song {

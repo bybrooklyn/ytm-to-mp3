@@ -3,9 +3,9 @@ package screen
 import (
 	"strings"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/browsercookies"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/config"
-	"github.com/bybrooklyn/ytm-to-mp3/internal/tidal"
+	"github.com/bybrooklyn/mfetchy/internal/browsercookies"
+	"github.com/bybrooklyn/mfetchy/internal/config"
+	"github.com/bybrooklyn/mfetchy/internal/tidal"
 )
 
 // Connection is one account or source ytm can use, and what state it is in.

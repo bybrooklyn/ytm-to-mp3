@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/browsercookies"
+	"github.com/bybrooklyn/mfetchy/internal/browsercookies"
 )
 
 func row(id, title string, extra ...obj) obj {

@@ -2,14 +2,15 @@ package lyrics
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
+
+	"github.com/bybrooklyn/mfetchy/internal/appname"
 )
 
 // TestLiveLRCLIB asks the real lrclib.net about a few songs. Off unless YTM_LIVE=1.
 func TestLiveLRCLIB(t *testing.T) {
-	if os.Getenv("YTM_LIVE") != "1" {
+	if appname.Getenv("LIVE") != "1" {
 		t.Skip("set YTM_LIVE=1 to ask lrclib.net")
 	}
 	f := &Fetcher{Providers: []Provider{&LRCLIB{}}}
