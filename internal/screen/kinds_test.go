@@ -65,8 +65,11 @@ func TestSetEventsAreKeys(t *testing.T) {
 	if v := h.Do(Event{Set: &Set{Row: 99, Press: true}}); v.Editing {
 		t.Fatal("an out-of-range row must do nothing")
 	}
-	if v := h.Do(Event{Set: &Set{Row: 10, Press: true}}); v.Notice == "" {
-		t.Fatal("pressing the Proton button should explain the terminal step")
+	var got string
+	h.OnAction = func(a string) { got = a }
+	h.Do(Event{Set: &Set{Row: 10, Press: true}})
+	if got != "signin" {
+		t.Fatalf("pressing the VPN button should hand \"signin\" to the window, got %q", got)
 	}
 }
 

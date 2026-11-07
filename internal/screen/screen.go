@@ -55,6 +55,8 @@ type Screen struct {
 	// Downloads is the page of the Downloads tab. Only graphical hosts draw it; a screen that
 	// has it has no rows.
 	Downloads *DownloadsView `json:"downloads,omitempty"`
+	// Task is the run a Menu last started (Tools): its log and whether it is still going.
+	Task *TaskView `json:"task,omitempty"`
 }
 
 // ANSI draws the screen for a terminal.

@@ -37,7 +37,7 @@ func TestHostKeysDriveTheSameScreenAsTheTerminal(t *testing.T) {
 	}
 }
 
-func TestHostEscDoesNotCloseAndActionsExplainThemselves(t *testing.T) {
+func TestHostEscDoesNotCloseAndActionsGoToTheWindow(t *testing.T) {
 	h, _ := testHost()
 	if v := h.Do(ev("esc")); len(v.Screen.Rows) == 0 {
 		t.Fatal("esc must leave the screen as it is")
@@ -46,12 +46,32 @@ func TestHostEscDoesNotCloseAndActionsExplainThemselves(t *testing.T) {
 	if v := h.Do(Event{Tab: &tab}); v.Current != 1 || v.Screen.Title != "connections" || len(v.Tabs) != 2 {
 		t.Fatalf("%+v", v)
 	}
-	v := h.Do(ev("enter")) // the first connection has an action a window can't run
-	if v.Notice == "" {
-		t.Fatal("expected an explanation")
+	var got []string
+	h.OnAction = func(a string) { got = append(got, a) }
+	h.Do(ev("enter")) // the first connection has an action: the window runs it
+	if len(got) != 1 || got[0] != "premium" {
+		t.Fatalf("actions = %v", got)
 	}
-	if v = h.Do(ev("down")); v.Notice != "" {
-		t.Error("the notice goes away on the next event")
+	h.Do(ev("down"))
+	if len(got) != 1 {
+		t.Error("an action is handed over once")
+	}
+}
+
+func TestHostRefreshRemakesTheOpenTab(t *testing.T) {
+	made := 0
+	h := NewHost(&Tab{Name: "a", Make: func() Model {
+		made++
+		return NewConnections([]Connection{{ID: "a", Name: "A"}, {ID: "b", Name: "B"}}, 0)
+	},
+		Remake: func(old Model) Model {
+			made++
+			return NewConnections([]Connection{{ID: "a", Name: "A"}, {ID: "b", Name: "B", Status: "now signed in"}}, old.(*Connections).Cursor())
+		}})
+	h.Do(ev("down"))
+	v := h.Refresh()
+	if made != 2 || !v.Screen.Rows[1].Selected || v.Screen.Rows[1].Value != "now signed in" {
+		t.Fatalf("made=%d rows=%+v", made, v.Screen.Rows)
 	}
 }
 

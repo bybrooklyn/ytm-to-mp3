@@ -39,12 +39,27 @@ func appleLogout(u *ui.UI) error {
 	return nil
 }
 
+// appleLogins is one Apple Music login found in a browser, already accepted by Apple.
+type appleLogins struct {
+	token, jar, storefront, browser string
+}
+
+// Seams for tests: asking Apple whether a login works, and reading a browser's cookies.
+var (
+	appleVerify = func(ctx context.Context, token, jar string) (storefront string, err error) {
+		_ = apple.SetProxy("")
+		c, err := apple.New(token, jar, "us", "")
+		if err != nil {
+			return "", err
+		}
+		return c.Verify(ctx)
+	}
+	appleBrowserCookies = func(b browsercookies.Browser) ([]browsercookies.Cookie, error) { return b.AppleMusicCookies() }
+)
+
 // appleLogin finds a live Apple Music session in a browser (or takes the token
 // pasted), checks it with Apple and saves it with the account's country.
-func appleLogin(ctx context.Context, u *ui.UI) error {
-	if !u.Interactive() {
-		return errors.New("signing in to Apple Music needs a terminal")
-	}
+func appleLogin(ctx context.Context, u *ui.UI, p Prompter) error {
 	u.Head("Apple Music login")
 
 	var token, jar, store string
@@ -53,27 +68,57 @@ func appleLogin(ctx context.Context, u *ui.UI) error {
 	// a live login is chosen over a stale one in another browser. The whole
 	// cookie jar is kept, not just the token: the web-playback endpoint needs
 	// the iTunes store-session cookies too.
-	if tok, j, sf, browser, ok := detectLiveAppleLogin(ctx, u); ok {
-		if u.Confirm(fmt.Sprintf("Found a live Apple Music login in %s. Use it?", browser), true) {
-			token, jar, store = tok, j, sf
-		}
-	} else {
+	var found []appleLogins
+	if err := p.Working(ctx, "Looking for an Apple Music sign-in in your browsers...", func(ctx context.Context) error {
+		found = detectLiveAppleLogins(ctx, u)
+		return nil
+	}); err != nil {
+		return err
+	}
+	switch len(found) {
+	case 0:
 		u.Warn("No live Apple Music session found in a browser.")
+	default:
+		pick := found[0]
+		if len(found) > 1 { // several browsers are signed in: the person chooses
+			opts := make([]Option, len(found))
+			for i, f := range found {
+				opts[i] = Option{Value: f.browser, Label: f.browser}
+			}
+			choice, err := p.Select(ctx, "Which browser's Apple Music sign-in should mfetchy use?", "", opts, found[0].browser)
+			if err != nil {
+				return err
+			}
+			for _, f := range found {
+				if f.browser == choice {
+					pick = f
+				}
+			}
+		}
+		use, err := p.Confirm(ctx, Question{Title: fmt.Sprintf("Found a live Apple Music login in %s. Use it?", pick.browser), Default: true})
+		if err != nil {
+			return err
+		}
+		if use {
+			token, jar, store = pick.token, pick.jar, pick.storefront
+		}
 	}
 	if token == "" {
 		u.Hint("Sign in at https://music.apple.com in your browser (and play a song so the")
 		u.Hint("session is active), then try again — or paste the cookie named")
 		u.Hint("\"media-user-token\" here (DevTools > Application > Cookies > music.apple.com).")
-		token = strings.TrimSpace(u.Ask("media-user-token (or Enter to cancel): ", ""))
-		if token == "" {
-			return errors.New("no login")
-		}
-		_ = apple.SetProxy("")
-		c, err := apple.New(token, "", "us", "")
+		ans, err := p.Form(ctx, FormSpec{Fields: []Field{{
+			Key: "token", Kind: FieldSecret, Label: "media-user-token (or Enter to cancel)",
+			Detail: "Sign in at music.apple.com in your browser and play a song, then copy the cookie named media-user-token\n(DevTools > Application > Cookies > music.apple.com). It is only sent to Apple and kept in a private file.",
+		}}})
 		if err != nil {
 			return err
 		}
-		if store, err = c.Verify(ctx); err != nil {
+		token = strings.TrimSpace(ans["token"])
+		if token == "" {
+			return errors.New("no login")
+		}
+		if store, err = appleVerify(ctx, token, ""); err != nil {
 			return fmt.Errorf("that token doesn't work: %w", err)
 		}
 	}
@@ -117,13 +162,12 @@ func appleStatus(ctx context.Context, u *ui.UI) error {
 	return nil
 }
 
-// detectLiveAppleLogin tries each installed browser's Apple Music cookies and
-// returns the first session Apple still accepts (validated directly, no VPN), with
-// the account's storefront.
-func detectLiveAppleLogin(ctx context.Context, u *ui.UI) (token, jar, storefront, browser string, ok bool) {
-	_ = apple.SetProxy("")
-	for _, b := range browsercookies.Detect() {
-		cs, err := b.AppleMusicCookies()
+// detectLiveAppleLogins tries each installed browser's Apple Music cookies and returns the
+// sessions Apple still accepts (validated directly, no VPN), with the account's storefront.
+func detectLiveAppleLogins(ctx context.Context, u *ui.UI) []appleLogins {
+	var out []appleLogins
+	for _, b := range detectBrowsers() {
+		cs, err := appleBrowserCookies(b)
 		if err != nil {
 			continue
 		}
@@ -132,16 +176,14 @@ func detectLiveAppleLogin(ctx context.Context, u *ui.UI) (token, jar, storefront
 			continue
 		}
 		j := browsercookies.CookieHeader(cs)
-		c, err := apple.New(tok, j, "us", "")
+		sf, err := appleVerify(ctx, tok, j)
 		if err != nil {
+			u.Warn("%s has an Apple Music login, but it has expired", b.Name)
 			continue
 		}
-		if sf, err := c.Verify(ctx); err == nil {
-			return tok, j, sf, b.Name, true
-		}
-		u.Warn("%s has an Apple Music login, but it has expired", b.Name)
+		out = append(out, appleLogins{token: tok, jar: j, storefront: sf, browser: b.Name})
 	}
-	return "", "", "", "", false
+	return out
 }
 
 // appleSignedIn reports whether an Apple Music login is saved (not whether it works).

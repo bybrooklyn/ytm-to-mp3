@@ -62,7 +62,10 @@ func Download(ctx context.Context, inputs []string, o Options, d Deps) (Result, 
 
 // runDownload is Download with the options already in the pipeline's form.
 func runDownload(ctx context.Context, u *ui.UI, op opts, sink jobs.Sink, inputs []string) (Result, error) {
-	op.sink = sink
+	if sink != nil {
+		op.sink = sink
+	}
+	sink = op.sink
 	d := Deps{UI: u, Prompter: op.prompt, Sink: sink}
 	var res Result
 	for round := 0; ; round++ {

@@ -4,11 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"strings"
 	"sync/atomic"
-	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -16,15 +13,8 @@ import (
 	"charm.land/huh/v2/spinner"
 	"github.com/charmbracelet/x/term"
 
-	"github.com/bybrooklyn/mfetchy/internal/config"
-	"github.com/bybrooklyn/mfetchy/internal/core"
-	"github.com/bybrooklyn/mfetchy/internal/proton"
 	"github.com/bybrooklyn/mfetchy/internal/screen"
-	"github.com/bybrooklyn/mfetchy/internal/ui"
-	"github.com/bybrooklyn/mfetchy/internal/vpn"
 )
-
-func protonClient() *proton.Client { return core.ProtonClient() }
 
 // checkFolder makes sure the music folder can be created and written, so a typo shows up
 // here instead of after a long download.
@@ -79,110 +69,4 @@ func working(ctx context.Context, title string, f func(context.Context) error) e
 		err = serr
 	}
 	return err
-}
-
-// loginFlow signs in to Proton (with 2FA and retries); vpnFlow has already asked which
-// provider to use.
-func loginFlow(ctx context.Context, pc *proton.Client, cfg *config.Config) error {
-	cfg.NoVPN = false
-	for {
-		var user, pass string
-		err := runForm(ctx, huh.NewForm(huh.NewGroup(
-			huh.NewInput().Title("Proton email or username").Value(&user).
-				Validate(func(s string) error {
-					if strings.TrimSpace(s) == "" {
-						return errors.New("required")
-					}
-					return nil
-				}),
-			huh.NewInput().Title("Password").Description("only sent to Proton, never saved").
-				EchoMode(huh.EchoModePassword).Value(&pass),
-		)))
-		if err != nil {
-			return err
-		}
-		err = working(ctx, "Signing in...", func(c context.Context) error {
-			return pc.Login(c, strings.TrimSpace(user), pass)
-		})
-		if errors.Is(err, proton.ErrNeed2FA) {
-			err = ask2FA(ctx, pc)
-		}
-		if err == nil {
-			err = working(ctx, "Checking your VPN access...", func(c context.Context) error {
-				_, e := pc.Identity(c)
-				return e
-			})
-		}
-		if err == nil {
-			fmt.Println(ui.Mark(ui.OK("✓"), "signed in as "+ui.Sanitize(pc.Session.Username)))
-			return nil
-		}
-		if errors.Is(err, errBack) || errors.Is(err, context.Canceled) {
-			return err // Esc or Ctrl-C at the 2FA prompt
-		}
-		fmt.Println(ui.Mark(ui.Fail("✗"), ui.Sanitize(err.Error())))
-		var ae *proton.APIError
-		if errors.As(err, &ae) && (ae.RateLimited() || ae.BadVersion() || ae.Code == 9001) {
-			// retrying can't help and a rate limit gets longer with every attempt
-			return errors.New("stopping here; fix the above, then try again in Settings (set MFY_DEBUG=1 to see Proton's raw reply)")
-		}
-		again := true
-		if one(ctx, huh.NewConfirm().Title("Try again?").Value(&again)) != nil || !again {
-			return errors.New("not signed in; try again in Settings")
-		}
-	}
-}
-
-func ask2FA(ctx context.Context, pc *proton.Client) error {
-	for try := 0; try < 3; try++ {
-		var code string
-		if err := one(ctx, huh.NewInput().Title("2FA code").Description("from your authenticator app").Value(&code)); err != nil {
-			return err
-		}
-		err := working(ctx, "Checking code...", func(c context.Context) error {
-			return pc.Submit2FA(c, strings.TrimSpace(code))
-		})
-		if err == nil {
-			return nil
-		}
-		fmt.Println(ui.Mark(ui.Fail("✗"), ui.Sanitize(err.Error())))
-	}
-	return errors.New("2FA failed")
-}
-
-// runStatus connects the configured tunnels and shows where each one exits.
-func runStatus(ctx context.Context, u *ui.UI) error {
-	cfg := config.Load()
-	v := currentVPN(cfg)
-	label := providerLabel(providerID(cfg))
-	u.Head("Settings · %s", tilde(config.Path()))
-	u.Item("music folder", "%s", tilde(config.ExpandPath(orDefault(cfg.Out, config.DefaultOut()))))
-	u.Item("format      ", "%s", orDefault(cfg.Format, config.DefaultFormat))
-	u.Item("VPN exits   ", "%s", connectionsLabel(cfg, v))
-	if !v.SignedIn {
-		u.Warn("VPN: not signed in · sign in in Settings")
-		return nil
-	}
-	if cfg.NoVPN {
-		u.Note("VPN: %s (%s), but turned off", label, v.Who)
-		return nil
-	}
-	u.Note("VPN: %s (%s) · connecting...", label, v.Who)
-	pool, err := vpn.OpenWith(ctx, v.Prov, connections(cfg, v), u.Logf, vpn.Options{})
-	if err != nil {
-		return err
-	}
-	defer pool.Close()
-	for _, x := range pool.Exits() {
-		c, _ := vpn.NewClient(x.Proxy)
-		c.Timeout = 20 * time.Second
-		ip := "?"
-		if resp, err := c.Get("https://api.ipify.org"); err == nil {
-			b, _ := io.ReadAll(io.LimitReader(resp.Body, 64))
-			resp.Body.Close()
-			ip = strings.TrimSpace(string(b))
-		}
-		u.Item(fmt.Sprintf("%-22s", x.Name), "exits at %s", ip)
-	}
-	return nil
 }

@@ -29,6 +29,8 @@ type Downloads struct {
 	state   string // "", "running", "stopping", "done", "stopped"
 	cancel  context.CancelFunc
 	inputs  []string // what the last run was given, for Resume and Retry
+	last    FlowFunc // the last run itself, for Resume
+	task    string   // what a flow is doing before it has songs ("Reading your YouTube Music library")
 	began   time.Time
 	ended   time.Time
 	err     string
@@ -49,6 +51,11 @@ type Downloads struct {
 // RunFunc runs one download: inputs as typed or dropped, events to sink. It returns how the
 // run ended. The window passes a function that calls core.Download.
 type RunFunc func(ctx context.Context, inputs []string, sink jobs.Sink) (RunResult, error)
+
+// FlowFunc is a run that is not just "download these inputs": an import that reads a library
+// first and asks before it downloads. It reports its songs to sink, like a RunFunc, and
+// returns ErrBackedOut when the person said no to its first question.
+type FlowFunc func(ctx context.Context, sink jobs.Sink) (RunResult, error)
 
 // RunResult is how a run ended.
 type RunResult struct {
@@ -127,6 +134,8 @@ type DownloadsView struct {
 	Summary  *DLSummary // set when the run is over
 	// Hidden is songs not listed because there are too many to show (finished ones first).
 	Hidden int
+	// Task names what an import is doing while it has no songs yet ("Reading your library").
+	Task string
 }
 
 // NewDownloads builds the page. settings is asked each time the page is drawn, so it
@@ -203,18 +212,28 @@ func (d *Downloads) Start() error {
 // are already in the library and are left alone.
 func (d *Downloads) Resume() error {
 	d.mu.Lock()
-	in := append([]string(nil), d.inputs...)
+	in, last, task := append([]string(nil), d.inputs...), d.last, d.task
 	d.mu.Unlock()
-	if len(in) == 0 {
+	if last == nil {
 		return ErrNothingToDo
 	}
-	return d.begin(in)
+	return d.start(task, in, last)
 }
+
+// StartFlow begins an import: f reads a library, asks its questions (the window shows them as
+// dialogs) and downloads, reporting songs to the queue. task names it until songs appear.
+func (d *Downloads) StartFlow(task string, f FlowFunc) error { return d.start(task, nil, f) }
 
 // RetryFailed is Resume under the name the summary's button uses.
 func (d *Downloads) RetryFailed() error { return d.Resume() }
 
 func (d *Downloads) begin(inputs []string) error {
+	return d.start("", inputs, func(ctx context.Context, sink jobs.Sink) (RunResult, error) {
+		return d.run(ctx, inputs, sink)
+	})
+}
+
+func (d *Downloads) start(task string, inputs []string, f FlowFunc) error {
 	d.mu.Lock()
 	if d.state == "running" || d.state == "stopping" {
 		d.mu.Unlock()
@@ -223,14 +242,14 @@ func (d *Downloads) begin(inputs []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	d.cancel = cancel
 	d.state, d.err, d.result = "running", "", nil
-	d.inputs = inputs
+	d.inputs, d.last, d.task = inputs, f, task
 	d.items, d.order = map[string]*DLItem{}, nil
 	d.speed, d.lastAt, d.pending = 0, time.Time{}, 0
 	d.began, d.ended = time.Now(), time.Time{}
 	d.mu.Unlock()
 	d.changed(true)
 	go func() {
-		res, err := d.run(ctx, inputs, d)
+		res, err := f(ctx, d)
 		d.finish(ctx, res, err)
 		cancel()
 	}()
@@ -250,6 +269,17 @@ func (d *Downloads) Stop() {
 
 func (d *Downloads) finish(ctx context.Context, res RunResult, err error) {
 	d.mu.Lock()
+	if errors.Is(err, ErrBackedOut) && len(d.items) == 0 {
+		// asked, and the person said no: back to the page as it was
+		d.state, d.last, d.task, d.inputs = "", nil, "", nil
+		d.began, d.ended = time.Time{}, time.Time{}
+		d.mu.Unlock()
+		d.changed(true)
+		return
+	}
+	if len(res.Results) == 0 {
+		res.Results = d.resultsFromItems() // a flow that reports only through events
+	}
 	d.ended = time.Now()
 	stopped := ctx.Err() != nil
 	switch {
@@ -258,7 +288,7 @@ func (d *Downloads) finish(ctx context.Context, res RunResult, err error) {
 	default:
 		d.state = "done"
 	}
-	if err != nil && !stopped {
+	if err != nil && !stopped && !errors.Is(err, ErrBackedOut) {
 		d.err = err.Error()
 	}
 	d.result = summarize(res, d.ended.Sub(d.began))
@@ -279,6 +309,34 @@ func (d *Downloads) finish(ctx context.Context, res RunResult, err error) {
 	}
 	d.mu.Unlock()
 	d.changed(true)
+}
+
+// ErrBackedOut is what a flow returns when the person backed out of it before anything
+// started: the page goes back to how it was, with no error and no summary.
+var ErrBackedOut = errors.New("backed out")
+
+// resultsFromItems turns what events showed into results (d.mu held), for a flow that does
+// not return its own ledger.
+func (d *Downloads) resultsFromItems() []jobs.Result {
+	var out []jobs.Result
+	for _, id := range d.order {
+		it := d.items[id]
+		r := jobs.Result{ID: it.ID, Label: it.Label, Source: it.Source, Path: it.Path, Quality: it.Quality, Reason: it.Reason, Retryable: it.Retryable}
+		switch it.State {
+		case DLDone:
+			r.Kind = jobs.Done
+		case DLUpgraded:
+			r.Kind = jobs.Upgraded
+		case DLSkipped:
+			r.Kind = jobs.Skipped
+		case DLFailed:
+			r.Kind = jobs.Failed
+		default:
+			continue // not finished: counted as unfinished by the summary
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 func stateOf(k jobs.Kind) string {
@@ -452,7 +510,7 @@ const maxListed = 40
 func (d *Downloads) Snapshot() DownloadsView {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	v := DownloadsView{Input: d.input, State: d.state, Error: d.err, Speed: d.speed, Summary: d.result}
+	v := DownloadsView{Input: d.input, State: d.state, Error: d.err, Speed: d.speed, Summary: d.result, Task: d.task}
 	if d.settings != nil {
 		v.Settings = d.settings()
 	}

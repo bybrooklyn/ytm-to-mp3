@@ -67,6 +67,8 @@ func appleMatch(ctx context.Context, u *ui.UI, o opts, paths []string) error {
 	}
 	u.Head("On Apple Music: %d of %d songs · %d sure, %d less certain, %d not found",
 		sure+maybe, len(res), sure, maybe, missing)
+	headline := fmt.Sprintf("%d of %d songs are on Apple Music: %d sure, %d less certain, %d not found.",
+		sure+maybe, len(res), sure, maybe, missing)
 	if maybe > 0 {
 		u.Note("Less certain matches · the first few; all of them are in %s", tilde(report))
 		shown := 0
@@ -82,7 +84,7 @@ func appleMatch(ctx context.Context, u *ui.UI, o opts, paths []string) error {
 	}
 
 	includeMaybe, replace := o.maybe, o.replace
-	if u.Interactive() && !o.yes {
+	if (u.Interactive() || o.ask) && !o.yes {
 		which, where := "sure", "next"
 		if includeMaybe {
 			which = "all"
@@ -105,7 +107,7 @@ func appleMatch(ctx context.Context, u *ui.UI, o opts, paths []string) error {
 		}); ok {
 			// the terminal shows both questions in one form
 			which, where, err = p.SelectBoth(ctx, "Download which songs from Apple Music?", whichOpts, which, "Where do they go?", whereOpts, where)
-		} else if which, err = o.prompt.Select(ctx, "Download which songs from Apple Music?", "", whichOpts, which); err == nil && which != "none" {
+		} else if which, err = o.prompt.Select(ctx, "Download which songs from Apple Music?", headline, whichOpts, which); err == nil && which != "none" {
 			where, err = o.prompt.Select(ctx, "Where do they go?", "", whereOpts, where)
 		}
 		if err != nil {

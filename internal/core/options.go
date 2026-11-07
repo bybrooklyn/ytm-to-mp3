@@ -44,6 +44,14 @@ type Options struct {
 	Given map[string]bool
 
 	Apply, Rename, Undo bool
+
+	// Ask says a person can be asked questions even though the output is not a terminal
+	// (the window has dialogs). Without it, a flow that would ask in a terminal uses defaults.
+	Ask bool
+
+	// Sink hears the events of the songs a flow downloads (the window's queue). Nil is fine.
+	// Download takes its sink from Deps instead.
+	Sink jobs.Sink
 }
 
 // OptionsFromConfig are the options a run has when nothing is said on the command line: the
@@ -119,6 +127,8 @@ type opts struct {
 	preset         []model.Track
 	given          map[string]bool
 
+	ask bool // see Options.Ask
+
 	// prompt answers the questions a run asks (never nil inside the pipeline).
 	prompt Prompter
 	// sink hears progress and stage events (the window); nil when nobody listens.
@@ -133,7 +143,7 @@ func (o Options) internal(p Prompter) opts {
 		premiumUpgrade: o.PremiumUpgrade, premiumLimit: o.PremiumLimit,
 		tagAfter: o.TagAfter, premiumAfter: o.PremiumAfter, lyricsAfter: o.LyricsAfter,
 		replace: o.Replace, maybe: o.Maybe, source: o.Source, preset: o.Preset, given: o.Given,
-		prompt: p,
+		prompt: p, sink: o.Sink, ask: o.Ask,
 	}
 }
 

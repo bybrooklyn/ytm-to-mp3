@@ -87,9 +87,11 @@ func TestTypingAFolderAndTabs(t *testing.T) {
 	if host.View().Screen.Title != "connections" {
 		t.Fatal("tab switch")
 	}
-	c.OnTypedKey()(&fyne.KeyEvent{Name: fyne.KeyReturn}) // an action a window can't run
-	if host.View().Notice == "" {
-		t.Fatal("expected a notice")
+	var acts []string
+	host.OnAction = func(a string) { acts = append(acts, a) }
+	c.OnTypedKey()(&fyne.KeyEvent{Name: fyne.KeyReturn}) // an action the window runs
+	if len(acts) != 1 || acts[0] != "youtube" {
+		t.Fatalf("actions = %v", acts)
 	}
 }
 
@@ -118,13 +120,15 @@ func TestControlsSetValues(t *testing.T) {
 	}
 }
 
-func TestTabShortcutAndNotice(t *testing.T) {
+func TestButtonPressReachesTheWindowsActionHandler(t *testing.T) {
 	v, host, _ := testView(t, theme.VariantDark, wide)
+	var acts []string
+	host.OnAction = func(a string) { acts = append(acts, a) }
 	one := 1
 	v.send(screen.Event{Tab: &one})
 	v.send(screen.Event{Set: &screen.Set{Row: 1, Press: true}})
-	if !strings.Contains(host.View().Notice, "terminal") {
-		t.Fatalf("notice = %q", host.View().Notice)
+	if len(acts) != 1 || acts[0] != "applein" {
+		t.Fatalf("actions = %v", acts)
 	}
 }
 

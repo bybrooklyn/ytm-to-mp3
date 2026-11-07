@@ -15,7 +15,6 @@ import (
 	"github.com/bybrooklyn/mfetchy/internal/config"
 	"github.com/bybrooklyn/mfetchy/internal/core"
 	"github.com/bybrooklyn/mfetchy/internal/engine"
-	"github.com/bybrooklyn/mfetchy/internal/export"
 	"github.com/bybrooklyn/mfetchy/internal/model"
 	"github.com/bybrooklyn/mfetchy/internal/ui"
 )
@@ -301,22 +300,10 @@ func signalContext(u *ui.UI) (context.Context, context.CancelFunc) {
 
 // wizard finds an export on disk or guides the user to get one.
 func wizard(ctx context.Context, u *ui.UI) (string, error) {
-	// An export found lying around is only used after the user has seen what it is and
-	// said yes; with no terminal to ask on, it is never adopted automatically.
-	if p, ok := findExisting(); ok && u.Interactive() {
-		if u.Confirm("Found "+export.Describe(p)+"\n  at "+p+"\nDownload it?", true) {
-			return p, nil
-		}
-	}
-	if !u.Interactive() {
+	// the plain command-line prompter: this runs when there is no menu to show
+	p, err := core.Wizard(ctx, u, core.TerminalPrompter{U: u})
+	if err != nil && !u.Interactive() {
 		printUsage()
-		return "", errors.New("no export given")
 	}
-	u.Warn("mfetchy needs your YouTube Music export (a Google Takeout file).")
-	if ans := u.Ask("Path to it, or press Enter to get one now: ", ""); ans != "" {
-		return strings.Trim(ans, `"' `), nil
-	}
-	return export.Guide(ctx, u)
+	return p, err
 }
-
-func findExisting() (string, bool) { return core.FindExisting() }

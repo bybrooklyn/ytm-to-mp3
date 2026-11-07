@@ -202,6 +202,9 @@ func (v *view) queueSection(d screen.DownloadsView, running bool) fyne.CanvasObj
 	case "done":
 		title = "Finished"
 	}
+	if c.Total == 0 && d.Task != "" && d.State == "running" {
+		title, sub = d.Task, "" // an import that has not found songs yet
+	}
 	var bits []string
 	if c.Working > 0 {
 		bits = append(bits, fmt.Sprintf("%d working", c.Working))

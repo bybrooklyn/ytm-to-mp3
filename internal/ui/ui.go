@@ -26,6 +26,7 @@ type UI struct {
 	last   string   // the last frame written, to skip identical redraws
 	hidden bool     // the cursor is hidden while the block is up
 	in     *bufio.Reader
+	secret func() (string, error) // reads a line without echoing it (nil: the real terminal)
 
 	// Lanes let several things draw their own live rows at once (a run with Tidal, Apple
 	// Music and YouTube downloading side by side). A lane is a view of the UI made by Lane:
@@ -124,9 +125,18 @@ func NewWriter(w io.Writer) *UI {
 	return &UI{out: w, in: bufio.NewReader(strings.NewReader(""))}
 }
 
+// NewTerminal is a UI that talks to in and out as if they were a terminal, with secret
+// standing in for the no-echo read. Tests use it to drive the question paths.
+func NewTerminal(in io.Reader, out io.Writer, secret func() (string, error)) *UI {
+	return &UI{out: out, tty: true, in: bufio.NewReader(in), secret: secret}
+}
+
 // Interactive reports whether both ends are a terminal, so prompting makes sense.
 func (u *UI) Interactive() bool {
 	u = u.base()
+	if u.secret != nil { // made by NewTerminal for a test: there is a person on the other end
+		return true
+	}
 	st, err := os.Stdin.Stat()
 	return u.tty && err == nil && st.Mode()&os.ModeCharDevice != 0
 }
@@ -329,6 +339,33 @@ func (u *UI) Ask(prompt, def string) string {
 		return def
 	}
 	return line
+}
+
+// AskSecret prompts for a line that must not be shown as it is typed (a password, a token,
+// an account number): the terminal does not echo it. Empty input returns "". Without a
+// terminal it reads a plain line, so a script can pipe one in.
+func (u *UI) AskSecret(prompt string) string {
+	u = u.base()
+	u.mu.Lock()
+	u.erase()
+	p := Sanitize(prompt)
+	if u.tty {
+		p = Mark(Accent("?"), strings.ReplaceAll(p, "\n", "\n    "))
+	}
+	fmt.Fprint(u.out, p)
+	u.mu.Unlock()
+	if u.secret != nil {
+		s, _ := u.secret()
+		fmt.Fprintln(u.out)
+		return strings.TrimSpace(s)
+	}
+	if u.tty && term.IsTerminal(os.Stdin.Fd()) {
+		b, _ := term.ReadPassword(os.Stdin.Fd())
+		fmt.Fprintln(u.out)
+		return strings.TrimSpace(string(b))
+	}
+	line, _ := u.in.ReadString('\n')
+	return strings.TrimSpace(line)
 }
 
 // Confirm asks a yes/no question. def is returned on empty input or when not interactive.

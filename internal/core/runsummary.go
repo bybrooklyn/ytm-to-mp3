@@ -82,7 +82,13 @@ func (r *runExits) recordYouTube(st *store.Store, todo []model.Track, upgraded m
 			if upgraded[t.ID] {
 				k = jobs.Upgraded
 			}
-			r.ledgerOnly(jobs.Event{Kind: k, ID: t.ID, Label: label, Source: "youtube", Path: path})
+			e := jobs.Event{Kind: k, ID: t.ID, Label: label, Source: "youtube", Path: path}
+			r.ledgerOnly(e)
+			if k == jobs.Upgraded {
+				// the engine reported it as done; the window learns here that it replaced a
+				// worse copy (the song is "Upgraded" in the queue, not just "Done")
+				jobs.Emit(r.extra, e)
+			}
 		case "failed":
 			class := jobs.Classify(fmt.Errorf("%s", text))
 			r.ledgerOnly(jobs.Event{Kind: jobs.Failed, ID: t.ID, Label: label, Source: "youtube", Reason: text,

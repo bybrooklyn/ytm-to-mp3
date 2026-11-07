@@ -38,7 +38,7 @@ const tidalWarning = `Tidal's terms do not allow downloading its music.
     Music or YouTube instead. The output says which quality you got.
   • Tidal has no public download API. This can stop working whenever Tidal changes things.`
 
-func tidalClient() *tidal.Client {
+var tidalClient = func() *tidal.Client {
 	p, _ := tidal.SessionPath()
 	return tidal.New(p)
 }
