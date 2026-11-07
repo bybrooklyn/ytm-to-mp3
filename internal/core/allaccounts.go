@@ -41,10 +41,10 @@ func allAccountsFlow(ctx context.Context, u *ui.UI, o opts) error {
 		if st := s.Detect(); st.SetUp {
 			setUp++
 			u.Styled(fmt.Sprintf("  %s %s %s", ui.OK("✓"), ui.Bold(s.Name()), ui.Dim(st.Detail)))
-			status = append(status, "Ready: "+s.Name()+" ("+st.Detail+")")
+			status = append(status, "• Ready: "+s.Name()+" ("+st.Detail+")")
 		} else {
 			u.Styled(fmt.Sprintf("  %s %s %s", ui.Dim("–"), s.Name(), ui.Dim("skipped: "+st.Hint)))
-			status = append(status, "Skipped: "+s.Name()+" ("+st.Hint+")")
+			status = append(status, "• Skipped: "+s.Name()+" ("+st.Hint+")")
 		}
 	}
 	u.Styled("")
@@ -153,7 +153,7 @@ func printPlan(u *ui.UI, p library.Plan, o opts) string {
 			only = fmt.Sprintf(", %d only here", n)
 		}
 		u.Styled(fmt.Sprintf("    %s %s%s", ui.Dim("·"), fmt.Sprintf("%-14s %d", a, c.PerAccount[a]), ui.Dim(only)))
-		plain = append(plain, fmt.Sprintf("%s: %d%s", a, c.PerAccount[a], only))
+		plain = append(plain, fmt.Sprintf("• %s: %d%s", a, c.PerAccount[a], only))
 	}
 	u.Styled(fmt.Sprintf("\n    %s already in %s · %s new · %s to upgrade", ui.Bold(fmt.Sprint(c.Held)), tilde(o.out),
 		ui.Bold(fmt.Sprint(c.New)), ui.Bold(fmt.Sprint(c.Upgrades))))
@@ -167,14 +167,14 @@ func printPlan(u *ui.UI, p library.Plan, o opts) string {
 	}
 	if len(from) > 0 {
 		u.Styled(fmt.Sprintf("    %s%s%s", cDim, strings.Join(from, " · "), cReset))
-		plain = append(plain, strings.Join(from, ", "))
+		plain = append(plain, "", "Where they come from: "+strings.Join(from, ", ")+".")
 		if c.EstimateOf > 0 {
 			est := fmt.Sprintf("about %s (estimated from %s with a known length)", engine.HumanBytes(c.EstimateBytes), count(c.EstimateOf, "song"))
 			u.Styled(fmt.Sprintf("    %s%s%s", cDim, est, cReset))
-			plain = append(plain, est)
+			plain = append(plain, "", capitalFirst(est)+".")
 		}
 		u.Styled(fmt.Sprintf("    %s%s%s\n", cDim, extras(o), cReset))
-		plain = append(plain, capitalFirst(strings.TrimSuffix(extras(o), "  (change in settings)"))+".")
+		plain = append(plain, "", capitalFirst(strings.TrimSuffix(extras(o), "  (change in settings)"))+".")
 	} else {
 		u.Styled(fmt.Sprintf("    %sNothing to download.%s\n", cDim, cReset))
 		plain = append(plain, "Nothing to download.")

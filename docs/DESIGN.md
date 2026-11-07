@@ -58,13 +58,22 @@ settings layouts, and the common thread of all three:
    UI font. A folder path and the config file location are mono; "Format: mp3" is not.
 5. **Native controls, same behaviour.** A switch can only do what Space does in the terminal.
    The model decides; the window draws. No window-only features.
-6. **Honest copy.** "Sign-in happens in the terminal" is a banner next to the thing you
-   clicked, stating what to run. No exclamation marks, no emoji, no "oops".
-7. **Room to grow.** The sidebar is built from the list of tabs; Library and Lyrics later
-   are another tab each, not a redesign. Downloads is the first of them: an input section,
-   a live queue (one grouped list per source, progress as a flat bar, a status word beside
-   every dot) and, once a run is over, a summary above the queue. Questions a run asks are
-   native dialogs. The queue shows at most 40 songs per source and counts the rest.
+6. **Honest copy.** Say what a button does, what it needs and what went wrong, next to
+   where it happened (a wrong password is written under the field, in the dialog that
+   asked). No exclamation marks, no emoji, no "oops".
+7. **Room to grow.** The sidebar is built from the list of tabs, each another page of the
+   same kind, not a redesign. Downloads: an input section, a live queue (one grouped list
+   per source, progress as a flat bar, a status word beside every dot) and, once a run is
+   over, a summary above the queue. The queue shows at most 40 songs per source and counts
+   the rest. Library: one grouped list of imports; starting one switches to Downloads, where
+   the downloads are the queue. Tools: one grouped list of actions; a run's output appears
+   above the list as a log with a Cancel button while it runs. Connections and Settings
+   run every sign-in in the window.
+8. **Questions are native dialogs.** Whatever a flow asks (a password, a code to approve in
+   the browser, which export, whether to download) is a dialog over the window, built from
+   the same questions the terminal asks. Password and token fields are masked. A refused
+   answer keeps the dialog open with the reason under the field; Cancel always backs out
+   without a message.
 
 ## Palette
 

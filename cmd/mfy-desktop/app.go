@@ -255,9 +255,10 @@ func resultText(out string, err error) string {
 	var lines []string
 	for _, l := range strings.Split(out, "\n") {
 		l = strings.TrimSpace(l)
-		for _, mark := range []string{"✓ ", "✗ ", "! "} {
+		// (a ✗ line is an earlier try that failed; the flow went on, so it is not the result)
+		for _, mark := range []string{"✓ ", "! "} {
 			if rest, ok := strings.CutPrefix(l, mark); ok {
-				lines = append(lines, rest)
+				lines = append(lines, capital(rest))
 			}
 		}
 	}
@@ -265,5 +266,5 @@ func resultText(out string, err error) string {
 		// the failure was also printed as a ✗ line; the error says it once
 		return "Could not finish.\n\n" + capital(err.Error())
 	}
-	return capital(strings.Join(lines, "\n"))
+	return strings.Join(lines, "\n")
 }

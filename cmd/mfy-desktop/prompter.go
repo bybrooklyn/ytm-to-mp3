@@ -70,16 +70,39 @@ var openURL = func(link string) error {
 	return fyne.CurrentApp().OpenURL(u)
 }
 
+// wrapped is a paragraph of ordinary text, lined up with the other pieces of a dialog.
 func wrapped(s string) fyne.CanvasObject {
-	l := widget.NewLabel(s)
-	l.Wrapping = fyne.TextWrapWord
-	return l
+	return para(s, theme.ColorNameForeground, theme.SizeNameText)
 }
 
+// prose joins the lines of a text that was broken for a terminal into paragraphs: a line
+// break stays before a bullet ("• ") and where there is a blank line.
+func prose(s string) string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		t := strings.TrimSpace(l)
+		switch {
+		case t == "":
+			out = append(out, "")
+		case strings.HasPrefix(t, "• ") || len(out) == 0 || out[len(out)-1] == "":
+			out = append(out, t)
+		default:
+			out[len(out)-1] += " " + t
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// paragraph is a detail text as wrapped prose.
+func paragraph(s string) fyne.CanvasObject { return wrapped(prose(s)) }
+
 func heading(s string) fyne.CanvasObject {
-	l := widget.NewLabelWithStyle(s, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	l.Wrapping = fyne.TextWrapWord
-	return l
+	rt := widget.NewRichText(&widget.TextSegment{Text: s, Style: widget.RichTextStyle{
+		ColorName: theme.ColorNameForeground, SizeName: theme.SizeNameText, TextStyle: fyne.TextStyle{Bold: true},
+	}})
+	rt.Wrapping = fyne.TextWrapWord
+	in := theme.InnerPadding()
+	return container.New(layout.NewCustomPaddedLayout(-in, -in, -in, -in), rt)
 }
 
 // dialogWidth is how wide the window's dialogs are, within a narrow window.
@@ -98,7 +121,7 @@ func (p dialogPrompter) Confirm(ctx context.Context, q core.Question) (bool, err
 	return ask(ctx, p, q.Default, func(answer func(bool)) dialog.Dialog {
 		var content fyne.CanvasObject = wrapped(q.Title)
 		if q.Detail != "" {
-			content = container.NewVBox(heading(q.Title), wrapped(q.Detail))
+			content = container.NewVBox(heading(q.Title), paragraph(q.Detail))
 		}
 		d := dialog.NewCustomConfirm("", yes, no, content, answer, p.win)
 		d.Resize(fyne.NewSize(p.dialogWidth(460), d.MinSize().Height))
@@ -154,7 +177,7 @@ func (p dialogPrompter) Select(ctx context.Context, title, detail string, option
 	got, err := ask(ctx, p, false, func(answer func(bool)) dialog.Dialog {
 		content := container.NewVBox(heading(title))
 		if detail != "" {
-			content.Add(wrapped(detail))
+			content.Add(paragraph(detail))
 		}
 		var list fyne.CanvasObject = choiceList(options, &pick)
 		if len(options) > 5 {
@@ -177,12 +200,12 @@ func (p dialogPrompter) Select(ctx context.Context, title, detail string, option
 }
 
 func (p dialogPrompter) Input(ctx context.Context, title, detail, def string) (string, error) {
-	entry := widget.NewEntry()
-	entry.SetText(def)
+	var entry *widget.Entry
+	onUI(func() { entry = widget.NewEntry(); entry.SetText(def) })
 	got, err := ask(ctx, p, false, func(answer func(bool)) dialog.Dialog {
 		content := container.NewVBox(heading(title))
 		if detail != "" {
-			content.Add(wrapped(detail))
+			content.Add(paragraph(detail))
 		}
 		content.Add(entry)
 		d := dialog.NewCustomConfirm("", "OK", "Cancel", content, answer, p.win)
@@ -237,16 +260,41 @@ func (p dialogPrompter) askValidated(ctx context.Context, ok string, width float
 	}
 }
 
-// Form asks several fields in one dialog. Secrets are masked.
+// formControl is one input of a form and how to read what the person made of it.
+type formControl struct {
+	fd  core.Field
+	get func() string
+}
+
+// Form asks several fields in one dialog. Secrets are masked. The widgets are built on the
+// UI thread; what is typed is read after the dialog has answered.
 func (p dialogPrompter) Form(ctx context.Context, f core.FormSpec) (map[string]string, error) {
-	type control struct {
-		fd  core.Field
-		get func() string
-	}
-	var ctls []control
+	var body *fyne.Container
 	var entries []*widget.Entry
 	var focus fyne.Focusable
-	body := container.New(layout.NewCustomPaddedVBoxLayout(sp12))
+	var ctls []formControl
+	onUI(func() { body, entries, focus, ctls = buildForm(f) })
+	// Enter in the last text field accepts; in an earlier one it moves on (the dialog's OK).
+	err := p.askValidated(ctx, orStr(f.Submit, "OK"), 480, body, entries, focus, func() error {
+		for _, c := range ctls {
+			if c.fd.Validate != nil {
+				if err := c.fd.Validate(c.get()); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	out := map[string]string{}
+	for _, c := range ctls {
+		out[c.fd.Key] = c.get()
+	}
+	return out, err
+}
+
+func buildForm(f core.FormSpec) (body *fyne.Container, entries []*widget.Entry, focus fyne.Focusable, ctls []formControl) {
+	type control = formControl
+	body = container.New(layout.NewCustomPaddedVBoxLayout(sp12))
 	head := f.Title
 	if head == "" && len(f.Fields) == 1 {
 		head = f.Fields[0].Label
@@ -255,7 +303,7 @@ func (p dialogPrompter) Form(ctx context.Context, f core.FormSpec) (map[string]s
 		body.Add(heading(head))
 	}
 	if f.Detail != "" {
-		body.Add(wrapped(f.Detail))
+		body.Add(paragraph(f.Detail))
 	}
 	for _, fd := range f.Fields {
 		fd := fd
@@ -264,7 +312,7 @@ func (p dialogPrompter) Form(ctx context.Context, f core.FormSpec) (map[string]s
 			item.Add(txt(fd.Label, theme.ColorNameForeground, 14, true))
 		}
 		if fd.Detail != "" {
-			item.Add(para(fd.Detail, colMuted, theme.SizeNameCaptionText))
+			item.Add(para(prose(fd.Detail), colMuted, theme.SizeNameCaptionText))
 		}
 		switch fd.Kind {
 		case core.FieldChoice:
@@ -317,22 +365,7 @@ func (p dialogPrompter) Form(ctx context.Context, f core.FormSpec) (map[string]s
 		}
 		body.Add(item)
 	}
-	// Enter in the last text field accepts; in an earlier one it moves on (the dialog's OK).
-	err := p.askValidated(ctx, orStr(f.Submit, "OK"), 480, body, entries, focus, func() error {
-		for _, c := range ctls {
-			if c.fd.Validate != nil {
-				if err := c.fd.Validate(c.get()); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
-	out := map[string]string{}
-	for _, c := range ctls {
-		out[c.fd.Key] = c.get()
-	}
-	return out, err
+	return body, entries, focus, ctls
 }
 
 func orStr(s, d string) string {
@@ -344,6 +377,23 @@ func orStr(s, d string) string {
 
 // File asks for a path, with Browse buttons for a file chooser and a folder chooser.
 func (p dialogPrompter) File(ctx context.Context, r core.FileRequest) (string, error) {
+	var entry *widget.Entry
+	var body *fyne.Container
+	onUI(func() { entry, body = p.fileBody(r) })
+	err := p.askValidated(ctx, "OK", 520, body, []*widget.Entry{entry}, entry, func() error {
+		if strings.TrimSpace(entry.Text) == "" {
+			return errors.New("choose or paste a path")
+		}
+		if r.Validate != nil {
+			return r.Validate(strings.TrimSpace(entry.Text))
+		}
+		return nil
+	})
+	return strings.Trim(entry.Text, `"' `), err
+}
+
+// fileBody is the question's content: the path field and its Browse buttons.
+func (p dialogPrompter) fileBody(r core.FileRequest) (*widget.Entry, *fyne.Container) {
 	entry := widget.NewEntry()
 	entry.TextStyle = fyne.TextStyle{Monospace: true}
 	entry.SetPlaceHolder("Paste a path, or browse")
@@ -378,30 +428,26 @@ func (p dialogPrompter) File(ctx context.Context, r core.FileRequest) (string, e
 	}
 	body := container.New(layout.NewCustomPaddedVBoxLayout(sp12), heading(r.Title))
 	if r.Detail != "" {
-		body.Add(wrapped(r.Detail))
+		body.Add(paragraph(r.Detail))
 	}
 	body.Add(entry)
 	body.Add(container.New(layout.NewCustomPaddedHBoxLayout(sp8), browse...))
-	err := p.askValidated(ctx, "OK", 520, body, []*widget.Entry{entry}, entry, func() error {
-		if strings.TrimSpace(entry.Text) == "" {
-			return errors.New("choose or paste a path")
-		}
-		if r.Validate != nil {
-			return r.Validate(strings.TrimSpace(entry.Text))
-		}
-		return nil
-	})
-	return strings.Trim(entry.Text, `"' `), err
+	return entry, body
 }
 
 // infoBody is the content of Show and Wait: text, numbered steps, a code, a link button.
 func (p dialogPrompter) infoBody(i core.Info) *fyne.Container {
 	body := container.New(layout.NewCustomPaddedVBoxLayout(sp12))
 	if i.Title != "" {
-		body.Add(heading(i.Title))
+		// "Heading · a quieter second part" (the terminal prints it that way too)
+		head, rest, _ := strings.Cut(i.Title, " · ")
+		body.Add(heading(head))
+		if rest != "" {
+			body.Add(para(capital(rest)+".", colMuted, theme.SizeNameCaptionText))
+		}
 	}
-	if i.Detail != "" {
-		body.Add(wrapped(i.Detail))
+	if i.Detail != "" && i.Code == "" {
+		body.Add(paragraph(i.Detail))
 	}
 	if len(i.Steps) > 0 {
 		steps := container.New(layout.NewCustomPaddedVBoxLayout(sp8))
@@ -415,7 +461,12 @@ func (p dialogPrompter) infoBody(i core.Info) *fyne.Container {
 		code := widget.NewLabelWithStyle(i.Code, fyne.TextAlignLeading, fyne.TextStyle{Bold: true, Monospace: true})
 		code.SizeName = theme.SizeNameSubHeadingText
 		copyBtn := button("Copy code", false, func() { fyne.CurrentApp().Clipboard().SetContent(i.Code) })
-		body.Add(container.NewBorder(nil, nil, nil, container.NewCenter(copyBtn), code))
+		box := container.New(layout.NewCustomPaddedVBoxLayout(sp4), txt("Your code", colMuted, 13, true),
+			container.NewBorder(nil, nil, nil, container.NewCenter(copyBtn), code))
+		if i.Detail != "" {
+			box.Add(para(capital(i.Detail)+".", colMuted, theme.SizeNameCaptionText))
+		}
+		body.Add(box)
 	}
 	if i.Link != "" {
 		label := i.LinkLabel

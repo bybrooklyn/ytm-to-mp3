@@ -134,6 +134,9 @@ func NewTerminal(in io.Reader, out io.Writer, secret func() (string, error)) *UI
 // Interactive reports whether both ends are a terminal, so prompting makes sense.
 func (u *UI) Interactive() bool {
 	u = u.base()
+	if u.secret != nil { // made by NewTerminal for a test: there is a person on the other end
+		return true
+	}
 	st, err := os.Stdin.Stat()
 	return u.tty && err == nil && st.Mode()&os.ModeCharDevice != 0
 }

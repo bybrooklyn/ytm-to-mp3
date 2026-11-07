@@ -89,7 +89,7 @@ type browserPurpose struct {
 
 // pickBrowserFor lets the user choose a browser (the remembered one first) and remembers it.
 func pickBrowserFor(ctx context.Context, pr Prompter, p browserPurpose) (browsercookies.Browser, error) {
-	browsers := browsercookies.Detect()
+	browsers := detectBrowsers()
 	if len(browsers) == 0 {
 		return browsercookies.Browser{}, errors.New(p.none)
 	}
