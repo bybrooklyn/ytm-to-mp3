@@ -286,7 +286,7 @@ func downloadPlan(ctx context.Context, u *ui.UI, o opts, st *store.Store, srcs [
 		if err != nil {
 			return err
 		}
-		failed, err := runTidalItems(ctx, u, o, st, tools.FFmpeg, tools.FFprobe, tc, tidalItems)
+		failed, err := runTidalItems(ctx, u, o, ex, st, tools.FFmpeg, tools.FFprobe, tc, tidalItems)
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
@@ -308,7 +308,7 @@ func downloadPlan(ctx context.Context, u *ui.UI, o opts, st *store.Store, srcs [
 		}
 	}
 	if len(appleItems) > 0 {
-		if err := runAppleItems(ctx, u, o, ac, st, proxies, appleItems); err != nil && firstErr == nil {
+		if err := runAppleItems(ctx, u, o, ex, ac, st, proxies, appleItems); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -318,7 +318,7 @@ func downloadPlan(ctx context.Context, u *ui.UI, o opts, st *store.Store, srcs [
 			firstErr = err
 		}
 		if firstErr == nil && ctx.Err() == nil {
-			firstErr = afterDownload(ctx, u, o, st, began)
+			firstErr = afterDownload(ctx, u, o, st, began, nil)
 		}
 	}
 	return firstErr
