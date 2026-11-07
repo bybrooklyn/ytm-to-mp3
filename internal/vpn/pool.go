@@ -3,12 +3,14 @@ package vpn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/vpnprovider"
 )
 
 // Options tunes OpenWith. The zero value behaves like Open.
@@ -58,6 +60,7 @@ type Pool struct {
 	home       *proton.Location // where the user is, for nearby-first ranking (nil = unknown)
 	onExit     func(Exit)
 	logf       func(string, ...any)
+	label      string // the provider's name for messages
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
@@ -89,27 +92,24 @@ var migrateAPI = 15 * time.Second
 // Open connects n tunnels to different countries and returns once all are up. Servers
 // that fail are replaced from the candidate list; it errors only if none work. It uses
 // the server cache, so it does not wait for Proton's server list when one is on disk.
-func Open(ctx context.Context, pc *proton.Client, n int, logf func(string, ...any)) (*Pool, error) {
+func Open(ctx context.Context, pc vpnprovider.Provider, n int, logf func(string, ...any)) (*Pool, error) {
 	return OpenWith(ctx, pc, n, logf, Options{})
 }
 
 // OpenWith is Open with options; see Options.
-func OpenWith(ctx context.Context, pc *proton.Client, n int, logf func(string, ...any), o Options) (*Pool, error) {
+func OpenWith(ctx context.Context, pc vpnprovider.Provider, n int, logf func(string, ...any), o Options) (*Pool, error) {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
 	path := o.CachePath
 	switch path {
 	case "":
-		path = DefaultCachePath()
+		path = CachePathFor(pc.ID())
 	case "off":
 		path = ""
 	}
-	account := ""
-	if s := pc.Session; s != nil { // nothing else touches the client yet
-		account = AccountID(s.Username)
-	}
-	cache := LoadCache(path, account)
+	label := pc.Label()
+	cache := LoadCache(path, pc.AccountID())
 
 	// The certificate (cached in the session file for days) and the server list (cached
 	// for minutes) are independent, so ask for whichever is missing at the same time.
@@ -119,7 +119,7 @@ func OpenWith(ctx context.Context, pc *proton.Client, n int, logf func(string, .
 	}
 	kc := make(chan keyRes, 1)
 	go func() {
-		k, err := pc.Identity(ctx)
+		k, err := pc.IdentityAt(ctx, 0)
 		kc <- keyRes{k, err}
 	}()
 	// Where the user is, so nearby servers are preferred. Best effort and quick: without
@@ -175,7 +175,7 @@ func OpenWith(ctx context.Context, pc *proton.Client, n int, logf func(string, .
 			cache.SetServers(list, maxConnect, time.Now())
 			_ = cache.Save()
 		case len(list) > 0:
-			logf("  (couldn't refresh Proton's server list: %v; using the saved one)", err)
+			logf("  (couldn't refresh %s's server list: %v; using the saved one)", label, err)
 		default:
 			<-kc
 			return nil, err
@@ -187,12 +187,12 @@ func OpenWith(ctx context.Context, pc *proton.Client, n int, logf func(string, .
 		return nil, kr.err
 	}
 	if len(list) == 0 {
-		return nil, errors.New("no usable Proton servers for this account")
+		return nil, fmt.Errorf("no usable %s servers for this account", label)
 	}
 	// Every tunnel counts as a device on the account; opening more than the plan allows
 	// just gets the extras refused.
 	if maxConnect > 0 && n > maxConnect {
-		logf("  your Proton plan allows %d devices at once; using %d tunnels", maxConnect, maxConnect)
+		logf("  your %s account allows %d devices at once; using %d tunnels", label, maxConnect, maxConnect)
 		n = maxConnect
 	}
 	n = max(n, 1)
@@ -216,12 +216,19 @@ func OpenWith(ctx context.Context, pc *proton.Client, n int, logf func(string, .
 
 	pctx, cancel := context.WithCancel(ctx)
 	p := &Pool{
-		keys: newKeyRing(keySlots(maxConnect, n, spares), pc.IdentityAt), cache: cache, servers: list,
+		keys: newKeyRing(keySlots(maxConnect, n, spares), pc.MaxSlots(), pc.IdentityAt), cache: cache, servers: list,
 		tunnels: map[string]*Tunnel{}, connecting: map[string]bool{}, tried: map[string]bool{}, failedCC: map[string]int{},
 		known: map[string]proton.Server{}, reasons: map[string]string{},
 		maxConnect: maxConnect, spares: spares, countries: countries, home: home, onExit: o.OnExit, logf: logf,
 		ctx: pctx, cancel: cancel,
-		dial: OpenTunnel,
+		label: label,
+		dial: func(ctx context.Context, k *Key, s Server) (*Tunnel, error) {
+			cfg, err := pc.Tunnel(s, k)
+			if err != nil {
+				return nil, err
+			}
+			return OpenTunnel(ctx, cfg, s)
+		},
 	}
 	if o.dial != nil {
 		p.dial = o.dial
@@ -325,7 +332,7 @@ func (p *Pool) start(ctx context.Context, n, minReady int) (*Pool, error) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, errors.New("couldn't reach any Proton server: UDP to port 51820 may be blocked by your network, or your Proton plan's device limit is used up (sign out other devices at account.protonvpn.com)")
+		return nil, fmt.Errorf("couldn't reach any %s server: UDP to the WireGuard port may be blocked by your network, or your account's device limit is used up (remove a device in your %s account)", p.label, p.label)
 	}
 	return p, nil
 }

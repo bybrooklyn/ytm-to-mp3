@@ -31,6 +31,7 @@ const (
 	rowCountries
 	rowPremium
 	rowApple
+	rowPrivate
 	rowTest
 )
 
@@ -53,12 +54,13 @@ var settingsRows = []struct {
 	{rowTagAfter, "Fix tags after"},
 	{rowPremiumAfter, "Premium upgrade after"},
 	{rowVPN, "VPN"},
-	{rowAccount, "Proton account"},
+	{rowAccount, "VPN account"},
 	{rowConns, "VPN connections"},
 	{rowJobs, "Parallel downloads"},
 	{rowCountries, "Exit countries"},
 	{rowPremium, "YouTube Premium"},
 	{rowApple, "Apple Music"},
+	{rowPrivate, "Private mode"},
 	{rowTest, "Test VPN"},
 }
 
@@ -67,7 +69,8 @@ var settingsRows = []struct {
 type settingsModel struct {
 	cfg      config.Config
 	signedIn bool
-	appleIn  bool // an Apple Music login is saved
+	appleIn  bool   // an Apple Music login is saved
+	provider string // the VPN provider's name, for the account row ("" = Proton VPN)
 	user     string
 	cur      int
 
@@ -182,7 +185,7 @@ func (m *settingsModel) activate() tea.Cmd {
 		return tea.Quit
 	case rowTest:
 		if !m.signedIn {
-			m.err = "sign in to Proton first"
+			m.err = "set up a VPN first"
 			return nil
 		}
 		m.action = "test"
@@ -215,10 +218,12 @@ func (m *settingsModel) change(d int) {
 		m.cfg.NoPremiumAfter = !m.cfg.NoPremiumAfter
 	case rowVPN:
 		if !m.vpnUsable() {
-			m.err = "sign in to Proton first"
+			m.err = "set up a VPN first"
 			return
 		}
 		m.cfg.NoVPN = !m.cfg.NoVPN
+	case rowPrivate:
+		m.cfg.Private = !m.cfg.Private
 	case rowConns:
 		n := m.cfg.Connections
 		if n == 0 {
@@ -296,7 +301,7 @@ func (m *settingsModel) value(k rowKind) (val, hint string, dim bool) {
 		return onOff(!m.cfg.NoPremiumAfter), hint, !m.cfg.Premium
 	case rowVPN:
 		if !m.signedIn {
-			return "off", "sign in to Proton below to use it", true
+			return "off", "set up a VPN below to use it (Proton, Mullvad or your own WireGuard config)", true
 		}
 		if m.cfg.NoVPN {
 			return "off", "", false
@@ -304,12 +309,18 @@ func (m *settingsModel) value(k rowKind) (val, hint string, dim bool) {
 		return "on", "", false
 	case rowAccount:
 		if m.signedIn {
-			return "signed in as " + m.user, "enter to sign out", false
+			who := m.user
+			if m.provider != "" {
+				who = m.provider + " · " + m.user
+			}
+			return "signed in as " + who, "enter to sign out", false
 		}
-		return "not signed in", "enter to sign in", false
+		return "not signed in", "enter to choose Proton, Mullvad or your own WireGuard config", false
+	case rowPrivate:
+		return onOff(m.cfg.Private), "no MusicBrainz tag or cover lookups at all (see PRIVACY.md); downloading still contacts your music source", false
 	case rowConns:
 		if m.cfg.Connections < 0 {
-			return "Auto", "your Proton plan's device limit, minus one kept as a spare", !m.signedIn || m.cfg.NoVPN
+			return "Auto", "your VPN account's device limit, minus one kept as a spare", !m.signedIn || m.cfg.NoVPN
 		}
 		return fmt.Sprint(orInt(m.cfg.Connections, 3)), "exits used at once; below 1 is Auto (all your plan allows)", !m.signedIn || m.cfg.NoVPN
 	case rowJobs:
@@ -415,7 +426,7 @@ func printErr(err error) {
 
 func isStepRow(k rowKind) bool {
 	switch k {
-	case rowFormat, rowAlbums, rowRetry, rowTagAfter, rowPremiumAfter, rowVPN, rowConns, rowJobs, rowCountries:
+	case rowFormat, rowAlbums, rowRetry, rowTagAfter, rowPremiumAfter, rowVPN, rowConns, rowJobs, rowCountries, rowPrivate:
 		return true
 	}
 	return false
@@ -434,18 +445,15 @@ func runSettings(ctx context.Context, u *ui.UI) error {
 	if !u.Interactive() {
 		return errors.New("settings need a terminal")
 	}
-	pc := protonClient()
 	cur := 0
-	if !pc.SignedIn() {
+	if !currentVPN(config.Load()).SignedIn {
 		cur = int(rowAccount) // first run: land on the sign-in row
 	}
 	for {
 		cfg := config.Load()
-		user := ""
-		if pc.SignedIn() {
-			user = pc.Session.Username
-		}
-		m := newSettingsModel(cfg, pc.SignedIn(), user, cur)
+		v := currentVPN(cfg)
+		m := newSettingsModel(cfg, v.SignedIn, v.Who, cur)
+		m.provider = providerLabel(providerID(cfg))
 		m.appleIn = appleSignedIn()
 		final, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 		if err != nil {
@@ -462,12 +470,13 @@ func runSettings(ctx context.Context, u *ui.UI) error {
 			}
 			return nil
 		case "signout":
-			// Ends the session at Proton too, not just here; the WireGuard device key stays
-			// listed in the account until it is removed at account.protonvpn.com.
-			pc.Revoke(ctx)
+			// Ends the session at the provider too, not just here. Mullvad's device keys
+			// are removed from the account; Proton's stay listed until removed at
+			// account.protonvpn.com.
+			signOutVPN(ctx, cfg)
 		case "signin":
 			c := config.Load()
-			if err := loginFlow(ctx, pc, &c); err != nil {
+			if err := vpnFlow(ctx, &c); err != nil {
 				printErr(err)
 			}
 			if err := c.Save(); err != nil {

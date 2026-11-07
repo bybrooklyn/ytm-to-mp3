@@ -57,7 +57,12 @@ func TestTunnelLoopback(t *testing.T) {
 	defer cancel()
 	key := &proton.WGKey{Private: cpriv}
 	srv := proton.Server{Name: "test", PublicKey: base64.StdEncoding.EncodeToString(spub)}
-	tun, err := openTunnel(ctx, key, srv, "127.0.0.1:"+port, "10.2.0.1:80")
+	tcfg, err := proton.New("").Tunnel(srv, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcfg.Endpoint = "127.0.0.1:" + port
+	tun, err := openTunnel(ctx, tcfg, srv, "10.2.0.1:80")
 	if err != nil {
 		t.Fatal(err)
 	}

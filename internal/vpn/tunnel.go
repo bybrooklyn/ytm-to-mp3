@@ -3,7 +3,6 @@ package vpn
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -18,13 +17,13 @@ import (
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 
-	"github.com/bybrooklyn/ytm-to-mp3/internal/proton"
+	"github.com/bybrooklyn/ytm-to-mp3/internal/vpnprovider"
 )
 
 // Tunnel is one userspace WireGuard connection (no root, no system changes) with a
 // loopback SOCKS5 front door that carries its Exit.
 type Tunnel struct {
-	Server proton.Server
+	Server Server
 	Exit   Exit
 	dev    *device.Device
 	cancel context.CancelFunc
@@ -45,32 +44,74 @@ var handshakeTimeout = 8 * time.Second
 // after 180s, and a healthy tunnel re-keys every 120s, so older means dead.
 const aliveWithin = 200 * time.Second
 
-// OpenTunnel connects to one Proton server and checks traffic really flows.
-func OpenTunnel(ctx context.Context, key *proton.WGKey, s proton.Server) (*Tunnel, error) {
-	return openTunnel(ctx, key, s, s.IP+":51820", "www.youtube.com:443")
+// resolveEndpoint turns a host:port endpoint into ip:port. A host name has to be looked up
+// before the tunnel exists, so that one lookup uses the system resolver (see PRIVACY.md);
+// providers that publish IP addresses (Proton, Mullvad) never need it.
+func resolveEndpoint(ctx context.Context, endpoint string) (string, error) {
+	host, port, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("bad endpoint %q", endpoint)
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return endpoint, nil
+	}
+	rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupNetIP(rctx, "ip", host)
+	if err != nil || len(ips) == 0 {
+		return "", fmt.Errorf("can't resolve the VPN server %s", host)
+	}
+	return net.JoinHostPort(ips[0].Unmap().String(), port), nil
 }
 
-func openTunnel(ctx context.Context, key *proton.WGKey, s proton.Server, endpoint, probe string) (*Tunnel, error) {
-	pub, err := base64.StdEncoding.DecodeString(s.PublicKey)
-	if err != nil || len(pub) != 32 {
-		return nil, errors.New("bad server key")
+// OpenTunnel connects to s with the configuration cfg and checks traffic really flows.
+func OpenTunnel(ctx context.Context, cfg vpnprovider.TunnelConfig, s Server) (*Tunnel, error) {
+	return openTunnel(ctx, cfg, s, "www.youtube.com:443")
+}
+
+func openTunnel(ctx context.Context, cfg vpnprovider.TunnelConfig, s Server, probe string) (*Tunnel, error) {
+	endpoint, err := resolveEndpoint(ctx, cfg.Endpoint)
+	if err != nil {
+		return nil, err
 	}
-	// Proton gives every client the same tunnel address and resolver.
-	tun, tnet, err := netstack.CreateNetTUN([]netip.Addr{netip.MustParseAddr("10.2.0.2")},
-		[]netip.Addr{netip.MustParseAddr("10.2.0.1")}, 1380)
+	if len(cfg.Addresses) == 0 {
+		return nil, errors.New("the VPN config has no tunnel address")
+	}
+	dns := cfg.DNS
+	if len(dns) == 0 {
+		// Still reached through the tunnel, so the lookup never leaves it.
+		dns = []netip.Addr{netip.MustParseAddr("1.1.1.1")}
+	}
+	mtu := cfg.MTU
+	if mtu <= 0 {
+		mtu = 1380
+	}
+	allowed := "allowed_ip=0.0.0.0/0\n"
+	for _, a := range cfg.Addresses {
+		if a.Is6() && !a.Is4In6() {
+			allowed += "allowed_ip=::/0\n"
+			break
+		}
+	}
+	tun, tnet, err := netstack.CreateNetTUN(cfg.Addresses, dns, mtu)
 	if err != nil {
 		return nil, err
 	}
 	dev := device.NewDevice(tun, conn.NewDefaultBind(), device.NewLogger(device.LogLevelSilent, ""))
-	err = dev.IpcSet(fmt.Sprintf("private_key=%s\npublic_key=%s\nendpoint=%s\nallowed_ip=0.0.0.0/0\n",
-		hex.EncodeToString(key.Private[:]), hex.EncodeToString(pub), endpoint))
+	psk := ""
+	if cfg.Preshared != nil {
+		psk = "preshared_key=" + hex.EncodeToString(cfg.Preshared[:]) + "\n"
+	}
+	pubHex := hex.EncodeToString(cfg.PeerKey[:])
+	err = dev.IpcSet(fmt.Sprintf("private_key=%s\npublic_key=%s\n%sendpoint=%s\n%s",
+		hex.EncodeToString(cfg.PrivateKey[:]), pubHex, psk, endpoint, allowed))
 	if err == nil {
 		err = dev.Up()
 	}
 	if err == nil {
 		// Turning the keepalive on once the device is up makes WireGuard send a packet at
 		// once, i.e. start the handshake now rather than when the first connection asks.
-		err = dev.IpcSet(fmt.Sprintf("public_key=%s\nupdate_only=true\npersistent_keepalive_interval=25\n", hex.EncodeToString(pub)))
+		err = dev.IpcSet(fmt.Sprintf("public_key=%s\nupdate_only=true\npersistent_keepalive_interval=25\n", pubHex))
 	}
 	if err != nil {
 		dev.Close()
