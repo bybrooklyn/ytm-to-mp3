@@ -38,6 +38,10 @@ type WebTrack struct {
 	TrackTotal  int
 	Duration    float64
 	Cover       string
+	// ISRC, Downloadable and Policy are what SoundCloud says; recorded only.
+	ISRC         string
+	Downloadable bool
+	Policy       string
 }
 
 // WebSite names the supported site a link belongs to ("" = not one of them).
@@ -88,6 +92,14 @@ func ListWeb(ctx context.Context, tools deps.Tools, proxy, link string) ([]WebTr
 	site := WebSite(link)
 	if site == "" {
 		return nil, fmt.Errorf("%q is not a SoundCloud or Bandcamp link", link)
+	}
+	if site == "soundcloud" {
+		if ts, ok := nativeListSoundCloud(ctx, proxy, link); ok {
+			return ts, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 	}
 	y := ytdlp{tools: tools, proxy: proxy}
 	args := []string{"--ignore-config", "--no-plugin-dirs", "--no-warnings", "--yes-playlist", "--socket-timeout", "20", "-J", "--", link}
@@ -185,6 +197,14 @@ func abs(n int) int {
 func FetchWeb(ctx context.Context, tools deps.Tools, proxy string, t WebTrack, dir string, onProgress func(got, total int64)) (string, error) {
 	if WebSite(t.URL) == "" {
 		return "", &Error{kindPermanent, "not a supported link"}
+	}
+	if WebSite(t.URL) == "soundcloud" {
+		if p, ok := nativeFetchSoundCloud(ctx, proxy, t, dir, onProgress); ok {
+			return p, nil
+		}
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 	}
 	y := ytdlp{tools: tools, proxy: proxy}
 	sum := sha1.Sum([]byte(t.URL))

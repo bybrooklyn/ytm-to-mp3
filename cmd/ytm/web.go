@@ -215,6 +215,7 @@ func saveWeb(ctx context.Context, tools deps.Tools, st *store.Store, root string
 	opt("track", names.TrackTag(t.TrackNo, t.TrackTotal))
 	opt("date", t.Date)
 	opt("genre", t.Genre)
+	opt("isrc", t.ISRC)
 	if err := tag.Write(ctx, tools.FFmpeg, tools.FFprobe, got, set, cover); err != nil {
 		return fmt.Errorf("tag: %w", err)
 	}
