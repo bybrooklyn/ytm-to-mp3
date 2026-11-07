@@ -19,7 +19,7 @@ jobs:
           go-version-file: go.mod
           check-latest: true
       - name: desktop app build dependencies (OpenGL and X11 headers)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1-mesa-dev xorg-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols
       - run: go vet ./...
       - run: go test ./...
 
@@ -83,7 +83,7 @@ jobs:
           check-latest: true
       - name: build dependencies (OpenGL and X11 headers)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1-mesa-dev xorg-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols
       - name: build and package
         shell: bash
         env:

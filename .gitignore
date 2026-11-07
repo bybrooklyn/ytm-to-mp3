@@ -8,3 +8,7 @@ downloads/
 !testdata/*.csv
 /legacy/
 /mfy-desktop
+# old build artifacts from before the rename to mfy
+/ytm
+/ytm-desktop
+/ytm.exe
